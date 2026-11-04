@@ -1,0 +1,617 @@
+// UI controller: menu, input, panels, turn flow.
+import { Game } from './game.js';
+import { runAI } from './ai.js';
+import { Renderer } from './render.js';
+import { MAP_SIZES, MAP_TYPES } from './mapgen.js';
+import {
+  TERRAIN, SPECIALTY, SPECIALTY_KEYS, KIN_DIST, AFFINITY, UNITS, IMPROVEMENTS, BUILDINGS, TECHS, RESOURCES,
+} from './data.js';
+
+const $ = (id) => document.getElementById(id);
+const SAVE_KEY = 'tyrrainy-save-v1';
+
+let game = null, R = null;
+let sel = null; // {kind:'unit'|'city'|'tile', id/idx}
+let busy = false;
+let watchMode = false;
+
+// ------------------------------------------------------------ menu
+function initMenu() {
+  for (const [k, v] of Object.entries(MAP_SIZES)) $('optSize').add(new Option(v.label, k, false, k === 'medium'));
+  for (const [k, v] of Object.entries(MAP_TYPES)) $('optType').add(new Option(v.label, k));
+  for (let n = 2; n <= 10; n++) $('optPlayers').add(new Option(n + ' tribes', n, false, n === 6));
+  for (let n = 1; n <= 4; n++) $('optHumans').add(new Option(String(n), n));
+  try { if (localStorage.getItem(SAVE_KEY)) $('btnContinue').classList.remove('hidden'); } catch { }
+  $('btnStart').onclick = () => startNew(false);
+  $('btnWatch').onclick = () => startNew(true);
+  $('btnContinue').onclick = () => {
+    try {
+      const g = Game.deserialize(localStorage.getItem(SAVE_KEY));
+      watchMode = false;
+      boot(g);
+    } catch (e) { console.error(e); toast('Save could not be loaded'); }
+  };
+  $('btnHow').onclick = showHelp;
+}
+
+function startNew(watch) {
+  watchMode = watch;
+  const opts = {
+    size: $('optSize').value,
+    mapType: $('optType').value,
+    players: +$('optPlayers').value,
+    humans: watch ? 0 : Math.min(+$('optHumans').value, +$('optPlayers').value),
+    turnLimit: +$('optTurns').value,
+    seed: $('optSeed').value.trim() || undefined,
+  };
+  const g = Game.create(opts);
+  boot(g);
+}
+
+function boot(g) {
+  game = g;
+  $('menu').classList.add('hidden');
+  for (const id of ['topbar', 'log', 'minimap', 'btnEnd', 'btnNext']) $(id).classList.remove('hidden');
+  if (!R) {
+    R = new Renderer($('map'), game);
+    initInput();
+    requestAnimationFrame(loop);
+  } else { R.game = game; }
+  R.revealAll = watchMode;
+  game.listeners = [onEvent];
+  $('log').innerHTML = '';
+  sel = null;
+  beginTurnUI();
+}
+
+// ------------------------------------------------------------ main loop
+let lastMini = 0;
+function loop(t) {
+  if (R && game && R.dirty) {
+    R.draw();
+    if (t - lastMini > 250) { R.drawMinimap($('minimap')); lastMini = t; }
+  }
+  requestAnimationFrame(loop);
+}
+
+function onEvent(type, d) {
+  if (!R) return;
+  const viewer = R.viewer;
+  const visible = (i) => watchMode || (i != null && game.players[viewer]._vis?.[i]);
+  if (type === 'log') {
+    if (d.pid === viewer || visible(d.idx) || d.idx == null && /learned|fallen|wins/.test(d.msg) && (d.pid === viewer || /fallen|wins/.test(d.msg))) addLog(d.msg, d.pid, d.idx);
+  } else if (type === 'attack') {
+    if (visible(d.to) || visible(d.from)) {
+      R.addAnim({ type: 'shot', from: d.from, to: d.to, dur: 300 });
+      R.addAnim({ type: 'text', idx: d.to, text: '-' + d.dmg, color: '#ff7060', dur: 1100 });
+      R.addAnim({ type: 'flash', idx: d.to, dur: 350 });
+      if (d.ret) R.addAnim({ type: 'text', idx: d.from, text: '-' + d.ret, color: '#ffb060', dur: 1100 });
+    }
+  } else if (type === 'move') {
+    if (visible(d.to) || visible(d.from)) R.addAnim({ type: 'move', uid: d.u.id, from: d.from, dur: 180 });
+  } else if (type === 'levelup') {
+    if (d.owner === viewer) R.addAnim({ type: 'text', idx: d.idx, text: 'Level ' + d.level + '!', color: '#9f9', dur: 1500 });
+  } else if (type === 'win') {
+    setTimeout(showWin, 400);
+  } else if (type === 'improve') {
+    R.addAnim({ type: 'text', idx: d.idx, text: '+pop', color: '#9f9', dur: 900 });
+  }
+  R.dirty = true;
+}
+
+function addLog(msg, pid, idx) {
+  const el = document.createElement('div');
+  const col = pid != null && game.players[pid] ? game.players[pid].color : '#ccc';
+  el.innerHTML = `<span class="dim">T${game.turn}</span> <span style="color:${col}">●</span> ${esc(msg)}`;
+  if (idx != null) el.onclick = () => { R.centerOn(idx); };
+  const log = $('log');
+  log.appendChild(el);
+  while (log.children.length > 80) log.firstChild.remove();
+  log.scrollTop = log.scrollHeight;
+}
+
+function esc(s) { return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+
+let toastT = 0;
+function toast(msg) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toastT);
+  toastT = setTimeout(() => t.classList.remove('show'), 2200);
+}
+
+// ------------------------------------------------------------ turn flow
+let lastHuman = -1;
+function beginTurnUI() {
+  if (game.winner) { refreshAll(); return; }
+  const pl = game.players[game.current];
+  if (!pl.human) { runAITurns(); return; }
+  const humans = game.players.filter(p => p.human && p.alive).length;
+  R.viewer = pl.id;
+  game.updateVision(pl.id);
+  if (humans > 1 && lastHuman !== pl.id) {
+    $('passTitle').textContent = `${pl.name}'s turn`;
+    $('passTitle').style.color = pl.color;
+    $('pass').classList.remove('hidden');
+    $('btnPass').onclick = () => { $('pass').classList.add('hidden'); focusTurn(pl); };
+  } else focusTurn(pl);
+  lastHuman = pl.id;
+  try { localStorage.setItem(SAVE_KEY, game.serialize()); } catch { }
+}
+
+function focusTurn(pl) {
+  sel = null;
+  const cap = game.cities.find(c => c.owner === pl.id && c.capital) || game.cities.find(c => c.owner === pl.id);
+  if (game.turn === 1 || !R._centered?.[pl.id]) {
+    if (cap) R.centerOn(cap.idx);
+    R._centered = R._centered || {}; R._centered[pl.id] = true;
+  }
+  if (game.turn === 1 && game.players.filter(p => p.human).length >= 1) {
+    const home = SPECIALTY[pl.home];
+    toast(`You lead the ${pl.name}, a ${home.name} people. Cities on ${home.name.toLowerCase()} land thrive for you.`);
+  }
+  refreshAll();
+}
+
+function runAITurns() {
+  busy = true;
+  refreshAll();
+  const step = () => {
+    if (game.winner) { busy = false; refreshAll(); return; }
+    const pl = game.players[game.current];
+    if (pl.human) { busy = false; beginTurnUI(); return; }
+    if (watchMode) R.viewer = pl.id;
+    try { runAI(game, pl.id); } catch (e) { console.error('AI error', e); }
+    game.endTurn();
+    R.dirty = true;
+    if (watchMode) updateTopbar();
+    setTimeout(step, watchMode ? 120 : 15);
+  };
+  setTimeout(step, 30);
+}
+
+function endTurn() {
+  if (busy || !game || game.winner) return;
+  if (!game.players[game.current].human) return;
+  sel = null; R.highlights.clear(); R.selected = null;
+  game.endTurn();
+  beginTurnUI();
+}
+
+// ------------------------------------------------------------ input
+function initInput() {
+  const cv = $('map');
+  const pointers = new Map();
+  let drag = null, pinch = null;
+  cv.addEventListener('pointerdown', (e) => {
+    cv.setPointerCapture(e.pointerId);
+    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointers.size === 2) {
+      const [a, b] = [...pointers.values()];
+      pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), size: R.size };
+      drag = null;
+    } else drag = { x: e.clientX, y: e.clientY, cx: R.camX, cy: R.camY, moved: false, button: e.button };
+  });
+  cv.addEventListener('pointermove', (e) => {
+    if (pointers.has(e.pointerId)) pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pinch && pointers.size === 2) {
+      const [a, b] = [...pointers.values()];
+      const d = Math.hypot(a.x - b.x, a.y - b.y);
+      R.zoomAt((a.x + b.x) / 2, (a.y + b.y) / 2, (pinch.size * d / pinch.d) / R.size);
+      return;
+    }
+    if (drag) {
+      const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+      if (Math.abs(dx) + Math.abs(dy) > 6) drag.moved = true;
+      if (drag.moved) { R.camX = drag.cx - dx; R.camY = drag.cy - dy; R.clampCam(); R.dirty = true; }
+    } else if (game) {
+      const t = R.screenToTile(e.clientX, e.clientY);
+      if (t !== R.hover) { R.hover = t; R.dirty = true; }
+    }
+  });
+  const up = (e) => {
+    pointers.delete(e.pointerId);
+    if (pointers.size < 2) pinch = null;
+    if (drag && !drag.moved && pointers.size === 0) {
+      if (drag.button === 2) { deselect(); }
+      else onTileClick(R.screenToTile(e.clientX, e.clientY));
+    }
+    if (pointers.size === 0) drag = null;
+  };
+  cv.addEventListener('pointerup', up);
+  cv.addEventListener('pointercancel', up);
+  cv.addEventListener('contextmenu', (e) => e.preventDefault());
+  cv.addEventListener('wheel', (e) => { e.preventDefault(); R.zoomAt(e.clientX, e.clientY, e.deltaY < 0 ? 1.12 : 1 / 1.12); }, { passive: false });
+  window.addEventListener('resize', () => { R.resize(); });
+  $('minimap').addEventListener('pointerdown', (e) => {
+    const r = $('minimap').getBoundingClientRect();
+    const [ww, wh] = R.worldSize();
+    R.camX = (e.clientX - r.left) / r.width * ww - R.vw / 2;
+    R.camY = (e.clientY - r.top) / r.height * wh - R.vh / 2;
+    R.clampCam(); R.dirty = true;
+  });
+  window.addEventListener('keydown', (e) => {
+    if (!game || e.target.tagName === 'INPUT') return;
+    if (!$('modal').classList.contains('hidden')) { if (e.key === 'Escape') closeModal(); return; }
+    const pan = 60;
+    if (e.key === 'Enter' || e.key === 'e' || e.key === 'E') endTurn();
+    else if (e.key === ' ') { e.preventDefault(); nextUnit(); }
+    else if (e.key === 'Escape') deselect();
+    else if (e.key === 't' || e.key === 'T') showTech();
+    else if (e.key === 's' || e.key === 'S') { const u = selUnit(); if (u && u.type === 'settler') doSettle(u); }
+    else if (e.key === 'ArrowLeft') { R.camX -= pan; R.dirty = true; }
+    else if (e.key === 'ArrowRight') { R.camX += pan; R.dirty = true; }
+    else if (e.key === 'ArrowUp') { R.camY -= pan; R.dirty = true; }
+    else if (e.key === 'ArrowDown') { R.camY += pan; R.dirty = true; }
+    else if (e.key === '+' || e.key === '=') R.zoomAt(R.vw / 2, R.vh / 2, 1.15);
+    else if (e.key === '-') R.zoomAt(R.vw / 2, R.vh / 2, 1 / 1.15);
+  });
+  $('btnEnd').onclick = endTurn;
+  $('btnNext').onclick = nextUnit;
+  $('btnTech').onclick = showTech;
+  $('btnTribes').onclick = showTribes;
+  $('btnHelp').onclick = showHelp;
+  $('btnMenu').onclick = () => {
+    try { if (localStorage.getItem(SAVE_KEY)) $('btnContinue').classList.remove('hidden'); } catch { }
+    $('menu').classList.remove('hidden');
+    $('menu').onclick = (e) => { if (e.target.id === 'menu') $('menu').classList.add('hidden'); };
+  };
+  $('modalClose').onclick = closeModal;
+  $('modal').onclick = (e) => { if (e.target.id === 'modal') closeModal(); };
+}
+
+function myTurn() { return game && !busy && !game.winner && game.players[game.current].human && game.current === R.viewer; }
+function selUnit() { return sel?.kind === 'unit' ? game.unitById(sel.id) : null; }
+
+function deselect() { sel = null; R.selected = null; R.highlights.clear(); refreshPanel(); R.dirty = true; }
+
+function onTileClick(i) {
+  if (i == null || !game) return;
+  const pid = R.viewer;
+  const pl = game.players[pid];
+  if (!watchMode && !pl.explored[i]) { deselect(); return; }
+  const u = selUnit();
+  if (u && myTurn() && u.owner === pid) {
+    const h = R.highlights.get(i);
+    if (h === 'attack') {
+      const res = game.attack(u, i);
+      afterAction(u, res);
+      return;
+    }
+    if (h === 'move' || h === 'capture') {
+      const res = game.moveUnit(u, i);
+      afterAction(u, res);
+      return;
+    }
+  }
+  // selection cycling: unit -> city -> tile
+  const unit = game.unitAt(i);
+  const city = game.cityAt(i);
+  const unitVisible = unit && (watchMode || (game.visibleTo(pid, i) && !game.isHiddenFrom(unit, pid)));
+  if (sel && sel.idx === i) {
+    if (sel.kind === 'unit' && city) return select({ kind: 'city', id: city.id, idx: i });
+    if (sel.kind === 'unit' || sel.kind === 'city') return select({ kind: 'tile', idx: i });
+    if (sel.kind === 'tile' && unitVisible) return select({ kind: 'unit', id: unit.id, idx: i });
+    if (sel.kind === 'tile' && city) return select({ kind: 'city', id: city.id, idx: i });
+  }
+  if (unitVisible) return select({ kind: 'unit', id: unit.id, idx: i });
+  if (city) return select({ kind: 'city', id: city.id, idx: i });
+  select({ kind: 'tile', idx: i });
+}
+
+function afterAction(u, res) {
+  if (!res.ok) { toast(res.why || 'Not possible'); return; }
+  if (game.units.includes(u)) select({ kind: 'unit', id: u.id, idx: u.idx });
+  else deselect();
+  refreshAll();
+  if (game.winner) showWin();
+}
+
+function select(s) {
+  sel = s;
+  R.selected = s.idx;
+  R.highlights.clear();
+  if (s.kind === 'unit') {
+    const u = game.unitById(s.id);
+    if (u && u.owner === R.viewer && myTurn()) {
+      for (const [i] of game.reachable(u)) {
+        const c = game.cityAt(i);
+        R.highlights.set(i, c && c.owner !== u.owner ? 'capture' : 'move');
+      }
+      for (const t of game.attackTargets(u)) R.highlights.set(t, 'attack');
+      if (u.type === 'settler') {
+        for (const t of game.within(u.idx, 4)) if (!R.highlights.has(t) && game.players[u.owner].explored[t] && game.canFoundAt(u.owner, t).ok) R.highlights.set(t, 'site');
+      }
+    }
+  }
+  refreshPanel();
+  R.dirty = true;
+}
+
+function nextUnit() {
+  if (!myTurn()) return;
+  const mine = game.units.filter(u => u.owner === R.viewer && (u.mvLeft > 0 || game.attackTargets(u).length > 0));
+  if (!mine.length) { toast('All units have acted'); return; }
+  const cur = selUnit();
+  let k = cur ? mine.indexOf(cur) + 1 : 0;
+  const u = mine[k % mine.length];
+  R.centerOn(u.idx);
+  select({ kind: 'unit', id: u.id, idx: u.idx });
+}
+
+function doSettle(u) {
+  const r = game.settle(u);
+  if (!r.ok) { toast(r.why); return; }
+  select({ kind: 'city', id: r.city.id, idx: r.city.idx });
+  refreshAll();
+}
+
+// ------------------------------------------------------------ panels
+function refreshAll() { updateTopbar(); refreshPanel(); R.dirty = true; }
+
+function updateTopbar() {
+  const pl = game.players[R.viewer];
+  $('tribeChip').style.background = pl.color;
+  $('tribeName').textContent = pl.name;
+  $('tribeHome').textContent = SPECIALTY[pl.home].name + ' people';
+  $('tribeHome').style.background = SPECIALTY[pl.home].color;
+  $('tribeHome').style.color = '#111';
+  $('gold').textContent = pl.gold;
+  $('income').textContent = `(+${game.income(pl.id)})`;
+  $('turn').textContent = game.turn;
+  $('turnLimit').textContent = game.settings.turnLimit ? ` / ${game.settings.turnLimit}` : '';
+  $('score').textContent = game.score(pl.id);
+  $('ucount').textContent = `${game.unitCount(pl.id)}/${game.unitCap(pl.id)}`;
+  const mine = myTurn();
+  $('btnEnd').disabled = !mine;
+  $('btnEnd').textContent = busy ? 'Other tribes moving…' : game.winner ? 'Game over' : 'End Turn';
+  const idle = mine && game.units.some(u => u.owner === R.viewer && (u.mvLeft > 0 && !u.acted));
+  $('btnEnd').classList.toggle('ready', mine && !idle);
+}
+
+function affBadge(a) { const A = AFFINITY[a]; return `<span class="aff" style="background:${A.color}">${A.name}</span>`; }
+
+function refreshPanel() {
+  const P = $('panel');
+  if (!sel || !game) { P.classList.add('hidden'); return; }
+  P.classList.remove('hidden');
+  let html = '';
+  if (sel.kind === 'unit') {
+    const u = game.unitById(sel.id);
+    if (!u) { P.classList.add('hidden'); return; }
+    html = unitPanel(u);
+  } else if (sel.kind === 'city') {
+    const c = game.cityById(sel.id);
+    if (!c) { P.classList.add('hidden'); return; }
+    html = cityPanel(c);
+  } else html = tilePanel(sel.idx);
+  P.innerHTML = html;
+  P.querySelectorAll('[data-act]').forEach(b => b.onclick = () => panelAction(b.dataset));
+}
+
+function unitPanel(u) {
+  const U = UNITS[u.type];
+  const S = game.stats(u);
+  const pl = game.players[u.owner];
+  let h = `<h3 style="color:${pl.color}">${U.name}${u.vet ? ' ★' : ''}${game.embarked(u) ? ' (embarked)' : ''}</h3>`;
+  h += `<div class="dim">${esc(pl.name)}</div>`;
+  h += `<div class="statline">HP ${u.hp}/${game.maxHp(u)} · ATK ${S.atk} · DEF ${S.def} · MV ${S.mv} · RNG ${S.rng}</div>`;
+  const traits = (U.traits || []).filter(t => t !== 'settler');
+  if (traits.length) h += `<div class="desc">Traits: ${traits.map(traitName).join(', ')}</div>`;
+  if (U.unique) h += `<div class="desc">Unique to ${SPECIALTY[U.unique].name} cities.</div>`;
+  if (u.owner === R.viewer && myTurn()) {
+    h += `<div class="desc">Moves left: ${u.mvLeft} ${u.attacked ? '· has attacked' : ''}</div>`;
+    if (u.type === 'settler') {
+      const chk = game.canSettle(u);
+      const spec = game.specialtyAt(u.idx);
+      const kd = Math.min(3, KIN_DIST[pl.home][spec]);
+      h += `<h4>Found city here</h4><div class="desc">Would become a <b>${SPECIALTY[spec].name}</b> city (${SPECIALTY[spec].title}) — ${affBadge(kd)}<br>${SPECIALTY[spec].desc}</div>`;
+      h += `<button class="primary" data-act="settle" ${chk.ok ? '' : 'disabled'}>Found city <kbd>S</kbd></button> ${chk.ok ? '' : `<span class="dim">${esc(chk.why)}</span>`}`;
+      h += `<div class="desc">Green dashed hexes nearby are valid sites.</div>`;
+    }
+    h += `<div style="margin-top:10px"><button data-act="disband">Disband</button></div>`;
+  }
+  // combat preview against hovered enemy handled by tooltip; show tile info too
+  h += tileSummary(u.idx);
+  return h;
+}
+
+function traitName(t) {
+  return ({ mounted: 'Mounted', skirmish: 'Skirmisher (moves after attacking)', forestwalk: 'Forest-walker (+40% atk from forest)', marshwalk: 'Marsh-walker', desertwalk: 'Dune-runner', mountainwalk: 'Mountaineer', hillwalk: 'Hill-walker', stealth: 'Hidden in marsh (+40% ambush)', naval: 'Naval', antimount: 'Anti-cavalry (x2 def vs mounted)' })[t] || t;
+}
+
+function cityPanel(c) {
+  const pl = game.players[c.owner];
+  const spec = SPECIALTY[c.specialty];
+  const mine = c.owner === R.viewer;
+  const aff = game.affinity(c);
+  let h = `<h3 style="color:${pl.color}">${esc(c.name)}${c.capital ? ' ★' : ''}</h3>`;
+  h += `<div class="dim">${esc(pl.name)} · Level ${c.level} · pop ${c.pop}/${c.level + 1}</div>`;
+  h += `<div class="desc"><span class="aff" style="background:${spec.color}">${spec.name}</span> <b>${spec.title}</b> — ${spec.desc}</div>`;
+  if (mine || watchMode) {
+    h += `<div class="row"><span>Culture</span>${affBadge(aff)}</div>`;
+    const A = AFFINITY[aff];
+    const base = KIN_DIST[pl.home][c.specialty];
+    let affNote = aff === 0 ? 'Your people\'s homeland: +1 gold, cheaper unique units.' :
+      aff === 1 ? 'Familiar land. No penalties.' :
+        `${A.gold} gold, unique units +${A.unitCost} cost${aff >= 3 ? ', cannot build specialty building' : ''}.`;
+    if (base >= 2 && aff > 1) {
+      const need = c.buildings.includes('temple') ? 5 : 10;
+      affNote += ` Integrates in ${need - (c.held % need)} turns.`;
+    }
+    h += `<div class="desc">${affNote}</div>`;
+    h += `<div class="row"><span>Income</span><b>+${game.cityIncome(c)} gold</b></div>`;
+  }
+  if (mine && myTurn()) {
+    h += `<h4>Train ${c.trainedTurn === game.turn ? '<span class="dim">(done this turn)</span>' : ''}</h4><div class="opts">`;
+    for (const k of game.trainable(c)) {
+      const U = UNITS[k];
+      const chk = game.canTrain(c, k);
+      const cost = game.unitCost(c, k);
+      h += `<button data-act="train" data-k="${k}" class="${U.unique ? 'unique' : ''}" ${chk.ok ? '' : 'disabled'} title="${esc(chk.why || '')}">${U.name} ◉${cost}<small>${U.atk}/${U.def} hp${U.hp} mv${U.mv}${U.rng > 1 ? ' r' + U.rng : ''}</small></button>`;
+    }
+    h += `</div>`;
+    const lockedUnique = SPECIALTY[c.specialty].unit;
+    if (!game.trainable(c).includes(lockedUnique)) h += `<div class="desc">Unique: ${UNITS[lockedUnique].name} — needs ${TECHS[UNITS[lockedUnique].tech]?.name}.</div>`;
+    h += `<h4>Buildings</h4><div class="opts">`;
+    for (const b of game.buildable(c)) {
+      const B = BUILDINGS[b];
+      const chk = game.canBuild(c, b);
+      h += `<button data-act="build" data-k="${b}" ${chk.ok ? '' : 'disabled'} title="${esc(chk.why || '')}">${B.name} ◉${B.cost}<small>${B.desc}</small></button>`;
+    }
+    h += `</div>`;
+    if (c.buildings.length) h += `<div class="desc">Built: ${c.buildings.map(b => BUILDINGS[b].name).join(', ')}</div>`;
+    // workable tiles summary
+    const work = [];
+    for (const t of game.cityTiles(c)) for (const k of game.improvementsFor(c.owner, t)) work.push(k);
+    if (work.length) h += `<div class="desc">Tip: click tiles in this city's border to build improvements (${[...new Set(work)].map(k => IMPROVEMENTS[k].name).join(', ')}).</div>`;
+  } else if (c.buildings.length) h += `<div class="desc">Buildings: ${c.buildings.map(b => BUILDINGS[b].name).join(', ')}</div>`;
+  return h;
+}
+
+function tileSummary(i) {
+  const tl = game.tiles[i];
+  const T = TERRAIN[tl.t];
+  let h = `<h4>Tile</h4><div class="row"><span>${T.name}${tl.river ? ' + River' : ''}</span><span class="dim">def x${T.def}</span></div>`;
+  if (tl.res) h += `<div class="row"><span>Resource</span><span>${RESOURCES[tl.res].name}</span></div>`;
+  if (tl.imp) h += `<div class="row"><span>Improvement</span><span>${IMPROVEMENTS[tl.imp].name}</span></div>`;
+  if (tl.ruin) h += `<div class="desc">Ancient ruins — move a unit here to explore.</div>`;
+  if (tl.owner >= 0) h += `<div class="row"><span>Territory</span><span style="color:${game.players[tl.owner].color}">${esc(game.players[tl.owner].name)}</span></div>`;
+  return h;
+}
+
+function tilePanel(i) {
+  const pid = R.viewer;
+  const tl = game.tiles[i];
+  let h = `<h3>${TERRAIN[tl.t].name}</h3>` + tileSummary(i);
+  if (!TERRAIN[tl.t].water && tl.city < 0) {
+    const spec = game.specialtyAt(i);
+    const kd = Math.min(3, KIN_DIST[game.players[pid].home][spec]);
+    h += `<div class="desc">A city here would be <b>${SPECIALTY[spec].name}</b> ${affBadge(kd)}</div>`;
+  }
+  if (tl.owner === pid && myTurn()) {
+    const opts = game.improvementsFor(pid, i);
+    if (opts.length) {
+      h += `<h4>Improve</h4><div class="opts">`;
+      for (const k of opts) {
+        const I = IMPROVEMENTS[k];
+        const chk = game.canImprove(pid, i, k);
+        h += `<button data-act="improve" data-k="${k}" ${chk.ok ? '' : 'disabled'} title="${esc(chk.why || '')}">${I.name} ◉${I.cost}<small>+${game.improvePop(i, k)} pop${I.tech && !game.has(pid, I.tech) ? ' · needs ' + TECHS[I.tech].name : ''}</small></button>`;
+      }
+      h += `</div>`;
+    }
+  }
+  return h;
+}
+
+function panelAction(d) {
+  if (!myTurn()) return;
+  let res = { ok: true };
+  if (d.act === 'settle') { doSettle(selUnit()); return; }
+  if (d.act === 'disband') { const u = selUnit(); if (u && confirm('Disband this unit?')) { game.disband(u); deselect(); refreshAll(); } return; }
+  if (d.act === 'train') {
+    const c = game.cityById(sel.id);
+    res = game.train(c, d.k);
+  } else if (d.act === 'build') {
+    res = game.build(game.cityById(sel.id), d.k);
+  } else if (d.act === 'improve') {
+    res = game.improve(R.viewer, sel.idx, d.k);
+  }
+  if (!res.ok) toast(res.why);
+  refreshAll();
+}
+
+// ------------------------------------------------------------ modals
+function openModal(html) { $('modalBody').innerHTML = html; $('modal').classList.remove('hidden'); }
+function closeModal() { $('modal').classList.add('hidden'); }
+
+function showTech() {
+  if (!game) return;
+  const pid = R.viewer;
+  const pl = game.players[pid];
+  let h = `<h2>Technology <span class="dim">— ◉ ${pl.gold} gold. Cost grows with your number of cities.</span></h2><div class="techtree">`;
+  for (let tier = 1; tier <= 4; tier++) {
+    h += `<div class="col"><h4>Tier ${tier}</h4>`;
+    for (const [k, T] of Object.entries(TECHS)) {
+      if (T.tier !== tier) continue;
+      const known = pl.techs.includes(k);
+      const avail = !known && T.req.every(r => pl.techs.includes(r));
+      const cost = game.techPrice(pid, k);
+      h += `<div class="tech ${known ? 'known' : avail ? 'avail' : 'locked'}" data-tech="${k}"><b>${T.name}</b>${known ? ' ✓' : `<span class="cost">◉${cost}</span>`}<br>${T.desc}${T.req.length ? `<br><span class="dim">needs ${T.req.map(r => TECHS[r].name).join(', ')}</span>` : ''}</div>`;
+    }
+    h += `</div>`;
+  }
+  h += `</div>`;
+  openModal(h);
+  $('modalBody').querySelectorAll('.tech.avail').forEach(el => el.onclick = () => {
+    if (!myTurn()) { toast('Not your turn'); return; }
+    const r = game.research(pid, el.dataset.tech);
+    if (!r.ok) toast(r.why);
+    else { toast('Learned ' + TECHS[el.dataset.tech].name); refreshAll(); showTech(); }
+  });
+}
+
+function showTribes() {
+  let h = `<h2>Tribes</h2><table class="tribes"><tr><th></th><th>Tribe</th><th>Homeland</th><th>Cities</th><th>Score</th><th>Techs</th><th>Kills</th></tr>`;
+  const viewer = game.players[R.viewer];
+  for (const r of game.ranking()) {
+    const p = game.players[r.id];
+    const met = watchMode || p.id === viewer.id || game.cities.some(c => c.owner === p.id && viewer.explored[c.idx]);
+    const cs = game.cities.filter(c => c.owner === p.id).length;
+    h += `<tr style="opacity:${p.alive ? 1 : 0.4}"><td><span class="chip" style="background:${p.color}"></span></td><td>${met ? esc(p.name) : '<i>Unknown tribe</i>'}${p.human ? ' (human)' : ''}${p.alive ? '' : ' — fallen'}</td><td>${met ? SPECIALTY[p.home].name : '?'}</td><td>${met ? cs : '?'}</td><td>${p.alive ? game.score(p.id) : '-'}</td><td>${met ? p.techs.length : '?'}</td><td>${met ? p.kills : '?'}</td></tr>`;
+  }
+  h += `</table>`;
+  h += `<h3>Cultural kinship</h3><p class="dim">How easily a ${SPECIALTY[viewer.home].name} people runs cities on each land type:</p><table class="spectable">`;
+  for (const s of SPECIALTY_KEYS) {
+    const d = Math.min(3, KIN_DIST[viewer.home][s]);
+    h += `<tr><td><b>${SPECIALTY[s].name}</b> <span class="dim">${SPECIALTY[s].title}</span></td><td>${affBadge(d)}</td><td>${SPECIALTY[s].desc} Unique: ${UNITS[SPECIALTY[s].unit].name}, ${BUILDINGS[SPECIALTY[s].building].name}.</td></tr>`;
+  }
+  h += `</table>`;
+  openModal(h);
+}
+
+function showHelp() {
+  let h = `<div class="help"><h2>How to play Tyrrainy</h2>
+  <p>Lead a tribe across a hex world. There are no fixed factions: <b>every city takes its specialty from the land it is founded on</b> — plains, hilltop, coastal, riverside, forest, desert, steppe, marsh or mountain. Each specialty has its own bonus, unique unit and unique building.</p>
+  <h3>Homeland & culture</h3>
+  <p>Your tribe has a homeland (the land your capital started on). Cities on that land are <b>Homeland</b> (+1 gold, cheaper uniques). Similar lands are <b>Kin</b>. Distant lands are <b>Foreign</b> (−1 gold, uniques +2) or <b>Alien</b> (−2 gold, no specialty building). Foreign cities slowly integrate (every 10 turns, 5 with a Shrine) and the Assimilation tech softens penalties. Your units also move freely across your homeland terrain.</p>
+  <h3>Economy</h3>
+  <ul><li>Gold comes from cities every turn. Spend it on units, techs, buildings and tile improvements.</li>
+  <li>Click a tile inside your borders to build an improvement (farm, mine, lumber camp…). Improvements add pop; when pop fills the bar, the city levels up and earns more. Level 4 cities expand their borders.</li>
+  <li>Train <b>Settlers</b> to found new cities — choose the land wisely. Settlers get pricier with every city.</li>
+  <li>Your unit cap is the sum of (city level + 1).</li></ul>
+  <h3>War</h3>
+  <ul><li>Select a unit: white hexes = move, red = attack, gold = capture an undefended enemy city.</li>
+  <li>Damage depends on attack vs. defense, health and terrain. Defenders in cities, hills, forests and mountains are tougher. Survivors in range strike back.</li>
+  <li>Units next to an enemy are stopped (zone of control). Units that rest heal.</li>
+  <li>Sailing lets units embark onto shallows; Navigation unlocks oceans. Coastal cities build Corsairs.</li></ul>
+  <h3>Winning</h3><p>Be the last tribe standing, or have the highest score when the turn limit ends.</p>
+  <h3>Controls</h3><p>Drag to pan, wheel/pinch to zoom, click to select. <b>Space</b> next unit, <b>Enter</b> end turn, <b>T</b> tech, <b>S</b> settle, <b>Esc</b> deselect, right-click deselect. Click a unit's tile again to see the city/tile beneath.</p>
+  <h3>Specialties</h3><table class="spectable">`;
+  for (const s of SPECIALTY_KEYS) {
+    const S = SPECIALTY[s], U = UNITS[S.unit];
+    h += `<tr><td><b style="color:${S.color}">${S.name}</b><br><span class="dim">${S.title}</span></td><td>${S.desc}<br><b>${U.name}</b> (${U.atk}/${U.def}, mv ${U.mv}${U.rng > 1 ? ', range ' + U.rng : ''}) · <b>${BUILDINGS[S.building].name}</b>: ${BUILDINGS[S.building].desc}</td></tr>`;
+  }
+  h += `</table><p class="dim">City type rule: hills → Hilltop, mountains → Mountain, river → Riverside, 2+ water neighbours → Coastal, otherwise the terrain itself.</p></div>`;
+  openModal(h);
+}
+
+function showWin() {
+  if (!game.winner) return;
+  const w = game.players[game.winner.pid];
+  let h = `<h2 style="color:${w.color}">${esc(w.name)} wins by ${game.winner.how}!</h2><p>Turn ${game.turn}.</p><table class="tribes"><tr><th></th><th>Tribe</th><th>Score</th></tr>`;
+  for (const r of game.ranking()) {
+    const p = game.players[r.id];
+    h += `<tr><td><span class="chip" style="background:${p.color}"></span></td><td>${esc(p.name)}${p.human ? ' (human)' : ''}</td><td>${p.alive ? r.score : 'fallen'}</td></tr>`;
+  }
+  h += `</table><p><button class="primary" id="btnAgain">New game</button> <button id="btnReveal">Reveal map</button></p>`;
+  openModal(h);
+  $('btnAgain').onclick = () => { closeModal(); $('menu').classList.remove('hidden'); };
+  $('btnReveal').onclick = () => { R.revealAll = true; R.dirty = true; closeModal(); };
+  try { localStorage.removeItem(SAVE_KEY); } catch { }
+}
+
+initMenu();
+// debug hook
+window.tyrrainy = { get game() { return game; }, get renderer() { return R; } };

@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Tyrrainy</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<canvas id="map"></canvas>
+
+<div id="topbar" class="hidden">
+  <div class="tribe"><span id="tribeChip" class="chip"></span><span id="tribeName"></span><span id="tribeHome" class="tag"></span></div>
+  <div class="stat" title="Gold (income per turn)">◉ <b id="gold">0</b> <span id="income" class="dim"></span></div>
+  <div class="stat" title="Turn">Turn <b id="turn">1</b><span id="turnLimit" class="dim"></span></div>
+  <div class="stat" title="Score">★ <b id="score">0</b></div>
+  <div class="stat" title="Units / unit cap">⚑ <b id="ucount">0</b></div>
+  <div class="spacer"></div>
+  <button id="btnTech">Tech <kbd>T</kbd></button>
+  <button id="btnTribes">Tribes</button>
+  <button id="btnHelp">?</button>
+  <button id="btnMenu">☰</button>
+</div>
+
+<div id="panel" class="hidden"></div>
+<div id="log" class="hidden"></div>
+<canvas id="minimap" class="hidden" width="220" height="150"></canvas>
+<button id="btnEnd" class="hidden">End Turn <kbd>⏎</kbd></button>
+<button id="btnNext" class="hidden" title="Next idle unit (Space)">Next unit ␣</button>
+<div id="toast"></div>
+
+<div id="modal" class="hidden"><div class="modal-box"><button class="close" id="modalClose">×</button><div id="modalBody"></div></div></div>
+
+<div id="menu">
+  <div class="menu-box">
+    <h1>Tyrrainy</h1>
+    <p class="sub">Every city is shaped by the land it stands on.</p>
+    <div class="form">
+      <label>Map size <select id="optSize"></select></label>
+      <label>Map type <select id="optType"></select></label>
+      <label>Tribes <select id="optPlayers"></select></label>
+      <label>Human players (hotseat) <select id="optHumans"></select></label>
+      <label>Turn limit <select id="optTurns">
+        <option value="0">None (conquest)</option><option value="50">50</option><option value="80" selected>80</option><option value="120">120</option><option value="200">200</option>
+      </select></label>
+      <label>Seed <input id="optSeed" placeholder="random"></label>
+    </div>
+    <div class="menu-buttons">
+      <button id="btnStart" class="primary">New Game</button>
+      <button id="btnContinue" class="hidden">Continue</button>
+      <button id="btnWatch" title="Watch AI tribes play each other">Watch AIs</button>
+      <button id="btnHow">How to play</button>
+    </div>
+  </div>
+</div>
+
+<div id="pass" class="hidden"><div class="menu-box"><h2 id="passTitle"></h2><p>Pass the device. Click when ready.</p><button id="btnPass" class="primary">I'm ready</button></div></div>
+
+<script type="module" src="src/main.js"></script>
+</body>
+</html>
