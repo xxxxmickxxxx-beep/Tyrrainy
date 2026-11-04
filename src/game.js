@@ -55,7 +55,10 @@ export class Game {
     }
     g.cityNamePool = g.rng.shuffle([...CITY_NAMES]);
     // rename starting cities from the shuffled pool for variety
-    for (const c of g.cities) c.name = g.takeCityName();
+    for (const c of g.cities) {
+      c.name = g.takeCityName();
+      for (const t of g.within(c.idx, 3)) g.players[c.owner].explored[t] = 1;
+    }
     for (const pl of g.players) g.updateVision(pl.id);
     g.startTurn();
     return g;
@@ -114,7 +117,7 @@ export class Game {
     if (tl.river) return 'riverside';
     let water = 0;
     for (const n of this.neighbors(i)) if (this.isWater(n)) water++;
-    if (water >= 2) return 'coastal';
+    if (water >= 3) return 'coastal';
     return TERRAIN_TO_SPECIALTY[tl.t] || 'plains';
   }
 
@@ -188,7 +191,7 @@ export class Game {
   cityIncome(city) {
     const pl = this.players[city.owner];
     const aff = this.affinity(city);
-    let g = city.level + (city.capital ? 1 : 0) + AFFINITY[aff].gold;
+    let g = 1 + Math.ceil(city.level * 0.6) + (city.capital ? 1 : 0) + AFFINITY[aff].gold;
     if (city.specialty === 'riverside' || city.specialty === 'desert') g += 1;
     if (this.has(pl.id, 'trade') && city.level >= 3) g += 1;
     for (const b of city.buildings) {
@@ -206,11 +209,18 @@ export class Game {
     return Math.max(1, g);
   }
 
-  income(pid) {
+  grossIncome(pid) {
     let s = 0;
     for (const c of this.cities) if (c.owner === pid) s += this.cityIncome(c);
     return s;
   }
+  // Armies cost upkeep: each city supports 2 units for free, every extra unit costs 1 gold per turn.
+  upkeep(pid) {
+    const n = this.units.filter(u => u.owner === pid).length;
+    const free = this.cities.filter(c => c.owner === pid).length * 2;
+    return Math.max(0, n - free);
+  }
+  income(pid) { return Math.max(0, this.grossIncome(pid) - this.upkeep(pid)); }
 
   unitCap(pid) {
     let s = 0;
@@ -227,16 +237,29 @@ export class Game {
         this.units.filter(u => u.owner === city.owner && u.type === 'settler').length;
       cost = 4 + 3 * n;
     }
-    if (U.unique) cost += AFFINITY[this.affinity(city)].unitCost;
+    if (U.unique && U.unique === city.specialty) cost += AFFINITY[this.affinity(city)].unitCost;
+    else if (U.unique) cost += 1; // trained through an adopted tradition
     if (city.buildings.includes('stables') && U.traits?.includes('mounted')) cost -= 1;
     return Math.max(1, cost);
+  }
+
+  // Traditions: owning 3+ well-integrated (home/kin) cities of a specialty lets every
+  // city of the tribe train that specialty's unique unit.
+  traditions(pid) {
+    const count = {};
+    for (const c of this.cities) {
+      if (c.owner !== pid || this.affinity(c) > 1) continue;
+      count[c.specialty] = (count[c.specialty] || 0) + 1;
+    }
+    return Object.keys(count).filter(s => count[s] >= 3);
   }
 
   trainable(city) {
     const pid = city.owner;
     const out = [];
+    const trad = this.traditions(pid);
     for (const [k, U] of Object.entries(UNITS)) {
-      if (U.unique && U.unique !== city.specialty) continue;
+      if (U.unique && U.unique !== city.specialty && !trad.includes(U.unique)) continue;
       if (U.tech && !this.has(pid, U.tech)) continue;
       if (U.traits?.includes('naval')) {
         if (!this.neighbors(city.idx).some(n => this.isWater(n))) continue;

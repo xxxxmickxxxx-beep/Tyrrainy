@@ -221,6 +221,23 @@ export class Renderer {
       this.hexPath(x, y, S * 0.95);
       ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = 1.5; ctx.stroke();
     }
+    if (this.hover != null && this.hoverLabel) {
+      const [x, y] = this.tileCenter(this.hover);
+      ctx.font = 'bold 13px sans-serif'; ctx.textAlign = 'center';
+      const lines = this.hoverLabel.split('\n');
+      const w = Math.max(...lines.map(l => ctx.measureText(l).width)) + 14;
+      const hgt = lines.length * 16 + 8;
+      ctx.fillStyle = 'rgba(10,14,20,0.92)'; ctx.strokeStyle = '#ff7a50'; ctx.lineWidth = 1;
+      ctx.fillRect(x - w / 2, y - S - hgt, w, hgt); ctx.strokeRect(x - w / 2, y - S - hgt, w, hgt);
+      ctx.fillStyle = '#fff';
+      lines.forEach((l, k) => ctx.fillText(l, x, y - S - hgt + 18 + k * 16));
+    }
+    // goto path markers
+    if (this.gotoMarks) for (const i of this.gotoMarks) {
+      const [x, y] = this.tileCenter(i);
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.setLineDash([3, 3]);
+      ctx.beginPath(); ctx.arc(x, y, S * 0.3, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
+    }
     // floating anims
     this.anims = this.anims.filter(a => now - a.t0 < a.dur);
     for (const a of this.anims) {

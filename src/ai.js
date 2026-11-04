@@ -23,7 +23,7 @@ function profile(g, pid) {
 }
 
 // Dijkstra distance field to target for a unit's movement rules (ignores units).
-function field(g, target, u, cache) {
+export function field(g, target, u, cache) {
   const key = target + ':' + u.type + ':' + u.owner;
   if (cache.has(key)) return cache.get(key);
   const N = g.W * g.H;
@@ -104,14 +104,20 @@ function tryAttack(g, u) {
     const kill = dmg >= d.hp;
     const die = !kill && ret >= u.hp;
     let v = dmg + (kill ? 8 + unitValue(d.type) : 0) - ret * 1.1 - (die ? 15 + unitValue(u.type) : 0);
-    if (g.cityAt(t)) v += 3;
+    const ec = g.cityAt(t);
+    if (ec && ec.owner === d.owner) {
+      // siege: wearing down garrisons is worth it if we have friends nearby
+      const friends = g.units.filter(x => x.owner === u.owner && x !== u && g.dist(x.idx, t) <= 2).length;
+      v += 3 + dmg * 0.4 + friends * 1.5;
+    }
+    if (g.stats(u).rng > 1 && ret === 0) v += 2;
     if (v > bestV) { bestV = v; best = t; }
   }
   if (best !== null) { g.attack(u, best); return true; }
   return false;
 }
 
-function bestStep(g, u, dist, avoidDanger) {
+export function bestStep(g, u, dist, avoidDanger) {
   const reach = g.reachable(u);
   let best = null, bestS = dist[u.idx] === Infinity ? Infinity : dist[u.idx] - 0.01;
   for (const [i] of reach) {
@@ -288,7 +294,7 @@ function bestMilitary(g, city, gold) {
     const cost = g.unitCost(city, k);
     if (cost > gold) continue;
     if (U.traits?.includes('naval') && g.rng() < 0.6) continue;
-    const s = (U.atk * 1.1 + U.def) * U.hp / 10 + (U.mv - 1) * 0.8 + (U.rng - 1) * 0.6 + (U.unique ? 1 : 0) + g.rng() * 1.5 - cost * 0.15;
+    const s = (U.atk * 1.1 + U.def) * U.hp / 10 + (U.mv - 1) * 0.8 + (U.rng - 1) * 0.6 + (U.unique ? 1 : 0) + g.rng() * 1.5 - cost * (gold > 30 ? 0.02 : 0.15);
     if (s > bestS) { bestS = s; best = k; }
   }
   return best;
@@ -302,7 +308,8 @@ function spend(g, pid, prof) {
     const units = g.units.filter(u => u.owner === pid);
     const mil = units.filter(u => u.type !== 'settler').length;
     const settlers = units.filter(u => u.type === 'settler').length;
-    const capLeft = g.unitCap(pid) - units.length;
+    const net = g.grossIncome(pid) - g.upkeep(pid);
+    const capLeft = Math.min(g.unitCap(pid) - units.length, net >= 3 || pl.gold > 40 ? 99 : 0);
     let acted = false;
 
     // a) defend threatened cities

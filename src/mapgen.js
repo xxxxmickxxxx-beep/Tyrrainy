@@ -69,7 +69,7 @@ export function generateMap(W, H, seed, type = 'continents') {
   const flat = landIdx.filter(i => elev[i] < hill);
   const moistSorted = flat.map(i => moist[i]).sort((a, b) => a - b);
   const mq = (q) => quantile(moistSorted, q);
-  const qDesert = mq(0.15), qSteppe = mq(0.32), qPlains = mq(0.62), qForest = mq(0.86);
+  const qDesert = mq(0.15), qSteppe = mq(0.31), qPlains = mq(0.58), qForest = mq(0.82);
 
   for (const i of landIdx) {
     const e = elev[i], m = moist[i], t = temp[i];
@@ -80,7 +80,7 @@ export function generateMap(W, H, seed, type = 'continents') {
     else if (m < qSteppe) terr = t > 0.75 ? 'desert' : 'steppe';
     else if (m < qPlains) terr = 'plains';
     else if (m < qForest) terr = 'forest';
-    else terr = (e < sea + (hill - sea) * 0.45) ? 'marsh' : 'forest';
+    else terr = (e < sea + (hill - sea) * 0.6) ? 'marsh' : 'forest';
     tiles[i].t = terr;
   }
 

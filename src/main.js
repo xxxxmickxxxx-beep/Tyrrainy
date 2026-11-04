@@ -1,6 +1,6 @@
 // UI controller: menu, input, panels, turn flow.
 import { Game } from './game.js';
-import { runAI } from './ai.js';
+import { runAI, field, bestStep } from './ai.js';
 import { Renderer } from './render.js';
 import { MAP_SIZES, MAP_TYPES } from './mapgen.js';
 import {
@@ -60,6 +60,7 @@ function boot(g) {
   R.revealAll = watchMode;
   game.listeners = [onEvent];
   $('log').innerHTML = '';
+  $('log').style.visibility = 'hidden';
   sel = null;
   beginTurnUI();
 }
@@ -106,6 +107,7 @@ function addLog(msg, pid, idx) {
   if (idx != null) el.onclick = () => { R.centerOn(idx); };
   const log = $('log');
   log.appendChild(el);
+  log.style.visibility = 'visible';
   while (log.children.length > 80) log.firstChild.remove();
   log.scrollTop = log.scrollHeight;
 }
@@ -140,8 +142,20 @@ function beginTurnUI() {
   try { localStorage.setItem(SAVE_KEY, game.serialize()); } catch { }
 }
 
+function stepGoto(u) {
+  if (u.goto == null || u.mvLeft <= 0) return;
+  if (u.idx === u.goto) { u.goto = null; return; }
+  if (game.zocSet(u.owner).has(u.idx)) { u.goto = null; return; } // enemy adjacent: stop and let the player decide
+  const dist = field(game, u.goto, u, new Map());
+  const step = bestStep(game, u, dist, false);
+  if (step == null) { u.goto = null; return; }
+  game.moveUnit(u, step);
+  if (u.idx === u.goto) u.goto = null;
+}
+
 function focusTurn(pl) {
   sel = null;
+  for (const u of game.units.filter(u => u.owner === pl.id && u.goto != null)) stepGoto(u);
   const cap = game.cities.find(c => c.owner === pl.id && c.capital) || game.cities.find(c => c.owner === pl.id);
   if (game.turn === 1 || !R._centered?.[pl.id]) {
     if (cap) R.centerOn(cap.idx);
@@ -207,7 +221,7 @@ function initInput() {
       if (drag.moved) { R.camX = drag.cx - dx; R.camY = drag.cy - dy; R.clampCam(); R.dirty = true; }
     } else if (game) {
       const t = R.screenToTile(e.clientX, e.clientY);
-      if (t !== R.hover) { R.hover = t; R.dirty = true; }
+      if (t !== R.hover) { R.hover = t; R.hoverLabel = hoverLabel(t); R.dirty = true; }
     }
   });
   const up = (e) => {
@@ -261,10 +275,23 @@ function initInput() {
   $('modal').onclick = (e) => { if (e.target.id === 'modal') closeModal(); };
 }
 
+function hoverLabel(t) {
+  const u = selUnit();
+  if (t == null || !u || !myTurn() || u.owner !== R.viewer) return null;
+  if (R.highlights.get(t) === 'attack') {
+    const d = game.unitAt(t);
+    if (!d) return null;
+    const { dmg, ret } = game.combatPreview(u, d);
+    return dmg >= d.hp ? `Attack: kills ${UNITS[d.type].name}` : `Attack: deal ${dmg} (${d.hp}→${d.hp - dmg})\nTake ${ret}${ret >= u.hp ? ' — DIES' : ''}`;
+  }
+  if (!R.highlights.has(t) && game.players[R.viewer].explored[t] && t !== u.idx) return 'Click: set move order';
+  return null;
+}
+
 function myTurn() { return game && !busy && !game.winner && game.players[game.current].human && game.current === R.viewer; }
 function selUnit() { return sel?.kind === 'unit' ? game.unitById(sel.id) : null; }
 
-function deselect() { sel = null; R.selected = null; R.highlights.clear(); refreshPanel(); R.dirty = true; }
+function deselect() { sel = null; R.selected = null; R.highlights.clear(); R.gotoMarks = null; R.hoverLabel = null; refreshPanel(); R.dirty = true; }
 
 function onTileClick(i) {
   if (i == null || !game) return;
@@ -280,9 +307,21 @@ function onTileClick(i) {
       return;
     }
     if (h === 'move' || h === 'capture') {
+      u.goto = null;
       const res = game.moveUnit(u, i);
       afterAction(u, res);
       return;
+    }
+    if (!h && i !== u.idx && !game.unitAt(i) && sel.kind === 'unit') {
+      const dist = field(game, i, u, new Map());
+      if (dist[u.idx] !== Infinity) {
+        u.goto = i;
+        stepGoto(u);
+        toast('Move order set — the unit will continue next turns');
+        afterAction(u, { ok: true });
+        return;
+      }
+      toast('No path there');
     }
   }
   // selection cycling: unit -> city -> tile
@@ -325,13 +364,15 @@ function select(s) {
       }
     }
   }
+  R.gotoMarks = null;
+  if (s.kind === 'unit') { const u = game.unitById(s.id); if (u && u.goto != null) R.gotoMarks = [u.goto]; }
   refreshPanel();
   R.dirty = true;
 }
 
 function nextUnit() {
   if (!myTurn()) return;
-  const mine = game.units.filter(u => u.owner === R.viewer && (u.mvLeft > 0 || game.attackTargets(u).length > 0));
+  const mine = game.units.filter(u => u.owner === R.viewer && u.goto == null && (u.mvLeft > 0 || game.attackTargets(u).length > 0));
   if (!mine.length) { toast('All units have acted'); return; }
   const cur = selUnit();
   let k = cur ? mine.indexOf(cur) + 1 : 0;
@@ -358,7 +399,8 @@ function updateTopbar() {
   $('tribeHome').style.background = SPECIALTY[pl.home].color;
   $('tribeHome').style.color = '#111';
   $('gold').textContent = pl.gold;
-  $('income').textContent = `(+${game.income(pl.id)})`;
+  const up = game.upkeep(pl.id);
+  $('income').textContent = `(+${game.income(pl.id)}${up ? `, upkeep ${up}` : ''})`;
   $('turn').textContent = game.turn;
   $('turnLimit').textContent = game.settings.turnLimit ? ` / ${game.settings.turnLimit}` : '';
   $('score').textContent = game.score(pl.id);
@@ -410,7 +452,7 @@ function unitPanel(u) {
       h += `<button class="primary" data-act="settle" ${chk.ok ? '' : 'disabled'}>Found city <kbd>S</kbd></button> ${chk.ok ? '' : `<span class="dim">${esc(chk.why)}</span>`}`;
       h += `<div class="desc">Green dashed hexes nearby are valid sites.</div>`;
     }
-    h += `<div style="margin-top:10px"><button data-act="disband">Disband</button></div>`;
+    h += `<div style="margin-top:10px"><button data-act="disband">Disband</button>${u.goto != null ? ' <button data-act="cancelgoto">Cancel move order</button>' : ''}</div>`;
   }
   // combat preview against hovered enemy handled by tooltip; show tile info too
   h += tileSummary(u.idx);
@@ -510,6 +552,7 @@ function panelAction(d) {
   let res = { ok: true };
   if (d.act === 'settle') { doSettle(selUnit()); return; }
   if (d.act === 'disband') { const u = selUnit(); if (u && confirm('Disband this unit?')) { game.disband(u); deselect(); refreshAll(); } return; }
+  if (d.act === 'cancelgoto') { const u = selUnit(); if (u) u.goto = null; select(sel); return; }
   if (d.act === 'train') {
     const c = game.cityById(sel.id);
     res = game.train(c, d.k);
@@ -562,6 +605,8 @@ function showTribes() {
     h += `<tr style="opacity:${p.alive ? 1 : 0.4}"><td><span class="chip" style="background:${p.color}"></span></td><td>${met ? esc(p.name) : '<i>Unknown tribe</i>'}${p.human ? ' (human)' : ''}${p.alive ? '' : ' — fallen'}</td><td>${met ? SPECIALTY[p.home].name : '?'}</td><td>${met ? cs : '?'}</td><td>${p.alive ? game.score(p.id) : '-'}</td><td>${met ? p.techs.length : '?'}</td><td>${met ? p.kills : '?'}</td></tr>`;
   }
   h += `</table>`;
+  const trad = game.traditions(viewer.id);
+  h += `<h3>Traditions</h3><p class="dim">Own 3+ Homeland/Kin cities of one land type and every one of your cities can train its unique unit (+1 cost).</p><p>${trad.length ? trad.map(s => `<b>${SPECIALTY[s].name}</b> → ${UNITS[SPECIALTY[s].unit].name}`).join(', ') : 'None yet.'}</p>`;
   h += `<h3>Cultural kinship</h3><p class="dim">How easily a ${SPECIALTY[viewer.home].name} people runs cities on each land type:</p><table class="spectable">`;
   for (const s of SPECIALTY_KEYS) {
     const d = Math.min(3, KIN_DIST[viewer.home][s]);
@@ -576,11 +621,12 @@ function showHelp() {
   <p>Lead a tribe across a hex world. There are no fixed factions: <b>every city takes its specialty from the land it is founded on</b> — plains, hilltop, coastal, riverside, forest, desert, steppe, marsh or mountain. Each specialty has its own bonus, unique unit and unique building.</p>
   <h3>Homeland & culture</h3>
   <p>Your tribe has a homeland (the land your capital started on). Cities on that land are <b>Homeland</b> (+1 gold, cheaper uniques). Similar lands are <b>Kin</b>. Distant lands are <b>Foreign</b> (−1 gold, uniques +2) or <b>Alien</b> (−2 gold, no specialty building). Foreign cities slowly integrate (every 10 turns, 5 with a Shrine) and the Assimilation tech softens penalties. Your units also move freely across your homeland terrain.</p>
+  <p><b>Traditions:</b> own three Homeland/Kin cities of one land type and all your cities may train that land's unique unit.</p>
   <h3>Economy</h3>
   <ul><li>Gold comes from cities every turn. Spend it on units, techs, buildings and tile improvements.</li>
   <li>Click a tile inside your borders to build an improvement (farm, mine, lumber camp…). Improvements add pop; when pop fills the bar, the city levels up and earns more. Level 4 cities expand their borders.</li>
   <li>Train <b>Settlers</b> to found new cities — choose the land wisely. Settlers get pricier with every city.</li>
-  <li>Your unit cap is the sum of (city level + 1).</li></ul>
+  <li>Your unit cap is the sum of (city level + 1). Each city feeds 2 units for free; every extra unit costs 1 gold of upkeep per turn.</li></ul>
   <h3>War</h3>
   <ul><li>Select a unit: white hexes = move, red = attack, gold = capture an undefended enemy city.</li>
   <li>Damage depends on attack vs. defense, health and terrain. Defenders in cities, hills, forests and mountains are tougher. Survivors in range strike back.</li>
