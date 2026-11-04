@@ -16,6 +16,9 @@
   <div class="stat" title="Score">★ <b id="score">0</b></div>
   <div class="stat" title="Units / unit cap">⚑ <b id="ucount">0</b></div>
   <div class="spacer"></div>
+  <select id="mapMode" title="Map mode (M)">
+    <option value="terrain">Map: Terrain</option><option value="political">Map: Political</option><option value="culture">Map: Culture</option><option value="specialty">Map: Specialty</option><option value="unrest">Map: Unrest</option>
+  </select>
   <button id="btnTech">Tech <kbd>T</kbd></button>
   <button id="btnTribes">Tribes</button>
   <button id="btnHelp">?</button>
@@ -24,6 +27,7 @@
 
 <div id="panel" class="hidden"></div>
 <div id="log" class="hidden"></div>
+<div id="legend" class="hidden"></div>
 <canvas id="minimap" class="hidden" width="220" height="150"></canvas>
 <button id="btnEnd" class="hidden">End Turn <kbd>⏎</kbd></button>
 <button id="btnNext" class="hidden" title="Next idle unit (Space)">Next unit ␣</button>

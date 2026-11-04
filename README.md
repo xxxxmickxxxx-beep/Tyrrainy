@@ -113,6 +113,18 @@ Coalition *membership* is a label: an AI counts itself in when its containment p
 
 Sims with a boosted runaway (`node tools/sim.js boost=12 …`) show the intended distance gradient. Steadfast tribes within 8 tiles of the leader aimed all their attacks at it, and those farther away none. Opportunists near it: 35%; far away: 0%.
 
+### War damage
+- **Occupation:** each occupied or damaged worked tile (one with an improvement or a resource) costs its city 1 gold. Enemies on a city's land add +1 unrest pressure.
+- **Pillage:** a unit that starts its turn on an enemy improvement has a 35% chance to damage it, and then to destroy it. Destroying it removes the pop it granted, so cities can drop levels. Repairs cost half the build price.
+- **Siege:** each attack on a garrison inside its city has a 12% chance to destroy a building.
+- **Sack:** on capture, each building is lost with 35% chance. If a city had buildings and loses all of them, it is razed (the tile becomes ruins) with chance `max(10%, 60% − 10%×level)`.
+
+### Culture & records
+- Cities remember their **culture**: the people who founded them, or the rebellion that freed them. A conquered city adopts its ruler's culture after 25 turns, or 15 with a Shrine.
+- **Map modes** (M): Terrain, Political, Culture (thick stripes show a people under foreign rule; thin lines show own people on foreign land), Specialty (unclaimed land shows what it would become), and Unrest.
+- **Tribes screen:** sortable, with Peak cities, Founded and Fell columns.
+- **Histomap:** each turn's power share is recorded and drawn as a classic Histomap, with rebellions placed beside their parent. It's reachable from the Tribes screen, the leave dialog and the victory screen.
+
 ### Combat
 Attack and defense forces are scaled by HP and terrain or city defense, and the formula is deterministic. Defenders that survive and are in range retaliate.
 Zones of control stop movement. Melee kills advance into the tile, and walking into an undefended enemy city captures it.

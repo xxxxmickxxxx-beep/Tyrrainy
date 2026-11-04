@@ -265,6 +265,7 @@ function initInput() {
     else if (e.key === ' ') { e.preventDefault(); nextUnit(); }
     else if (e.key === 'Escape') deselect();
     else if (e.key === 't' || e.key === 'T') showTech();
+    else if (e.key === 'm' || e.key === 'M') { const o = [...$('mapMode').options].map(x => x.value); setMapMode(o[(o.indexOf(R.mapMode) + 1) % o.length]); }
     else if (e.key === 's' || e.key === 'S') { const u = selUnit(); if (u && u.type === 'settler') doSettle(u); }
     else if (e.key === 'ArrowLeft') { R.camX -= pan; R.dirty = true; }
     else if (e.key === 'ArrowRight') { R.camX += pan; R.dirty = true; }
@@ -276,13 +277,10 @@ function initInput() {
   $('btnEnd').onclick = endTurn;
   $('btnNext').onclick = nextUnit;
   $('btnTech').onclick = showTech;
+  $('mapMode').onchange = () => setMapMode($('mapMode').value);
   $('btnTribes').onclick = showTribes;
   $('btnHelp').onclick = showHelp;
-  $('btnMenu').onclick = () => {
-    try { if (localStorage.getItem(SAVE_KEY)) $('btnContinue').classList.remove('hidden'); } catch { }
-    $('menu').classList.remove('hidden');
-    $('menu').onclick = (e) => { if (e.target.id === 'menu') $('menu').classList.add('hidden'); };
-  };
+  $('btnMenu').onclick = showLeave;
   $('modalClose').onclick = closeModal;
   $('modal').onclick = (e) => { if (e.target.id === 'modal') closeModal(); };
 }
@@ -298,6 +296,21 @@ function hoverLabel(t) {
   }
   if (!R.highlights.has(t) && game.players[R.viewer].explored[t] && t !== u.idx) return 'Click: set move order';
   return null;
+}
+
+const LEGENDS = {
+  political: () => 'Tribe colours. Grey: unclaimed land.',
+  culture: () => '<b>Solid</b>: a tribe\'s own people. <b>Thick stripes</b>: a people (base colour) ruled by another tribe (stripe colour). <b>Thin dark lines</b>: own people on foreign or alien land.',
+  specialty: () => Object.values(SPECIALTY).map(s => `<span class="sw" style="background:${s.color}"></span>${s.name}`).join('') + '<br><span class="dim">Unclaimed land is shown dimmed in the type a city founded there would get.</span>',
+  unrest: () => [['#4caf50', 'Content'], ['#c8c840', 'Calming'], ['#f09030', 'Restless'], ['#e04030', 'Rioting'], ['#901818', 'Insurrection']].map(([c, n]) => `<span class="sw" style="background:${c}"></span>${n}`).join('') + '<br><span class="dim">Blue lines: tax relief. Only your own cities are shown.</span>',
+};
+function setMapMode(m) {
+  R.mapMode = m;
+  $('mapMode').value = m;
+  const L = LEGENDS[m];
+  $('legend').classList.toggle('hidden', !L);
+  if (L) $('legend').innerHTML = L();
+  R.dirty = true; lastMini = 0;
 }
 
 function myTurn() { return game && !busy && !game.winner && game.players[game.current].human && game.current === R.viewer; }
@@ -353,7 +366,9 @@ function onTileClick(i) {
 
 function afterAction(u, res) {
   if (!res.ok) { toast(res.why || 'Not possible'); return; }
-  if (game.units.includes(u)) select({ kind: 'unit', id: u.id, idx: u.idx });
+  // units that are done for the turn are deselected automatically
+  const spent = game.units.includes(u) && u.mvLeft <= 0 && game.attackTargets(u).length === 0 && !(u.type === 'settler' && game.canSettle(u).ok);
+  if (game.units.includes(u) && !spent) select({ kind: 'unit', id: u.id, idx: u.idx });
   else deselect();
   refreshAll();
   if (game.winner) showWin();
@@ -496,6 +511,9 @@ function cityPanel(c) {
     }
     h += `<div class="desc">${affNote}</div>`;
     h += `<div class="row"><span>Income</span><b>+${game.cityIncome(c)} gold</b></div>`;
+    const occ = game.occupation(c);
+    if (occ.lost) h += `<div class="desc" style="color:#ff8a70">${occ.lost} worked tile${occ.lost > 1 ? 's are' : ' is'} occupied or damaged: −${occ.lost} gold.${occ.occupied ? ' Enemies on your land also raise unrest and may pillage.' : ''}</div>`;
+    if (c.culture != null && c.culture !== c.owner && game.players[c.culture]) h += `<div class="desc">Its people are still <b style="color:${game.players[c.culture].color}">${esc(game.players[c.culture].name)}</b> at heart.</div>`;
     h += moodBlock(c, mine && myTurn());
   }
   if (mine && myTurn()) {
@@ -581,6 +599,13 @@ function tilePanel(i) {
     const kd = Math.min(3, KIN_DIST[game.players[pid].home][spec]);
     h += `<div class="desc">A city here would be <b>${SPECIALTY[spec].name}</b> ${affBadge(kd)}</div>`;
   }
+  if (tl.damaged) {
+    h += `<div class="desc" style="color:#ff8a70">This ${IMPROVEMENTS[tl.imp].name} is damaged and yields nothing. Another round of pillage will destroy it, and the city will lose the pop it gave.</div>`;
+    if (tl.owner === pid && myTurn()) {
+      const chk = game.canRepair(pid, i);
+      h += `<button data-act="repair" ${chk.ok ? '' : 'disabled'} title="${esc(chk.why || '')}">Repair ◉${game.repairCost(i)}</button>`;
+    }
+  }
   if (tl.owner === pid && myTurn()) {
     const opts = game.improvementsFor(pid, i);
     if (opts.length) {
@@ -610,6 +635,8 @@ function panelAction(d) {
   } else if (d.act === 'placate') {
     res = game.placate(game.cityById(sel.id));
     if (res.ok) toast(res.backfired ? 'The festival turned into a riot!' : 'Festival held: unrest quelled');
+  } else if (d.act === 'repair') {
+    res = game.repair(R.viewer, sel.idx);
   } else if (d.act === 'relief') {
     const c = game.cityById(sel.id);
     res = game.setTaxRelief(c, !c.taxRelief);
@@ -652,22 +679,49 @@ function showTech() {
   });
 }
 
+let tribeSort = { key: 'score', dir: -1 };
+const TRIBE_COLS = [
+  { key: 'name', label: 'Tribe', val: (p) => p.name, txt: true },
+  { key: 'home', label: 'Homeland', val: (p) => p.home || '', txt: true },
+  { key: 'temper', label: 'Temperament', val: (p) => p.temper?.key || '', txt: true },
+  { key: 'cities', label: 'Cities', val: (p) => game.cities.filter(c => c.owner === p.id).length },
+  { key: 'peak', label: 'Peak', val: (p) => p.peak || 0 },
+  { key: 'founded', label: 'Founded', val: (p) => p.founded ?? 1 },
+  { key: 'fell', label: 'Fell', val: (p) => p.fell ?? Infinity },
+  { key: 'score', label: 'Score', val: (p) => p.alive ? game.score(p.id) : -1 },
+  { key: 'techs', label: 'Techs', val: (p) => p.techs.length },
+  { key: 'kills', label: 'Kills', val: (p) => p.kills },
+];
+
 function showTribes() {
-  let h = `<h2>Tribes</h2><table class="tribes"><tr><th></th><th>Tribe</th><th>Homeland</th><th>Temperament</th><th>Cities</th><th>Score</th><th>Techs</th><th>Kills</th></tr>`;
   const viewer = game.players[R.viewer];
-  for (const r of game.ranking()) {
-    const p = game.players[r.id];
-    const met = watchMode || p.id === viewer.id || game.cities.some(c => c.owner === p.id && viewer.explored[c.idx]);
+  const isMet = (p) => watchMode || p.id === viewer.id || game.cities.some(c => c.owner === p.id && viewer.explored[c.idx]) || !p.alive && p.metBy?.includes(viewer.id);
+  for (const p of game.players) if (p.alive && isMet(p)) { p.metBy = p.metBy || []; if (!p.metBy.includes(viewer.id)) p.metBy.push(viewer.id); }
+  const rows = game.players.filter(p => !p.rebel || p.heldCity);
+  const col = TRIBE_COLS.find(c => c.key === tribeSort.key) || TRIBE_COLS[7];
+  rows.sort((a, b) => {
+    const ma = isMet(a), mb = isMet(b);
+    if (ma !== mb) return ma ? -1 : 1; // unknown tribes last
+    const va = col.val(a), vb = col.val(b);
+    const c = col.txt ? String(va).localeCompare(String(vb)) : (va === vb ? 0 : va < vb ? -1 : 1);
+    return c * tribeSort.dir;
+  });
+  let h = `<h2>Tribes <button id="btnHisto" style="float:right;margin-right:40px;font-size:13px">Histomap</button></h2><p class="dim">Click a column to sort.</p><table class="tribes"><tr><th></th>`;
+  for (const c of TRIBE_COLS) h += `<th class="sortable ${c.key === tribeSort.key ? 'sorted' : ''}" data-sort="${c.key}">${c.label}${c.key === tribeSort.key ? (tribeSort.dir < 0 ? ' ▾' : ' ▴') : ''}</th>`;
+  h += `</tr>`;
+  for (const p of rows) {
+    const met = isMet(p);
     const cs = game.cities.filter(c => c.owner === p.id).length;
     const T = p.temper;
     let temper = p.human ? '—' : met && T ? `<span title="${esc(TEMPERAMENTS[T.key].desc)}">${TEMPERAMENTS[T.key].name}</span>` : '?';
-    if (met && T) {
+    if (met && T && p.alive) {
       if (T.joined >= 0) temper += ` <span class="tag" style="background:${game.players[T.joined].color};color:#111">vs ${esc(game.players[T.joined].name)}</span>`;
       if ((T.grudges[viewer.id] || 0) >= 15) temper += ` <span class="tag" style="background:#803030">grudge vs you</span>`;
     }
     let homeName = p.home ? SPECIALTY[p.home].name : '—';
     if (p.rebel && p.rebelFrom != null) homeName += ` <span class="dim">(rose against ${esc(game.players[p.rebelFrom].name)})</span>`;
-    h += `<tr style="opacity:${p.alive ? 1 : 0.4}"><td><span class="chip" style="background:${p.color}"></span></td><td>${met ? esc(p.name) : '<i>Unknown tribe</i>'}${p.human ? ' (human)' : ''}${p.alive ? '' : ' — fallen'}</td><td>${met ? homeName : '?'}</td><td>${temper}</td><td>${met ? cs : '?'}</td><td>${p.alive ? game.score(p.id) : '-'}</td><td>${met ? p.techs.length : '?'}</td><td>${met ? p.kills : '?'}</td></tr>`;
+    const q = (v) => met ? v : '?';
+    h += `<tr style="opacity:${p.alive ? 1 : 0.45}"><td><span class="chip" style="background:${p.color}"></span></td><td>${met ? esc(p.name) : '<i>Unknown tribe</i>'}${p.human ? ' (human)' : ''}${p.alive ? '' : ' — fallen'}</td><td>${q(homeName)}</td><td>${temper}</td><td>${q(cs)}</td><td>${q(p.peak || 0)}</td><td>${q('T' + (p.founded ?? 1))}</td><td>${p.fell != null ? q('T' + p.fell) : ''}</td><td>${p.alive ? q(game.score(p.id)) : '-'}</td><td>${q(p.techs.length)}</td><td>${q(p.kills)}</td></tr>`;
   }
   h += `</table>`;
   const dom = game.dominance();
@@ -689,6 +743,112 @@ function showTribes() {
   }
   h += `</table>`;
   openModal(h);
+  $('modalBody').querySelectorAll('th[data-sort]').forEach(th => th.onclick = () => {
+    const k = th.dataset.sort;
+    if (tribeSort.key === k) tribeSort.dir *= -1;
+    else tribeSort = { key: k, dir: TRIBE_COLS.find(c => c.key === k).txt || k === 'founded' || k === 'fell' ? 1 : -1 };
+    const sc = $('modalBody').parentElement.scrollTop;
+    showTribes();
+    $('modalBody').parentElement.scrollTop = sc;
+  });
+  $('btnHisto').onclick = () => showHistomap(false);
+}
+
+// ------------------------------------------------------------ histomap
+// Streams of relative power through time, stacked side by side like the classic
+// "Histomap": time runs downward, width is each tribe's share of world power.
+// Rebellions are drawn next to the tribe they broke from.
+function histomapOrder() {
+  const kids = {}, order = [];
+  for (const p of game.players) if (p.rebel && p.rebelFrom != null) (kids[p.rebelFrom] ||= []).push(p.id);
+  const visit = (id) => { order.push(id); for (const k of kids[id] || []) visit(k); };
+  for (const p of game.players) if (!(p.rebel && p.rebelFrom != null)) visit(p.id);
+  return order;
+}
+
+function drawHistomap(cv) {
+  const hist = game.history || [];
+  const ctx = cv.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  const W = cv.clientWidth || 900, H = Math.max(420, Math.min(900, hist.length * 9 + 60));
+  cv.style.height = H + 'px';
+  cv.width = W * dpr; cv.height = H * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = '#0e1620'; ctx.fillRect(0, 0, W, H);
+  if (hist.length < 2) { ctx.fillStyle = '#ccc'; ctx.font = '14px sans-serif'; ctx.fillText('Not enough history yet.', 20, 30); return; }
+  const L = 46, T = 12, PW = W - L - 10, PH = H - T - 12;
+  const order = histomapOrder();
+  const y = (k) => T + (k / (hist.length - 1)) * PH;
+  const edges = {}; // id -> [[left,right] per row]
+  hist.forEach((row, k) => {
+    const total = Object.values(row.pw).reduce((a, b) => a + b, 0) || 1;
+    let x = L;
+    for (const id of order) {
+      const w = (row.pw[id] || 0) / total * PW;
+      (edges[id] ||= [])[k] = [x, x + w];
+      x += w;
+    }
+  });
+  // streams
+  for (const id of order) {
+    const e = edges[id];
+    if (!e || !e.some(([a, b]) => b - a > 0.01)) continue;
+    ctx.beginPath();
+    e.forEach(([a], k) => k ? ctx.lineTo(a, y(k)) : ctx.moveTo(a, y(k)));
+    for (let k = e.length - 1; k >= 0; k--) ctx.lineTo(e[k][1], y(k));
+    ctx.closePath();
+    ctx.fillStyle = game.players[id].color; ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,0.55)'; ctx.lineWidth = 0.8; ctx.stroke();
+  }
+  // time axis
+  ctx.font = '11px sans-serif'; ctx.textAlign = 'right';
+  const step = hist.length > 120 ? 20 : 10;
+  hist.forEach((row, k) => {
+    if (row.t % step !== 0 && k !== 0) return;
+    ctx.strokeStyle = 'rgba(255,255,255,0.12)'; ctx.beginPath(); ctx.moveTo(L, y(k)); ctx.lineTo(L + PW, y(k)); ctx.stroke();
+    ctx.fillStyle = '#aab'; ctx.fillText('T' + row.t, L - 6, y(k) + 4);
+  });
+  // labels at each stream's widest point
+  ctx.textAlign = 'center';
+  for (const id of order) {
+    const e = edges[id];
+    if (!e) continue;
+    let bk = 0, bw = 0;
+    e.forEach(([a, b], k) => { if (b - a > bw) { bw = b - a; bk = k; } });
+    const name = game.players[id].name;
+    const fs = Math.min(15, Math.max(9, bw / (name.length * 0.62)));
+    if (bw < name.length * 9 * 0.62 * 0.9) continue;
+    const [a, b] = e[bk];
+    const ky = Math.min(Math.max(y(bk), T + 14), T + PH - 8);
+    const c = game.players[id].color;
+    const lum = parseInt(c.slice(1, 3), 16) * 0.3 + parseInt(c.slice(3, 5), 16) * 0.59 + parseInt(c.slice(5, 7), 16) * 0.11;
+    ctx.font = `bold ${fs}px sans-serif`;
+    ctx.fillStyle = lum > 140 ? '#111' : '#fff';
+    ctx.fillText(name.toUpperCase(), (a + b) / 2, ky);
+  }
+}
+
+function histomapHTML() {
+  return `<canvas id="histo" style="width:100%;height:480px;border-radius:8px"></canvas><p class="dim">Time flows downward. Each stream's width is that tribe's share of world power (cities, city levels, armies). Rebellions appear beside the tribe they rose against.</p>`;
+}
+
+function showHistomap(fromWin) {
+  openModal(`<h2>The Histomap of this world</h2>${histomapHTML()}<p><button id="btnHistoBack">Back</button></p>`);
+  requestAnimationFrame(() => drawHistomap($('histo')));
+  $('btnHistoBack').onclick = () => (fromWin ? showWin() : showTribes());
+}
+
+function showLeave() {
+  if (!game) { $('menu').classList.remove('hidden'); return; }
+  openModal(`<h2>Leave this game?</h2><p class="dim">The game is saved. You can continue it from the main menu.</p>${histomapHTML()}<p><button class="primary" id="btnLeave">Main menu</button> <button id="btnStay">Back to game</button></p>`);
+  requestAnimationFrame(() => drawHistomap($('histo')));
+  $('btnStay').onclick = closeModal;
+  $('btnLeave').onclick = () => {
+    closeModal();
+    try { if (localStorage.getItem(SAVE_KEY)) $('btnContinue').classList.remove('hidden'); } catch { }
+    $('menu').classList.remove('hidden');
+    $('menu').onclick = (e) => { if (e.target.id === 'menu') $('menu').classList.add('hidden'); };
+  };
 }
 
 function showHelp() {
@@ -736,6 +896,9 @@ function showHelp() {
   <li>Kindred rebellions within 5 tiles merge.</li>
   <li>An uprising that never takes a city melts away once the unrest feeding it dies down.</li></ul>
   <p>Depending on game options, you can take over a rebellion when your tribe falls, or every rebellion can be a human seat.</p>
+  <h3>War damage</h3>
+  <p>Enemy units standing on a city's tiles cut it off: each occupied or damaged worked tile costs that city 1 gold, and enemies on its land raise unrest. A unit that spends a turn on an enemy improvement may <b>damage</b> it, then <b>destroy</b> it. Destroying it removes the pop it gave, so cities can shrink. Repair damaged improvements from the tile panel. Attacks on a city's garrison may wreck buildings, and a captured city loses each building with 35% chance. A city stripped of all its buildings in the sack may be <b>razed</b>, leaving ruins.</p>
+  <h3>Map modes</h3><p>Press <b>M</b> or use the Map menu: Terrain, Political (tribe colours only), Culture (stripes mark peoples under foreign rule), Specialty (and what unclaimed land would become), and Unrest.</p>
   <h3>War</h3>
   <ul><li>Select a unit: white hexes = move, red = attack, gold = capture an undefended enemy city.</li>
   <li>Damage depends on attack vs. defense, health and terrain. Defenders in cities, hills, forests and mountains are tougher. Survivors in range strike back.</li>
@@ -762,8 +925,9 @@ function showWin() {
     const p = game.players[r.id];
     h += `<tr><td><span class="chip" style="background:${p.color}"></span></td><td>${esc(p.name)}${p.human ? ' (human)' : ''}</td><td>${p.alive ? r.score : 'fallen'}</td></tr>`;
   }
-  h += `</table><p><button class="primary" id="btnAgain">New game</button> <button id="btnReveal">Reveal map</button></p>`;
+  h += `</table>${histomapHTML()}<p><button class="primary" id="btnAgain">New game</button> <button id="btnReveal">Reveal map</button></p>`;
   openModal(h);
+  requestAnimationFrame(() => drawHistomap($('histo')));
   $('btnAgain').onclick = () => { closeModal(); $('menu').classList.remove('hidden'); };
   $('btnReveal').onclick = () => { R.revealAll = true; R.dirty = true; closeModal(); };
   try { localStorage.removeItem(SAVE_KEY); } catch { }

@@ -383,6 +383,14 @@ function spend(g, pid, prof) {
       }
     }
 
+    // c0) repair war damage
+    let repaired = false;
+    for (const c of cities) {
+      for (const t of g.cityTiles(c)) if (g.tiles[t].damaged && g.canRepair(pid, t).ok) { g.repair(pid, t); repaired = true; break; }
+      if (repaired) break;
+    }
+    if (repaired) continue;
+
     // c) improvements (cheap growth)
     let bestImp = null, bestV = 0;
     for (const c of cities) {

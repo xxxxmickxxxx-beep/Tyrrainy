@@ -25,6 +25,8 @@ export class Renderer {
     this.anims = [];
     this.dirty = true;
     this.revealAll = false;
+    this.mapMode = 'terrain'; // terrain | political | culture | specialty | unrest
+    this.patterns = new Map();
     this.dpr = window.devicePixelRatio || 1;
     this.resize();
   }
@@ -98,7 +100,8 @@ export class Renderer {
     const list = [];
     for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) list.push(r * g.W + c);
 
-    // pass 1: terrain
+    const terrainMode = this.mapMode === 'terrain';
+    // pass 1: terrain (or map-mode fills)
     for (const i of list) {
       if (explored && !explored[i]) continue;
       const [x, y] = this.tileCenter(i);
@@ -106,13 +109,20 @@ export class Renderer {
       const T = TERRAIN[tl.t];
       const elevTint = 0.92 + ((g.elev[i] * 997) % 1) * 0.12;
       this.hexPath(x, y, S + 0.6);
-      ctx.fillStyle = shade(T.color, elevTint);
-      ctx.fill();
-      this.drawTerrainGlyph(tl.t, x, y, S, i);
+      if (terrainMode) {
+        ctx.fillStyle = shade(T.color, elevTint);
+        ctx.fill();
+        this.drawTerrainGlyph(tl.t, x, y, S, i);
+        continue;
+      }
+      if (T.water) { ctx.fillStyle = shade(T.color, 0.55); ctx.fill(); continue; }
+      const m = this.modeFill(i);
+      ctx.fillStyle = m.fill; ctx.fill();
+      if (m.hatch) { ctx.fillStyle = this.hatch(m.hatch, m.thin); ctx.fill(); }
     }
     // rivers
     ctx.lineCap = 'round';
-    for (const i of list) {
+    for (const i of (terrainMode ? list : [])) {
       if (explored && !explored[i]) continue;
       const tl = g.tiles[i];
       if (!tl.river || tl.riverTo < 0) continue;
@@ -126,7 +136,7 @@ export class Renderer {
       ctx.stroke();
     }
     // resources / improvements / ruins
-    for (const i of list) {
+    for (const i of (terrainMode ? list : [])) {
       if (explored && !explored[i]) continue;
       const tl = g.tiles[i];
       const [x, y] = this.tileCenter(i);
@@ -139,6 +149,11 @@ export class Renderer {
         ctx.beginPath(); ctx.arc(rx, ry, rr, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
       }
       if (tl.imp) this.drawImprovement(tl.imp, x, y, S);
+      if (tl.damaged) {
+        ctx.strokeStyle = '#ff3a2a'; ctx.lineWidth = Math.max(1.5, S * 0.08);
+        ctx.beginPath(); ctx.moveTo(x - S * 0.25, y - S * 0.25); ctx.lineTo(x + S * 0.25, y + S * 0.25);
+        ctx.moveTo(x + S * 0.25, y - S * 0.25); ctx.lineTo(x - S * 0.25, y + S * 0.25); ctx.stroke();
+      }
       if (tl.ruin) {
         ctx.fillStyle = '#6d5b4b'; ctx.strokeStyle = '#2a2018'; ctx.lineWidth = 1;
         for (let k = -1; k <= 1; k++) {
@@ -164,6 +179,7 @@ export class Renderer {
         const a = corners[(k + 5) % 6], b = corners[k];
         ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke();
       }
+      if (!terrainMode) continue;
       ctx.globalAlpha = 0.12;
       this.hexPath(x, y, S);
       ctx.fillStyle = col; ctx.fill();
@@ -264,6 +280,55 @@ export class Renderer {
       }
     }
     this.dirty = this.anims.length > 0;
+  }
+
+  // Fill for non-terrain map modes (land tiles only).
+  modeFill(i) {
+    const g = this.game, tl = g.tiles[i];
+    const NEUTRAL = '#3a3f45';
+    const city = tl.ownerCity != null ? g.cityById(tl.ownerCity) : null;
+    const owner = tl.owner;
+    switch (this.mapMode) {
+      case 'political':
+        return { fill: owner >= 0 ? g.players[owner].color : NEUTRAL };
+      case 'culture': {
+        if (owner < 0 || !city) return { fill: NEUTRAL };
+        const culture = city.culture ?? owner;
+        if (culture !== owner && g.players[culture]) return { fill: g.players[culture].color, hatch: g.players[owner].color };
+        const foreign = g.affinity(city) >= 2;
+        return { fill: g.players[owner].color, hatch: foreign ? 'rgba(0,0,0,0.45)' : null, thin: true };
+      }
+      case 'specialty': {
+        if (city && owner >= 0) return { fill: SPECIALTY[city.specialty].color };
+        return { fill: shade(SPECIALTY[g.specialtyAt(i)].color, 0.45) };
+      }
+      case 'unrest': {
+        if (!city || owner < 0) return { fill: NEUTRAL };
+        if (owner !== this.viewer && !this.revealAll) return { fill: shade(g.players[owner].color, 0.4) };
+        const MOOD = { content: '#4caf50', calming: '#c8c840', restless: '#f09030', rioting: '#e04030', insurrection: '#901818' };
+        return { fill: MOOD[g.moodState(city)], hatch: city.taxRelief ? 'rgba(80,160,255,0.8)' : null, thin: true };
+      }
+    }
+    return { fill: NEUTRAL };
+  }
+
+  // Diagonal hatch pattern anchored to the world so it doesn't slide when panning.
+  hatch(color, thin) {
+    const key = color + (thin ? ':t' : '');
+    let p = this.patterns.get(key);
+    if (!p) {
+      const c = document.createElement('canvas');
+      c.width = c.height = 10;
+      const x = c.getContext('2d');
+      x.strokeStyle = color; x.lineWidth = thin ? 1.2 : 3.2;
+      x.beginPath();
+      for (const o of [-10, 0, 10]) { x.moveTo(o, 10); x.lineTo(o + 10, 0); }
+      x.stroke();
+      p = this.ctx.createPattern(c, 'repeat');
+      this.patterns.set(key, p);
+    }
+    if (p.setTransform) p.setTransform(new DOMMatrix().translateSelf(-this.camX, -this.camY));
+    return p;
   }
 
   neighborDirs(i) {
@@ -514,7 +579,7 @@ export class Renderer {
       if (!this.revealAll && !pl.explored[i]) continue;
       const [c, r] = g.cr(i);
       const tl = g.tiles[i];
-      ctx.fillStyle = tl.owner >= 0 ? g.players[tl.owner].color : TERRAIN[tl.t].color;
+      ctx.fillStyle = tl.owner >= 0 ? g.players[tl.owner].color : (this.mapMode === 'terrain' || TERRAIN[tl.t].water ? TERRAIN[tl.t].color : '#3a3f45');
       if (tl.owner >= 0 && tl.city < 0) ctx.globalAlpha = 0.7;
       ctx.fillRect((c + 0.5 * (r & 1)) * sx, r * sy, sx + 0.5, sy + 0.5);
       ctx.globalAlpha = 1;

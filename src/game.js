@@ -83,6 +83,9 @@ export class Game {
       for (const t of g.within(c.idx, 3)) g.players[c.owner].explored[t] = 1;
     }
     g.coalition = -1;
+    g.history = [];
+    for (const pl of g.players) { pl.founded = 1; pl.peak = 1; }
+    g.recordHistory();
     for (const pl of g.players) g.updateVision(pl.id);
     g.startTurn();
     return g;
@@ -175,7 +178,7 @@ export class Game {
     const city = {
       id: this.nextId++, name: capital ? 'Capital' : this.takeCityName(), owner: pid, idx: i,
       level: 1, pop: 0, specialty: this.specialtyAt(i), founded: this.turn, held: 0, adapt: 0,
-      buildings: [], capital, trainedTurn: -1, hp: 0,
+      buildings: [], capital, trainedTurn: -1, hp: 0, culture: pid,
     };
     this.cities.push(city);
     const tl = this.tiles[i];
@@ -185,6 +188,7 @@ export class Game {
     if (this.affinity(city) === 0) city.pop += 1;
     this.claimTerritory(city);
     this.updateVision(pid);
+    this.bumpPeak(pid);
     return city;
   }
 
@@ -236,6 +240,7 @@ export class Game {
       if (b === 'market') g += Math.floor(city.level / 2);
     }
     const tiles = this.cityTiles(city);
+    g -= this.occupation(city).lost;
     if (city.buildings.includes('sawmill')) g += tiles.filter(t => this.tiles[t].imp === 'lumber').length;
     if (city.buildings.includes('peatworks')) g += Math.min(3, tiles.filter(t => this.tiles[t].t === 'marsh').length);
     if (city.specialty === 'forest') g += tiles.filter(t => this.tiles[t].imp === 'lumber').length;
@@ -376,6 +381,7 @@ export class Game {
     const aff = this.affinity(city);
     if (aff >= 2) pressure.push([AFFINITY[aff].name, aff - 1]);
     if (city.capturedTurn != null && this.turn - city.capturedTurn < 15) pressure.push(['Recently conquered', 2]);
+    if (this.occupation(city).occupied > 0) pressure.push(['Enemies in our lands', 1]);
     const big = Math.floor(city.level / 4);
     if (big) pressure.push(['Crowded city', big]);
     if (this.cities.some(o => o !== city && o.owner === pid && (o.unrest || 0) >= RIOT_AT && this.dist(o.idx, city.idx) <= 3)) pressure.push(['Riots nearby', 1]);
@@ -437,6 +443,13 @@ export class Game {
     this.emit('festival', { city, backfired: false });
     return { ok: true, backfired: false };
   }
+  uniqueTribeName(base) {
+    const taken = new Set(this.players.map(p => p.name));
+    if (!taken.has(base)) return base;
+    const R = ['II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X'];
+    for (const r of R) if (!taken.has(base + ' ' + r)) return base + ' ' + r;
+    return base + ' ' + this.players.length;
+  }
   // A rebellion takes the homeland of the city it rises in. Kindred rebellions close by merge.
   rebellionFor(city) {
     const owner = city.owner;
@@ -454,10 +467,11 @@ export class Game {
     const id = this.players.length;
     const human = this.settings.rebelControl === 'human' && this.players.some(p => p.human);
     const pl = {
-      id, name: 'Free ' + city.name, color: rebelColor(id), home: city.specialty, human, rebel: true, rebelFrom: owner,
+      id, name: this.uniqueTribeName('Free ' + city.name), color: rebelColor(id), home: city.specialty, human, rebel: true, rebelFrom: owner,
       gold: 4, techs: [...old.techs], explored: new Array(this.W * this.H).fill(0), alive: true, kills: 0, losses: 0, born: this.turn,
     };
     if (!human) { pl.temper = rollTemper(this.rng); pl.temper.grudges[owner] = 40; }
+    pl.founded = this.turn; pl.peak = 0;
     this.players.push(pl);
     for (const t of this.within(city.idx, 4)) pl.explored[t] = 1;
     city.rebellion = id;
@@ -472,6 +486,7 @@ export class Game {
     const gar = this.unitAt(city.idx);
     if (gar && gar.owner === old) { gar.owner = rid; gar.goto = null; } // the garrison defects
     city.owner = rid;
+    city.culture = rid; // the rebels are this city's own people
     city.unrest = 0;
     city.taxRelief = false;
     city.capital = false;
@@ -483,6 +498,7 @@ export class Game {
     this.rebuildUnitMap();
     const reb = this.players[rid];
     reb.heldCity = true;
+    this.bumpPeak(rid);
     reb.gold += 5 + city.level * 2;
     for (const t of this.within(city.idx, 3)) reb.explored[t] = 1;
     if (reb.temper) reb.temper.grudges[old] = (reb.temper.grudges[old] || 0) + 40;
@@ -653,6 +669,109 @@ export class Game {
     return { ok: true };
   }
 
+  // ------------------------------------------------------------ occupation & war damage
+  // Hostile units standing on a city's tiles cut it off from them; damaged improvements
+  // produce nothing until repaired.
+  occupation(city) {
+    let occupied = 0, damaged = 0;
+    for (const t of this.cityTiles(city)) {
+      if (t === city.idx) continue;
+      const tl = this.tiles[t];
+      const u = this.unitAt(t);
+      const hostile = u && u.owner !== city.owner;
+      if (hostile) occupied++;
+      if (tl.imp && (hostile || tl.damaged)) { if (tl.damaged) damaged++; }
+    }
+    let lost = 0;
+    for (const t of this.cityTiles(city)) {
+      if (t === city.idx) continue;
+      const tl = this.tiles[t];
+      const u = this.unitAt(t);
+      if ((tl.imp || tl.res) && ((u && u.owner !== city.owner) || tl.damaged)) lost++;
+    }
+    return { occupied, damaged, lost };
+  }
+  removePop(city, n) {
+    city.pop -= n;
+    let lost = false;
+    while (city.pop < 0 && city.level > 1) { city.level--; city.pop += city.level + 1; lost = true; }
+    if (city.pop < 0) city.pop = 0;
+    if (lost) this.addLog(`${city.name} shrank to level ${city.level}`, city.owner, city.idx);
+  }
+  // Called at the start of the occupier's turn for each unit sitting on enemy improvements.
+  pillage(u) {
+    const tl = this.tiles[u.idx];
+    if (!tl.imp || tl.owner < 0 || tl.owner === u.owner || tl.city >= 0) return;
+    if (this.rng() >= 0.35) return;
+    const city = this.cityById(tl.ownerCity);
+    const I = IMPROVEMENTS[tl.imp];
+    if (!tl.damaged) {
+      tl.damaged = true;
+      this.addLog(`${this.players[u.owner].name} damaged a ${I.name}${city ? ' near ' + city.name : ''}`, tl.owner, u.idx);
+    } else {
+      const pop = tl.impPop ?? I.pop;
+      tl.imp = null; tl.damaged = false; tl.impPop = undefined;
+      if (city) this.removePop(city, pop);
+      this.addLog(`${this.players[u.owner].name} destroyed a ${I.name}${city ? ' near ' + city.name : ''}`, tl.owner, u.idx);
+    }
+    this.emit('pillage', { idx: u.idx });
+  }
+  repairCost(i) { const tl = this.tiles[i]; return tl.imp ? Math.ceil(IMPROVEMENTS[tl.imp].cost / 2) : 0; }
+  canRepair(pid, i) {
+    const tl = this.tiles[i];
+    if (!tl.damaged || tl.owner !== pid) return { ok: false, why: 'Nothing to repair' };
+    const u = this.unitAt(i);
+    if (u && u.owner !== pid) return { ok: false, why: 'Enemy on the tile' };
+    if (this.players[pid].gold < this.repairCost(i)) return { ok: false, why: `Need ${this.repairCost(i)} gold` };
+    return { ok: true };
+  }
+  repair(pid, i) {
+    const chk = this.canRepair(pid, i);
+    if (!chk.ok) return chk;
+    this.players[pid].gold -= this.repairCost(i);
+    this.tiles[i].damaged = false;
+    return { ok: true };
+  }
+  destroyBuilding(city, why) {
+    if (!city.buildings.length) return null;
+    const b = city.buildings.splice(this.rng.int(city.buildings.length), 1)[0];
+    this.addLog(`${BUILDINGS[b].name} in ${city.name} was destroyed${why ? ' ' + why : ''}`, city.owner, city.idx);
+    if (b === 'watchtower') this.updateVision(city.owner);
+    return b;
+  }
+  razeCity(c, by) {
+    const old = c.owner;
+    for (const t of this.within(c.idx, 2)) {
+      const tl = this.tiles[t];
+      if (tl.ownerCity === c.id) { tl.owner = -1; tl.ownerCity = undefined; }
+    }
+    this.tiles[c.idx].city = -1;
+    this.tiles[c.idx].ruin = true;
+    this.cities = this.cities.filter(x => x !== c);
+    for (const o of this.cities) if (o.owner >= 0) this.claimTerritory(o); // neighbours reclaim free land
+    this.addLog(`${c.name} was razed to the ground by ${this.players[by].name}!`, by, c.idx);
+    this.emit('razed', { c, by, old });
+  }
+  bumpPeak(pid) {
+    const n = this.cities.filter(c => c.owner === pid).length;
+    const p = this.players[pid];
+    if (p && n > (p.peak || 0)) p.peak = n;
+  }
+  recordHistory() {
+    this.history = this.history || [];
+    const pw = {};
+    for (const p of this.players) if (p.alive) { const v = this.power(p.id); if (v > 0) pw[p.id] = Math.round(v * 10) / 10; }
+    this.history.push({ t: this.turn, pw });
+    // remember who has met whom, so fallen tribes stay identifiable in the records
+    for (const h of this.players) {
+      if (!h.human || !h.alive) continue;
+      for (const c of this.cities) {
+        const p = this.players[c.owner];
+        if (p.id !== h.id && h.explored[c.idx] && !(p.metBy ||= []).includes(h.id)) p.metBy.push(h.id);
+      }
+    }
+  }
+
   // ------------------------------------------------------------ improvements
   improvementsFor(pid, i) {
     const tl = this.tiles[i];
@@ -697,7 +816,8 @@ export class Game {
     const tl = this.tiles[i];
     const pop = this.improvePop(i, k);
     this.players[pid].gold -= I.cost;
-    if (I.consume) { tl.res = null; } else { tl.imp = k; }
+    if (I.consume) { tl.res = null; if (k === 'fishery' || k === 'whaling') tl.imp = k; } else { tl.imp = k; }
+    tl.impPop = pop;
     const city = this.cityById(tl.ownerCity);
     if (city) this.addPop(city, pop);
     this.emit('improve', { idx: i, k });
@@ -923,6 +1043,16 @@ export class Game {
     }
     this.addGrudge(old, pid, 30);
     this.addLog(`${this.players[pid].name} captured ${c.name} from ${oldName}!`, pid, c.idx);
+    // the sack: each building may be lost; a city stripped of everything may be razed
+    const had = c.buildings.length;
+    for (const b of [...c.buildings]) if (this.rng() < 0.35) { c.buildings.splice(c.buildings.indexOf(b), 1); }
+    if (had && c.buildings.length < had) this.addLog(`${had - c.buildings.length} building(s) in ${c.name} were lost in the sack`, old, c.idx);
+    if (had && !c.buildings.length && this.rng() < Math.max(0.1, 0.6 - 0.1 * c.level)) {
+      this.razeCity(c, pid);
+      this.checkElimination(old);
+      return;
+    }
+    this.bumpPeak(pid);
     this.emit('capture', { c, old, pid });
     this.checkElimination(old);
   }
@@ -935,6 +1065,7 @@ export class Game {
     if (!hasCity && pl.rebel && this.units.some(u => u.owner === pid)) { this.checkConquest(); return; }
     if (!hasCity) {
       pl.alive = false;
+      pl.fell = this.turn;
       this.units = this.units.filter(u => u.owner !== pid);
       this.rebuildUnitMap();
       for (const t of this.tiles) if (t.owner === pid) { t.owner = -1; }
@@ -1037,6 +1168,8 @@ export class Game {
     const { dmg, ret } = this.combatPreview(a, d);
     d.hp -= dmg;
     this.addGrudge(d.owner, a.owner, dmg);
+    const sieged = this.cityAt(targetIdx);
+    if (sieged && sieged.owner === d.owner && this.rng() < 0.12) this.destroyBuilding(sieged, 'in the siege');
     a.attacked = true; a.acted = true;
     const res = { ok: true, dmg, ret: 0, killed: false, died: false, from: a.idx, to: targetIdx };
     if (d.hp <= 0) {
@@ -1146,6 +1279,11 @@ export class Game {
         c.adapt++;
         this.addLog(`${c.name} is integrating into ${pl.name} culture (${AFFINITY[this.affinity(c)].name})`, pl.id, c.idx);
       }
+      if (c.culture != null && c.culture !== pl.id && c.held >= (c.buildings.includes('temple') ? 15 : 25)) {
+        const was = this.players[c.culture]?.name;
+        c.culture = pl.id;
+        this.addLog(`The people of ${c.name} now count themselves ${pl.name}${was ? ' rather than ' + was : ''}`, pl.id, c.idx);
+      }
     }
     // unrest
     for (const c of this.cities.slice()) {
@@ -1179,6 +1317,8 @@ export class Game {
         return;
       }
     }
+    // occupying units ravage the improvements under them
+    for (const u of this.units.slice()) if (u.owner === pl.id) this.pillage(u);
     // units: heal + reset
     for (const u of this.units) {
       if (u.owner !== pl.id) continue;
@@ -1209,6 +1349,8 @@ export class Game {
       if (this.players[next].alive) break;
     }
     if (wrapped || next <= this.current) {
+      this.recordHistory();
+      for (const p of this.players) if (p.alive) this.bumpPeak(p.id);
       this.turn++;
       this.updateCoalition();
       const lim = this.settings.turnLimit || 0;
@@ -1239,7 +1381,7 @@ export class Game {
     return JSON.stringify({
       v: 1, W: this.W, H: this.H, seed: this.seed, settings: this.settings, tiles: this.tiles,
       elev: this.elev, turn: this.turn, current: this.current, nextId: this.nextId,
-      cities: this.cities, units: this.units, log: this.log, winner: this.winner, coalition: this.coalition,
+      cities: this.cities, units: this.units, log: this.log, winner: this.winner, coalition: this.coalition, history: this.history,
       players: this.players.map(p => ({ ...p, _vis: undefined })), rng: this.rng.state(),
       cityNamePool: this.cityNamePool,
     });
@@ -1250,6 +1392,9 @@ export class Game {
     Object.assign(g, o);
     g.rng = makeRng(1); g.rng.setState(o.rng);
     if (g.coalition == null) g.coalition = -1;
+    g.history = g.history || [];
+    for (const c of g.cities) if (c.culture == null) c.culture = c.owner;
+    for (const p of g.players) { if (p.founded == null) p.founded = p.born ?? 1; if (p.peak == null) p.peak = g.cities.filter(c => c.owner === p.id).length; }
     for (const p of g.players) {
       if (p.rebel && !p.home) { // older saves: a single homeless Rebels faction
         const c = g.cities.find(c => c.owner === p.id);
