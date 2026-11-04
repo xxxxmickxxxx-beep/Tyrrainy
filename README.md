@@ -74,7 +74,7 @@ Three kills make a unit a veteran.
 
 ## Open design questions (not yet decided)
 1. **Snowballing.** In sims, the leading tribe often ends with 2–3× the runner-up's cities. Candidates: a war-weariness penalty, a rising cost for many alien cities, or AI coalitions against the leader.
-2. **Late-game gold has no sink.** All techs are usually researched by about turn 80–100. Wonders, unit upgrades or repeatable techs could fix this.
+2. **Late-game gold still piles up.** Nine world wonders (one per land type, level 5+ city) now soak some of it, but all techs are usually researched by about turn 80–100. Unit upgrades or repeatable techs are the next candidates.
 3. **Should culture distance also affect unit stats or loyalty (revolts)**, rather than only gold and cost? Revolts would make "having a harder time with different land" much sharper.
 4. **Coastal threshold.** With 2 water neighbours, coastal cities dominated, so the threshold is now 3. Mixed tiles (a forest on the coast) still get only one identity. A primary/secondary specialty system is the obvious next step.
 5. **No diplomacy.** Everyone is at war with everyone. Peace and alliances matter more on big multi-faction maps.

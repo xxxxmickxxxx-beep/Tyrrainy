@@ -1,5 +1,5 @@
 // Computer opponents. Greedy heuristics, fast enough for 8 tribes on huge maps.
-import { UNITS, TECHS, IMPROVEMENTS, BUILDINGS, KIN_DIST, TERRAIN, SPECIALTY } from './data.js';
+import { UNITS, TECHS, IMPROVEMENTS, BUILDINGS, WONDERS, KIN_DIST, TERRAIN, SPECIALTY } from './data.js';
 
 const HOME_TECH_BIAS = {
   plains: { agriculture: 4, husbandry: 2, riding: 3 },
@@ -363,8 +363,13 @@ function spend(g, pid, prof) {
       if (c) { const k = bestMilitary(g, c, pl.gold); if (k && g.train(c, k).ok) continue; }
     }
 
-    // f) buildings
+    // f) wonders, then buildings
     let built = false;
+    for (const c of cities) {
+      for (const w of Object.keys(WONDERS)) if (g.canBuildWonder(c, w).ok) { g.buildWonder(c, w); built = true; break; }
+      if (built) break;
+    }
+    if (built) continue;
     for (const c of cities) {
       for (const b of g.buildable(c)) {
         if (g.canBuild(c, b).ok && pl.gold - BUILDINGS[b].cost >= 2) { g.build(c, b); built = true; break; }

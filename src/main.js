@@ -4,7 +4,7 @@ import { runAI, field, bestStep } from './ai.js';
 import { Renderer } from './render.js';
 import { MAP_SIZES, MAP_TYPES } from './mapgen.js';
 import {
-  TERRAIN, SPECIALTY, SPECIALTY_KEYS, KIN_DIST, AFFINITY, UNITS, IMPROVEMENTS, BUILDINGS, TECHS, RESOURCES,
+  TERRAIN, SPECIALTY, SPECIALTY_KEYS, KIN_DIST, AFFINITY, UNITS, IMPROVEMENTS, BUILDINGS, WONDERS, TECHS, RESOURCES,
 } from './data.js';
 
 const $ = (id) => document.getElementById(id);
@@ -94,6 +94,8 @@ function onEvent(type, d) {
     if (d.owner === viewer) R.addAnim({ type: 'text', idx: d.idx, text: 'Level ' + d.level + '!', color: '#9f9', dur: 1500 });
   } else if (type === 'win') {
     setTimeout(showWin, 400);
+  } else if (type === 'wonder') {
+    toast(`${game.players[d.city.owner].name} completed the ${WONDERS[d.w].name}!`);
   } else if (type === 'improve') {
     R.addAnim({ type: 'text', idx: d.idx, text: '+pop', color: '#9f9', dur: 900 });
   }
@@ -503,7 +505,15 @@ function cityPanel(c) {
       h += `<button data-act="build" data-k="${b}" ${chk.ok ? '' : 'disabled'} title="${esc(chk.why || '')}">${B.name} ◉${B.cost}<small>${B.desc}</small></button>`;
     }
     h += `</div>`;
+    const ws = Object.keys(WONDERS).filter(w => WONDERS[w].special === c.specialty);
+    for (const w of ws) {
+      const W = WONDERS[w];
+      const chk = game.canBuildWonder(c, w);
+      const owner = game.wonderOwner(w);
+      h += `<h4>Wonder</h4><button data-act="wonder" data-k="${w}" ${chk.ok ? '' : 'disabled'} style="width:100%;text-align:left">${W.name} ◉${W.cost}<br><small>${W.desc}${chk.ok ? '' : ' — ' + esc(chk.why)}</small></button>`;
+    }
     if (c.buildings.length) h += `<div class="desc">Built: ${c.buildings.map(b => BUILDINGS[b].name).join(', ')}</div>`;
+    if (c.wonders?.length) h += `<div class="desc">Wonders: <b>${c.wonders.map(w => WONDERS[w].name).join(', ')}</b></div>`;
     // workable tiles summary
     const work = [];
     for (const t of game.cityTiles(c)) for (const k of game.improvementsFor(c.owner, t)) work.push(k);
@@ -558,6 +568,8 @@ function panelAction(d) {
     res = game.train(c, d.k);
   } else if (d.act === 'build') {
     res = game.build(game.cityById(sel.id), d.k);
+  } else if (d.act === 'wonder') {
+    res = game.buildWonder(game.cityById(sel.id), d.k);
   } else if (d.act === 'improve') {
     res = game.improve(R.viewer, sel.idx, d.k);
   }
@@ -632,12 +644,14 @@ function showHelp() {
   <li>Damage depends on attack vs. defense, health and terrain. Defenders in cities, hills, forests and mountains are tougher. Survivors in range strike back.</li>
   <li>Units next to an enemy are stopped (zone of control). Units that rest heal.</li>
   <li>Sailing lets units embark onto shallows; Navigation unlocks oceans. Coastal cities build Corsairs.</li></ul>
+  <h3>Wonders</h3><p>Each land type has one wonder in the world. A level 5 city of that type can build it — first come, first served.</p>
   <h3>Winning</h3><p>Be the last tribe standing, or have the highest score when the turn limit ends.</p>
   <h3>Controls</h3><p>Drag to pan, wheel/pinch to zoom, click to select. <b>Space</b> next unit, <b>Enter</b> end turn, <b>T</b> tech, <b>S</b> settle, <b>Esc</b> deselect, right-click deselect. Click a unit's tile again to see the city/tile beneath.</p>
   <h3>Specialties</h3><table class="spectable">`;
   for (const s of SPECIALTY_KEYS) {
     const S = SPECIALTY[s], U = UNITS[S.unit];
-    h += `<tr><td><b style="color:${S.color}">${S.name}</b><br><span class="dim">${S.title}</span></td><td>${S.desc}<br><b>${U.name}</b> (${U.atk}/${U.def}, mv ${U.mv}${U.rng > 1 ? ', range ' + U.rng : ''}) · <b>${BUILDINGS[S.building].name}</b>: ${BUILDINGS[S.building].desc}</td></tr>`;
+    const W = Object.values(WONDERS).find(w => w.special === s);
+    h += `<tr><td><b style="color:${S.color}">${S.name}</b><br><span class="dim">${S.title}</span></td><td>${S.desc}<br><b>${U.name}</b> (${U.atk}/${U.def}, mv ${U.mv}${U.rng > 1 ? ', range ' + U.rng : ''}) · <b>${BUILDINGS[S.building].name}</b>: ${BUILDINGS[S.building].desc}<br>Wonder: <b>${W.name}</b> — ${W.desc}</td></tr>`;
   }
   h += `</table><p class="dim">City type rule: hills → Hilltop, mountains → Mountain, river → Riverside, 2+ water neighbours → Coastal, otherwise the terrain itself.</p></div>`;
   openModal(h);

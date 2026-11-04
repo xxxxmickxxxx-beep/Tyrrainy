@@ -3,7 +3,7 @@ import { neighborsOf, hexDist } from './hex.js';
 import { makeRng } from './rng.js';
 import {
   TERRAIN, SPECIALTY, KIN_DIST, AFFINITY, UNITS, EMBARKED, IMPROVEMENTS,
-  BUILDINGS, TECHS, techCost, TERRAIN_TO_SPECIALTY, TRIBE_NAMES, CITY_NAMES, PLAYER_COLORS,
+  BUILDINGS, WONDERS, TECHS, techCost, TERRAIN_TO_SPECIALTY, TRIBE_NAMES, CITY_NAMES, PLAYER_COLORS,
 } from './data.js';
 import { generateMap, pickStarts, MAP_SIZES } from './mapgen.js';
 
@@ -194,6 +194,8 @@ export class Game {
     let g = 1 + Math.ceil(city.level * 0.6) + (city.capital ? 1 : 0) + AFFINITY[aff].gold;
     if (city.specialty === 'riverside' || city.specialty === 'desert') g += 1;
     if (this.has(pl.id, 'trade') && city.level >= 3) g += 1;
+    if (this.hasWonder(pl.id, 'grandbazaar')) g += 1;
+    if (city.wonders?.includes('eaglethrone')) g += 4;
     for (const b of city.buildings) {
       const B = BUILDINGS[b];
       if (B.gold) g += B.gold;
@@ -324,6 +326,34 @@ export class Game {
     return { ok: true };
   }
 
+  // ------------------------------------------------------------ wonders
+  wonderOwner(w) { for (const c of this.cities) if (c.wonders?.includes(w)) return c; return null; }
+  hasWonder(pid, w) { const c = this.wonderOwner(w); return !!c && c.owner === pid; }
+  canBuildWonder(city, w) {
+    const W = WONDERS[w];
+    if (W.special !== city.specialty) return { ok: false, why: 'Wrong specialty' };
+    const o = this.wonderOwner(w);
+    if (o) return { ok: false, why: o.owner === city.owner ? 'Already yours' : `Built by ${this.players[o.owner].name}` };
+    if (city.level < 5) return { ok: false, why: 'City must be level 5' };
+    if (this.players[city.owner].gold < W.cost) return { ok: false, why: `Need ${W.cost} gold` };
+    return { ok: true };
+  }
+  buildWonder(city, w) {
+    const chk = this.canBuildWonder(city, w);
+    if (!chk.ok) return chk;
+    const W = WONDERS[w];
+    const pl = this.players[city.owner];
+    pl.gold -= W.cost;
+    city.wonders = city.wonders || [];
+    city.wonders.push(w);
+    if (w === 'greatgranary') for (const c of this.cities) if (c.owner === pl.id) this.addPop(c, 2);
+    if (w === 'lighthouse') for (let i = 0; i < this.tiles.length; i++) if (this.tiles[i].t === 'shallows') pl.explored[i] = 1;
+    this.updateVision(pl.id);
+    this.addLog(`${pl.name} completed the ${W.name} in ${city.name}!`, pl.id, city.idx);
+    this.emit('wonder', { city, w });
+    return { ok: true };
+  }
+
   // ------------------------------------------------------------ improvements
   improvementsFor(pid, i) {
     const tl = this.tiles[i];
@@ -387,7 +417,7 @@ export class Game {
   }
   techPrice(pid, t) {
     const n = this.cities.filter(c => c.owner === pid).length;
-    return techCost(TECHS[t].tier, n, this.has(pid, 'philosophy'));
+    return techCost(TECHS[t].tier, n, this.has(pid, 'philosophy'), this.hasWonder(pid, 'sunpyramid'));
   }
   research(pid, t) {
     const chk = this.canResearch(pid, t);
@@ -415,8 +445,10 @@ export class Game {
     if (this.embarked(u)) {
       const nav = this.has(u.owner, 'navigation') ? 1 : 0;
       const coastHome = this.players[u.owner].home === 'coastal' ? 1 : 0;
-      return { ...EMBARKED, mv: EMBARKED.mv + nav + coastHome };
+      const lh = this.hasWonder(u.owner, 'lighthouse') ? 1 : 0;
+      return { ...EMBARKED, mv: EMBARKED.mv + nav + coastHome + lh };
     }
+    if (U.traits?.includes('mounted') && this.hasWonder(u.owner, 'khansbanner')) return { ...U, mv: U.mv + 1 };
     return U;
   }
   maxMv(u) { return this.stats(u).mv; }
@@ -647,6 +679,7 @@ export class Game {
       if (c.buildings.includes('walls')) b *= 2;
       if (c.specialty === 'hilltop') b *= 1.5;
       if (c.buildings.includes('watchtower')) b *= 1.5;
+      if (this.hasWonder(d.owner, 'skycitadel')) b *= 1.25;
     }
     return b;
   }
@@ -754,6 +787,7 @@ export class Game {
       let r = this.cityRadius(c) + 1;
       if (c.specialty === 'hilltop' || c.specialty === 'mountain') r += 1;
       if (c.buildings.includes('watchtower')) r += 2;
+      if (this.hasWonder(pid, 'eaglethrone')) r += 1;
       for (const x of this.within(c.idx, r)) vis[x] = 1;
     }
     return vis;
@@ -782,7 +816,8 @@ export class Game {
       if (c.owner !== pl.id) continue;
       c.held++;
       const base = KIN_DIST[pl.home][c.specialty];
-      const need = c.buildings.includes('temple') ? INTEGRATION_TURNS / 2 : INTEGRATION_TURNS;
+      let need = c.buildings.includes('temple') ? INTEGRATION_TURNS / 2 : INTEGRATION_TURNS;
+      if (this.hasWonder(pl.id, 'mirelabyrinth')) need = Math.max(2, Math.round(need / 3));
       if (base >= 2 && this.affinity(c) > 1 && c.held % need === 0) {
         c.adapt++;
         this.addLog(`${c.name} is integrating into ${pl.name} culture (${AFFINITY[this.affinity(c)].name})`, pl.id, c.idx);
@@ -797,6 +832,7 @@ export class Game {
         if (tl.owner === pl.id) h = 4;
         const c = this.cityAt(u.idx);
         if (c && c.owner === pl.id) { h = 5; if (c.specialty === 'marsh') h += 2; }
+        if (this.hasWonder(pl.id, 'worldtree')) h += 3;
         u.hp = Math.min(this.maxHp(u), u.hp + h);
       }
       u.mvLeft = this.maxMv(u);
@@ -831,7 +867,7 @@ export class Game {
 
   score(pid) {
     let s = 0;
-    for (const c of this.cities) if (c.owner === pid) s += 20 + c.level * 15 + c.buildings.length * 10;
+    for (const c of this.cities) if (c.owner === pid) s += 20 + c.level * 15 + c.buildings.length * 10 + (c.wonders?.length || 0) * 60;
     s += this.players[pid].techs.length * 12;
     s += this.players[pid].explored.reduce((a, b) => a + b, 0) / 10 | 0;
     s += this.players[pid].kills * 3;

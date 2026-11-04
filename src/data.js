@@ -110,7 +110,7 @@ export const UNITS = {
   knight:    { name: 'Knight',    atk: 3.5, def: 1, hp: 15, mv: 3, rng: 1, cost: 8, glyph: 'K', tech: 'chivalry', traits: ['mounted'] },
   // specialty uniques
   lancer:     { name: 'Lancer',      atk: 4, def: 1, hp: 12, mv: 2, rng: 1, cost: 5, glyph: 'L', tech: 'riding', traits: ['mounted'], unique: 'plains' },
-  slinger:    { name: 'Slinger',     atk: 2, def: 1, hp: 8,  mv: 1, rng: 2, cost: 2, glyph: 's', unique: 'hilltop', traits: ['hillwalk'] },
+  slinger:    { name: 'Slinger',     atk: 2, def: 1, hp: 8,  mv: 1, rng: 2, cost: 3, glyph: 's', unique: 'hilltop', traits: ['hillwalk'] },
   corsair:    { name: 'Corsair',     atk: 3, def: 2, hp: 12, mv: 3, rng: 1, cost: 6, glyph: 'Q', tech: 'sailing', traits: ['naval'], unique: 'coastal' },
   pikeman:    { name: 'Pikeman',     atk: 2, def: 3, hp: 12, mv: 1, rng: 1, cost: 4, glyph: 'P', tech: 'bronze', traits: ['antimount'], unique: 'riverside' },
   ranger:     { name: 'Ranger',      atk: 3, def: 1, hp: 10, mv: 1, rng: 2, cost: 5, glyph: 'G', tech: 'archery', traits: ['forestwalk'], unique: 'forest' },
@@ -164,6 +164,20 @@ export const BUILDINGS = {
   deepmine:     { name: 'Deep Mine', cost: 8, special: 'mountain', desc: '+3 gold per turn.', gold: 3 },
 };
 
+// ---------------- Wonders ----------------
+// One per specialty, unique in the world, need a level 5+ city of that specialty.
+export const WONDERS = {
+  greatgranary: { name: 'Great Granary', special: 'plains', cost: 20, desc: 'Every city you own gains +2 pop now.' },
+  skycitadel:   { name: 'Sky Citadel', special: 'hilltop', cost: 20, desc: 'All your cities +25% defense.' },
+  lighthouse:   { name: 'Lighthouse', special: 'coastal', cost: 18, desc: 'Your boats +1 move; all coastal tiles revealed.' },
+  grandbazaar:  { name: 'Grand Bazaar', special: 'riverside', cost: 22, desc: '+1 gold in every city you own.' },
+  worldtree:    { name: 'World Tree', special: 'forest', cost: 18, desc: 'All your units heal +3 extra.' },
+  sunpyramid:   { name: 'Sun Pyramid', special: 'desert', cost: 20, desc: 'Techs 20% cheaper.' },
+  khansbanner:  { name: "Khan's Banner", special: 'steppe', cost: 20, desc: 'Your mounted units +1 move.' },
+  mirelabyrinth:{ name: 'Mire Labyrinth', special: 'marsh', cost: 18, desc: 'Your foreign cities integrate 3× faster.' },
+  eaglethrone:  { name: 'Eagle Throne', special: 'mountain', cost: 22, desc: '+4 gold; all your cities +1 vision.' },
+};
+
 // ---------------- Techs ----------------
 export const TECHS = {
   agriculture: { name: 'Agriculture', tier: 1, req: [], desc: 'Farms on plains & steppe.' },
@@ -188,9 +202,11 @@ export const TECHS = {
   assimilation:{ name: 'Assimilation', tier: 4, req: ['trade'], desc: 'Foreign & alien penalties reduced by one step.' },
 };
 
-export function techCost(tier, nCities, hasPhilosophy) {
-  const c = tier * (4 + 2 * nCities) + 1;
-  return Math.max(1, Math.round(hasPhilosophy ? c * 0.75 : c));
+export function techCost(tier, nCities, hasPhilosophy, hasPyramid = false) {
+  let c = tier * (4 + 2 * nCities) + 1;
+  if (hasPhilosophy) c *= 0.75;
+  if (hasPyramid) c *= 0.8;
+  return Math.max(1, Math.round(c));
 }
 
 // Terrain at a city tile -> specialty (before river/coast overrides).
