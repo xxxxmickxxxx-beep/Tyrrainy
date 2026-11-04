@@ -1,4 +1,5 @@
 // Headless AI-vs-AI simulation for balance + crash testing.
+//   node tools/sim.js games=3 turns=100 size=large players=8 seed=x
 import { Game } from '../src/game.js';
 import { runAI } from '../src/ai.js';
 
@@ -7,32 +8,30 @@ const games = +(args.games || 1);
 for (let k = 0; k < games; k++) {
   const t0 = Date.now();
   const g = Game.create({ size: args.size || 'medium', players: +(args.players || 6), humans: 0, seed: (args.seed || 'sim') + k, mapType: args.type || 'continents', turnLimit: +(args.turns || 80) });
-  let steps = 0, revolts = 0, coalitions = [];
-  const atk = { onLeader: 0, onOthers: 0, base: 0, baseOthers: 0 };
+  const st = { revolts: 0, fest: 0, backfire: 0, insurg: 0, joins: [], byTemper: {} };
   g.listeners.push((t, d) => {
     if (t === 'attack') {
       const a = g.players[g.current]; const dom = g.dominance();
       const tgt = d.killed ? null : g.unitAt(d.to);
       const victim = tgt ? tgt.owner : (g.cityAt(d.to)?.owner ?? null);
-      if (victim == null || a.rebel || g.players[victim]?.rebel || a.id === dom.leader || dom.leader < 0) return;
-      if (dom.d > 0.2) { if (victim === dom.leader) atk.onLeader++; else atk.onOthers++; }
-      else { if (victim === dom.leader) atk.base++; else atk.baseOthers++; }
-    } if (t === 'revolt') revolts++; if (t === 'coalition') coalitions.push(`T${g.turn}:${g.players[d.leader].name}`); });
-  while (!g.winner && steps < 5000) {
-    runAI(g, g.current);
-    g.endTurn();
-    steps++;
-  }
-  const dt = Date.now() - t0;
-  console.log(`game ${k}: turn ${g.turn} winner ${g.winner && g.players[g.winner.pid].name} (${g.winner?.how}) in ${dt}ms`);
-  console.log(`  non-leader attacks: coalition-time leader/others=${atk.onLeader}/${atk.onOthers}, normal-time leader/others=${atk.base}/${atk.baseOthers}`);
-  console.log(`  revolts=${revolts} coalitions=${coalitions.join(', ') || 'none'} rebelCities=${g.cities.filter(c => g.players[c.owner].rebel).length}`);
+      if (victim == null || !a.temper || a.id === dom.leader || dom.leader < 0 || dom.d < 0.2) return;
+      const b = st.byTemper[a.temper.key] ||= { leader: 0, other: 0 };
+      if (victim === dom.leader) b.leader++; else b.other++;
+    }
+    if (t === 'revolt') st.revolts++;
+    if (t === 'festival') { st.fest++; if (d.backfired) st.backfire++; }
+    if (t === 'coalition') st.joins.push(`T${g.turn} ${g.players[d.member].temper.key}`);
+    if (t === 'log' && /Insurgents/.test(d.msg)) st.insurg++;
+  });
+  let steps = 0;
+  while (!g.winner && steps < 5000) { runAI(g, g.current); g.endTurn(); steps++; }
+  console.log(`game ${k}: turn ${g.turn} winner ${g.winner && g.players[g.winner.pid].name} (${g.winner?.how}) in ${Date.now() - t0}ms`);
+  console.log(`  revolts=${st.revolts} insurgents=${st.insurg} festivals=${st.fest} backfired=${st.backfire} rebelCities=${g.cities.filter(c => g.players[c.owner].rebel).length}`);
+  console.log(`  coalition joins: ${st.joins.join(', ') || 'none'}`);
+  console.log(`  share of attacks on leader while dominant, by temperament: ` + Object.entries(st.byTemper).map(([k, v]) => `${k} ${Math.round(100 * v.leader / Math.max(1, v.leader + v.other))}% (${v.leader + v.other})`).join(', '));
   for (const p of g.players) {
-    if (p.rebel) continue;
     const cs = g.cities.filter(c => c.owner === p.id);
-    console.log(`  ${p.name.padEnd(18)} home=${p.home.padEnd(9)} alive=${p.alive} cities=${cs.length} lv=${cs.reduce((a, c) => a + c.level, 0)} units=${g.units.filter(u => u.owner === p.id).length} techs=${p.techs.length} gold=${p.gold} kills=${p.kills} score=${g.score(p.id)}`);
+    if (p.rebel && !cs.length) continue;
+    console.log(`  ${p.name.padEnd(16)} ${String(p.home).padEnd(9)} ${(p.temper?.key || 'human').padEnd(11)} alive=${p.alive ? 'Y' : 'n'} cities=${String(cs.length).padStart(2)} lv=${String(cs.reduce((a, c) => a + c.level, 0)).padStart(3)} units=${String(g.units.filter(u => u.owner === p.id).length).padStart(3)} gold=${String(p.gold).padStart(5)} score=${g.score(p.id)}`);
   }
-  const specs = {};
-  for (const c of g.cities) specs[c.specialty] = (specs[c.specialty] || 0) + 1;
-  console.log('  city specialties:', JSON.stringify(specs));
 }

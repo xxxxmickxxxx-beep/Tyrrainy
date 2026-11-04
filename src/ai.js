@@ -77,7 +77,6 @@ export function runAI(g, pid) {
   const prof = profile(g, pid);
   const cache = new Map();
   g.rebuildUnitMap();
-  if (pl.rebel) { rebelAct(g, pid); return; }
 
   const myCities = () => g.cities.filter(c => c.owner === pid);
   const military = () => g.units.filter(u => u.owner === pid && u.type !== 'settler');
@@ -97,6 +96,8 @@ export function runAI(g, pid) {
   spend(g, pid, prof);
 }
 
+function opportunism(g, pid) { return g.players[pid].temper?.opportunism ?? 0.8; }
+
 // Is enemy unit e threatening one of pid's cities? Self-defence ignores diplomacy.
 function threatensUs(g, pid, e) {
   for (const c of g.cities) if (c.owner === pid && g.dist(c.idx, e.idx) <= 1) return true;
@@ -108,7 +109,7 @@ function threatensUs(g, pid, e) {
 function targetWeight(g, pid, e, kill) {
   let w = g.hostility(pid, e.owner);
   if (threatensUs(g, pid, e)) w = Math.max(w, 1);
-  if (kill) w = Math.max(w, 0.75);
+  if (kill) w = Math.max(w, opportunism(g, pid) * 0.85);
   return w;
 }
 
@@ -183,7 +184,7 @@ function militaryAct(g, u, cache, prof) {
   // offensive: nearest known enemy city / unit
   const mil = g.units.filter(x => x.owner === pid && x.type !== 'settler').length;
   const nCities = g.cities.filter(c => c.owner === pid).length;
-  const inCoalition = g.coalition >= 0 && g.coalition !== pid;
+  const inCoalition = (g.players[pid].temper?.joined ?? -1) >= 0;
   const aggressive = mil >= nCities * (inCoalition ? 1 : 2.2 - prof.aggression * 1.4) || g.turn > 25;
   if (target === null && aggressive) {
     // pick the objective with the best (hostility x ease) / distance
@@ -193,8 +194,8 @@ function militaryAct(g, u, cache, prof) {
       if (c.owner === pid || !pl.explored[c.idx]) continue;
       const d = g.dist(c.idx, u.idx);
       const gar = g.unitAt(c.idx);
-      const ease = !gar ? 2.5 : 1.6 / (1 + g.stats(gar).def * gar.hp / g.maxHp(gar) * g.defenseBonus(gar) * 0.4);
-      const sc = g.hostility(pid, c.owner) * ease / (d + 4);
+      const ease = !gar ? 2.5 * opportunism(g, pid) : 1.6 / (1 + g.stats(gar).def * gar.hp / g.maxHp(gar) * g.defenseBonus(gar) * 0.4);
+      const sc = (gar ? g.hostility(pid, c.owner) : Math.max(g.hostility(pid, c.owner), opportunism(g, pid))) * ease / (d + 4);
       if (sc > bs) { bs = sc; target = c.idx; }
     }
     for (const e of g.units) {
@@ -266,7 +267,7 @@ function siteScore(g, pid, i) {
     if (tl.river) s += 0.4;
   }
   const spec = g.specialtyAt(i);
-  const kd = KIN_DIST[pl.home][spec];
+  const kd = g.kinDist(pid, spec);
   s += [4, 2.5, 0.5, -1.5][Math.min(3, kd)];
   for (const c of g.cities) if (c.owner !== pid && g.dist(c.idx, i) <= 4) s -= 4;
   return s;
@@ -356,14 +357,23 @@ function spend(g, pid, prof) {
     const capLeft = Math.min(g.unitCap(pid) - units.length, net >= 3 || pl.gold > 40 ? 99 : 0);
     let acted = false;
 
-    // 0) keep the peace: compliance buildings first, festivals when revolt is near
+    // 0) keep the peace: compliance buildings first, festivals when revolt is near,
+    //    tax relief as the reliable fallback; lift relief once the city would be fine without it
+    for (const c of cities) {
+      const un = g.unrest(c);
+      if (c.taxRelief && un.net + 2 <= -1 && (c.unrest || 0) === 0) c.taxRelief = false;
+    }
     for (const c of cities) {
       const un = g.unrest(c);
       const cur = c.unrest || 0;
       if (un.net <= 0 && cur < 6) continue;
       const calmB = g.buildable(c).filter(b => BUILDINGS[b].calm && g.canBuild(c, b).ok).sort((a, b) => BUILDINGS[a].cost - BUILDINGS[b].cost)[0];
       if (calmB) { g.build(c, calmB); acted = true; break; }
-      if (cur + Math.max(0, un.net) >= REVOLT_AT - 3 && g.canPlacate(c).ok) { g.placate(c); acted = true; break; }
+      // festivals are a gamble: only take long odds when revolt is imminent
+      const pc = g.canPlacate(c);
+      const urgent = cur + Math.max(0, un.net) >= REVOLT_AT - 1;
+      if (pc.ok && cur + Math.max(0, un.net) >= REVOLT_AT - 3 && (pc.risk < 0.35 || urgent && pc.risk < 0.5)) { g.placate(c); acted = true; break; }
+      if (!c.taxRelief && un.net > 0 && (cur >= 4 || urgent)) { c.taxRelief = true; acted = true; break; }
     }
     if (acted) continue;
 

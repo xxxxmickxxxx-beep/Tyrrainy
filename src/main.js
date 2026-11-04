@@ -1,10 +1,10 @@
 // UI controller: menu, input, panels, turn flow.
-import { Game, REVOLT_AT } from './game.js';
+import { Game, REVOLT_AT, RIOT_AT, INSURRECTION_AT } from './game.js';
 import { runAI, field, bestStep } from './ai.js';
 import { Renderer } from './render.js';
 import { MAP_SIZES, MAP_TYPES } from './mapgen.js';
 import {
-  TERRAIN, SPECIALTY, SPECIALTY_KEYS, KIN_DIST, AFFINITY, UNITS, IMPROVEMENTS, BUILDINGS, WONDERS, TECHS, RESOURCES,
+  TERRAIN, SPECIALTY, SPECIALTY_KEYS, KIN_DIST, AFFINITY, UNITS, IMPROVEMENTS, BUILDINGS, WONDERS, TECHS, RESOURCES, TEMPERAMENTS,
 } from './data.js';
 
 const $ = (id) => document.getElementById(id);
@@ -531,17 +531,28 @@ function cityPanel(c) {
 function moodBlock(c, canAct) {
   const un = game.unrest(c);
   const cur = c.unrest || 0;
-  const state = un.net > 0 ? (cur >= REVOLT_AT - 4 ? ['On the brink', '#ff5040'] : ['Restless', '#ffa040']) : cur > 0 ? ['Calming', '#e0d060'] : ['Content', '#7ddc6a'];
+  const STATES = {
+    insurrection: ['Insurrection', '#ff3030', `Rioting, and insurgents may take up arms nearby. Revolt at ${REVOLT_AT}.`],
+    rioting: ['Rioting', '#ff6040', 'No training or construction except compliance buildings. Riots spread +1 pressure to your cities within 3 tiles.'],
+    restless: ['Restless', '#ffa040', ''],
+    calming: ['Calming', '#e0d060', ''],
+    content: ['Content', '#7ddc6a', ''],
+  };
+  const state = STATES[game.moodState(c)];
   let h = `<h4>Mood</h4><div class="row"><span><span class="aff" style="background:${state[1]}">${state[0]}</span></span><span>unrest ${cur}/${REVOLT_AT} ${un.net > 0 ? `<b style="color:#ff8060">+${un.net}/turn</b>` : un.net < 0 || cur ? `<span class="dim">−${Math.max(1, -un.net)}/turn</span>` : ''}</span></div>`;
   h += `<div style="height:6px;background:#2a3646;border-radius:3px;margin:4px 0"><div style="height:6px;width:${Math.min(100, cur / REVOLT_AT * 100)}%;background:${state[1]};border-radius:3px"></div></div>`;
   const fmt = (arr, sign) => arr.map(([n, v]) => `${esc(n)} ${sign}${v}`).join(', ');
   if (un.pressure.length) h += `<div class="desc">Pressure: ${fmt(un.pressure, '+')}</div>`;
   if (un.calm.length) h += `<div class="desc">Compliance: ${fmt(un.calm, '−')}</div>`;
-  if (un.net > 0) h += `<div class="desc">Restless cities withhold ${un.net} gold per turn. At ${REVOLT_AT} unrest the city revolts${c.capital ? ' (capitals never do)' : ''}. Garrison a unit, build a Courthouse, Amphitheater or Shrine, or hold a festival.</div>`;
-  if (canAct && (un.net > 0 || cur > 0)) {
+  if (state[2]) h += `<div class="desc"><b>${state[0]}:</b> ${state[2]}</div>`;
+  if (un.net > 0) h += `<div class="desc">Restless: withholds ${un.net} gold per turn. Riots at ${RIOT_AT}, insurrection at ${INSURRECTION_AT}, revolt at ${REVOLT_AT}${c.capital ? ' (capitals never revolt)' : ''}.</div>`;
+  if (canAct && (un.net > 0 || cur > 0 || c.taxRelief)) {
     const chk = game.canPlacate(c);
-    h += `<button data-act="placate" ${chk.ok ? '' : 'disabled'} title="${esc(chk.why || '')}">Hold festival ◉${game.placateCost(c)}<small style="display:block;opacity:.7;font-size:11px">Reset unrest, −2 pressure for 5 turns</small></button>`;
-  }
+    const risk = Math.round(game.festivalRisk(c) * 100);
+    h += `<div class="opts" style="margin-top:6px"><button data-act="placate" ${chk.ok ? '' : 'disabled'} title="${esc(chk.why || '')}">Hold festival ◉${game.placateCost(c)}<small>Resets unrest, −2 for 5 turns. <b style="color:${risk >= 30 ? '#ff8060' : '#e0d060'}">${risk}% riot risk</b></small></button>`;
+    h += `<button data-act="relief">${c.taxRelief ? 'End tax relief' : 'Grant tax relief'}<small>${c.taxRelief ? 'City pays no gold while active' : 'City pays no gold, −2 pressure'}</small></button></div>`;
+    if (c.festivals) h += `<div class="desc">${c.festivals} recent festival${c.festivals > 1 ? 's' : ''} without lasting peace: each makes the next likelier to backfire (+3 unrest and +2 pressure for 4 turns). Trust returns after 6 content turns, and each compliance building restores 2 festivals' worth.</div>`;
+  } else if (c.taxRelief) h += `<div class="desc">Tax relief in effect.</div>`;
   return h;
 }
 
@@ -593,6 +604,10 @@ function panelAction(d) {
     res = game.build(game.cityById(sel.id), d.k);
   } else if (d.act === 'placate') {
     res = game.placate(game.cityById(sel.id));
+    if (res.ok) toast(res.backfired ? 'The festival turned into a riot!' : 'Festival held: unrest quelled');
+  } else if (d.act === 'relief') {
+    const c = game.cityById(sel.id);
+    res = game.setTaxRelief(c, !c.taxRelief);
   } else if (d.act === 'wonder') {
     res = game.buildWonder(game.cityById(sel.id), d.k);
   } else if (d.act === 'improve') {
@@ -633,18 +648,27 @@ function showTech() {
 }
 
 function showTribes() {
-  let h = `<h2>Tribes</h2><table class="tribes"><tr><th></th><th>Tribe</th><th>Homeland</th><th>Cities</th><th>Score</th><th>Techs</th><th>Kills</th></tr>`;
+  let h = `<h2>Tribes</h2><table class="tribes"><tr><th></th><th>Tribe</th><th>Homeland</th><th>Temperament</th><th>Cities</th><th>Score</th><th>Techs</th><th>Kills</th></tr>`;
   const viewer = game.players[R.viewer];
   for (const r of game.ranking()) {
     const p = game.players[r.id];
     const met = watchMode || p.id === viewer.id || game.cities.some(c => c.owner === p.id && viewer.explored[c.idx]);
     const cs = game.cities.filter(c => c.owner === p.id).length;
-    h += `<tr style="opacity:${p.alive ? 1 : 0.4}"><td><span class="chip" style="background:${p.color}"></span></td><td>${met ? esc(p.name) : '<i>Unknown tribe</i>'}${p.human ? ' (human)' : ''}${p.alive ? '' : ' — fallen'}</td><td>${met ? SPECIALTY[p.home].name : '?'}</td><td>${met ? cs : '?'}</td><td>${p.alive ? game.score(p.id) : '-'}</td><td>${met ? p.techs.length : '?'}</td><td>${met ? p.kills : '?'}</td></tr>`;
+    const T = p.temper;
+    let temper = p.human ? '—' : met && T ? `<span title="${esc(TEMPERAMENTS[T.key].desc)}">${TEMPERAMENTS[T.key].name}</span>` : '?';
+    if (met && T) {
+      if (T.joined >= 0) temper += ` <span class="tag" style="background:${game.players[T.joined].color};color:#111">vs ${esc(game.players[T.joined].name)}</span>`;
+      if ((T.grudges[viewer.id] || 0) >= 15) temper += ` <span class="tag" style="background:#803030">grudge vs you</span>`;
+    }
+    const homeName = p.home ? SPECIALTY[p.home].name : 'None — all lands kin';
+    h += `<tr style="opacity:${p.alive ? 1 : 0.4}"><td><span class="chip" style="background:${p.color}"></span></td><td>${met ? esc(p.name) : '<i>Unknown tribe</i>'}${p.human ? ' (human)' : ''}${p.alive ? '' : ' — fallen'}</td><td>${met ? homeName : '?'}</td><td>${temper}</td><td>${met ? cs : '?'}</td><td>${p.alive ? game.score(p.id) : '-'}</td><td>${met ? p.techs.length : '?'}</td><td>${met ? p.kills : '?'}</td></tr>`;
   }
   h += `</table>`;
   const dom = game.dominance();
-  if (game.coalition >= 0) h += `<p><b style="color:${game.players[game.coalition].color}">Coalition:</b> the other tribes favour wars against <b>${esc(game.players[game.coalition].name)}</b>${game.coalition === viewer.id ? ' — that is you' : ''} (dominance ${(dom.d * 100) | 0}%).</p>`;
-  else h += `<p class="dim">No coalition. If one tribe grows far stronger than the rest, the others turn their armies on it.</p>`;
+  if (game.coalition >= 0) {
+    const mem = game.coalitionMembers();
+    h += `<p><b style="color:${game.players[game.coalition].color}">Coalition</b> against <b>${esc(game.players[game.coalition].name)}</b>${game.coalition === viewer.id ? ' — that is you' : ''} (dominance ${(dom.d * 100) | 0}%). Members: ${mem.map(id => esc(game.players[id].name)).join(', ') || '—'}.</p>`;
+  } else h += `<p class="dim">No coalition. If one tribe grows far stronger than the rest, other tribes may turn on it — each at its own threshold, depending on temperament.</p>`;
   const trad = game.traditions(viewer.id);
   h += `<h3>Traditions</h3><p class="dim">Own 3+ Homeland/Kin cities of one land type and every one of your cities can train its unique unit (+1 cost).</p><p>${trad.length ? trad.map(s => `<b>${SPECIALTY[s].name}</b> → ${UNITS[SPECIALTY[s].unit].name}`).join(', ') : 'None yet.'}</p>`;
   h += `<h3>Cultural kinship</h3><p class="dim">How easily a ${SPECIALTY[viewer.home].name} people runs cities on each land type:</p><table class="spectable">`;
@@ -668,9 +692,23 @@ function showHelp() {
   <li>Train <b>Settlers</b> to found new cities — choose the land wisely. Settlers get pricier with every city.</li>
   <li>Your unit cap is the sum of (city level + 1). Each city feeds 2 units for free; every extra unit costs 1 gold of upkeep per turn.</li></ul>
   <h3>Unrest</h3>
-  <p>Every city feels <b>pressure</b>: a sprawling realm (+1 per 2 cities past 3), foreign/alien culture, recent conquest and crowding (level 4+). <b>Compliance</b> pushes back: capital, homeland, a garrison unit, Courthouse (−1), Amphitheater (−2), Shrine (−2) or a paid festival (−2 for 5 turns). When pressure wins, the city withholds gold and builds unrest; at ${REVOLT_AT} it revolts, its garrison defects, and the Rebels take it. Retake it by force.</p>
+  <p>Every city feels <b>pressure</b>:</p>
+  <ul><li>a sprawling realm (+1 per 2 cities past 4);</li>
+  <li>foreign or alien culture;</li>
+  <li>recent conquest;</li>
+  <li>crowding (level 4+);</li>
+  <li>riots in nearby cities of yours.</li></ul>
+  <p><b>Compliance</b> pushes back: capital, homeland, a garrison unit, Courthouse (−1), Amphitheater (−2), Shrine (−2), tax relief (−2, but the city pays no gold), or a festival (−2 for 5 turns).</p>
+  <p>Festivals are a gamble. Each one held without fixing the cause raises the chance the next turns into a riot. Contentment and compliance buildings restore trust.</p>
+  <p>When pressure wins, unrest builds:</p>
+  <ul><li><b>Restless</b>: the city withholds gold.</li>
+  <li><b>Rioting</b> (${RIOT_AT}): no training or construction except compliance buildings, and the riots spread pressure to your nearby cities.</li>
+  <li><b>Insurrection</b> (${INSURRECTION_AT}): insurgents may take up arms.</li>
+  <li><b>Revolt</b> (${REVOLT_AT}): the garrison defects and the city joins the Rebels.</li></ul>
   <h3>Balance of power</h3>
-  <p>If one tribe's power (cities, levels, armies) runs far ahead of the average, the AI tribes form a <b>coalition</b>: they still snap up easy kills and undefended cities anywhere, but they prefer marching on the leader and go easy on each other.</p>
+  <p>If one tribe's power (cities, levels, armies) runs far ahead of the average, AI tribes may join a <b>coalition</b> against it. They still snap up easy kills and undefended cities anywhere, but members prefer marching on the leader and go easy on each other. Each AI has a <b>temperament</b>. <i>Balancers</i> join early. <i>Opportunists</i> join late and prey on the weak. <i>Vengeful</i> tribes chase whoever hurt them most. <i>Steadfast</i> tribes are slow to join and slow to leave. <i>Appeasers</i> never join and pick on the small instead. Everyone holds grudges against recent attackers, and those fade over time.</p>
+  <h3>Rebels</h3>
+  <p>Revolted cities join the <b>Rebels</b>, a full tribe that takes its turn last. Rebels have no homeland, so every land is kin to them. They inherit the techs of the realm they broke from, hold a fierce grudge against it, and expand and fight like anyone else. They can win.</p>
   <h3>War</h3>
   <ul><li>Select a unit: white hexes = move, red = attack, gold = capture an undefended enemy city.</li>
   <li>Damage depends on attack vs. defense, health and terrain. Defenders in cities, hills, forests and mountains are tougher. Survivors in range strike back.</li>

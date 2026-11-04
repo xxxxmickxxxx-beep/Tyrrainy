@@ -436,11 +436,11 @@ export class Renderer {
       // unrest marker
       if (c.owner === this.viewer || this.revealAll) {
         const un = g.unrest(c).net;
-        if (un > 0 || (c.unrest || 0) >= 6) {
+        if (un > 0 || (c.unrest || 0) >= 6 || c.taxRelief) {
           const mx = x + tw / 2 + 7, my = ly - fs * 0.25;
-          ctx.fillStyle = (c.unrest || 0) >= 8 ? '#ff4030' : '#ffa030';
+          ctx.fillStyle = (c.unrest || 0) >= 6 ? '#ff4030' : un > 0 ? '#ffa030' : '#70b0e0';
           ctx.beginPath(); ctx.arc(mx, my, 7, 0, Math.PI * 2); ctx.fill();
-          ctx.fillStyle = '#111'; ctx.font = 'bold 11px sans-serif'; ctx.fillText('!', mx, my + 4);
+          ctx.fillStyle = '#111'; ctx.font = 'bold 11px sans-serif'; ctx.fillText(un > 0 || (c.unrest || 0) >= 6 ? '!' : '$', mx, my + 4);
           ctx.font = `bold ${fs}px sans-serif`;
         }
       }

@@ -180,6 +180,21 @@ export const WONDERS = {
   eaglethrone:  { name: 'Eagle Throne', special: 'mountain', cost: 22, desc: '+4 gold; all your cities +1 vision.' },
 };
 
+// ---------------- AI temperaments ----------------
+// Ranges are [min, max]; each AI rolls its own values so no two behave alike.
+//  threshold:  dominance at which it joins a coalition against the leader
+//  balance:    how hard it commits once joined (<0: appeaser, courts the strong, bullies the weak)
+//  patience:   leaves the coalition when dominance falls below threshold * patience
+//  vengeance:  how much grudges (damage taken from a tribe) raise hostility
+//  opportunism: floor on hostility for kills and undefended cities
+export const TEMPERAMENTS = {
+  balancer:    { name: 'Balancer',    desc: 'Watches the balance of power and joins coalitions early.', threshold: [0.05, 0.2], balance: [1.2, 1.6], patience: [0.4, 0.6], vengeance: [0.4, 0.8], opportunism: [0.6, 0.8] },
+  opportunist: { name: 'Opportunist', desc: 'Preys on whoever is weakest nearby; joins coalitions late.', threshold: [0.45, 0.65], balance: [0.5, 0.8], patience: [0.5, 0.7], vengeance: [0.3, 0.6], opportunism: [0.95, 1.1] },
+  vengeful:    { name: 'Vengeful',    desc: 'Never forgets who struck it.', threshold: [0.2, 0.4], balance: [0.7, 1.0], patience: [0.4, 0.6], vengeance: [1.4, 2.0], opportunism: [0.7, 0.9] },
+  appeaser:    { name: 'Appeaser',    desc: 'Avoids provoking the strong and bullies the weak.', threshold: [9, 9], balance: [-0.6, -0.25], patience: [0.5, 0.5], vengeance: [0.5, 0.9], opportunism: [0.85, 1.0] },
+  steadfast:   { name: 'Steadfast',   desc: 'Slow to join a coalition, slower to leave it.', threshold: [0.3, 0.45], balance: [0.9, 1.2], patience: [0.1, 0.25], vengeance: [0.6, 1.0], opportunism: [0.6, 0.8] },
+};
+
 // ---------------- Techs ----------------
 export const TECHS = {
   agriculture: { name: 'Agriculture', tier: 1, req: [], desc: 'Farms on plains & steppe.' },
