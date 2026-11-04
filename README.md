@@ -117,7 +117,14 @@ Sims with a boosted runaway (`node tools/sim.js boost=12 …`) show the intended
 - **Occupation:** each occupied or damaged worked tile (one with an improvement or a resource) costs its city 1 gold. Enemies on a city's land add +1 unrest pressure.
 - **Pillage:** a unit that starts its turn on an enemy improvement has a 35% chance to damage it, and then to destroy it. Destroying it removes the pop it granted, so cities can drop levels. Repairs cost half the build price.
 - **Siege:** each attack on a garrison inside its city has a 12% chance to destroy a building.
-- **Sack:** on capture, each building is lost with 35% chance. Any captured city left with no buildings (stripped in the sack, or never built up) and no wonder is razed (the tile becomes ruins) with chance `max(10%, 60% − 10%×level)`.
+- **Sack:** on capture, each building is lost with 35% chance. A captured city may then be razed (the tile becomes ruins):
+
+| City after the sack | Raze chance |
+|---|---|
+| holds a wonder | 5% |
+| still has buildings | 0% |
+| stripped bare (had buildings once) | `max(10%, 60% − 10%×level)` |
+| never built anything | `max(18%, 36% − 3%×level)`: 33% at level 1, down to 18% at level 6+ |
 - **Construction limits:** a city can complete one building or wonder per turn, and none while a hostile unit is adjacent to it.
 - **Colours:** each tribe has a two-tone identity, a fill plus an accent used for borders, roofs and unit rims, taken from `TRIBE_PALETTE`. Newcomers (rebellions) get the pair farthest in CIELAB from all living tribes, and colours of fallen tribes become available again.
 

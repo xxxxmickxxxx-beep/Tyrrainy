@@ -901,7 +901,11 @@ function showHelp() {
   <p>Depending on game options, you can take over a rebellion when your tribe falls, or every rebellion can be a human seat.</p>
   <h3>War damage</h3>
   <p>Enemy units standing on a city's tiles cut it off: each occupied or damaged worked tile costs that city 1 gold, and enemies on its land raise unrest. A unit that spends a turn on an enemy improvement may <b>damage</b> it, then <b>destroy</b> it. Destroying it removes the pop it gave, so cities can shrink. Repair damaged improvements from the tile panel. Attacks on a city's garrison may wreck buildings, and a captured city loses each building with 35% chance. A city stripped of all its buildings in the sack may be <b>razed</b>, leaving ruins.</p>
-  <h3>Building limits</h3><p>Each city can complete one building or wonder per turn, and none while a hostile unit stands next to it. A captured city left with no buildings, whether stripped in the sack or never built up, may be razed: 50% at level 1, falling to 10% for large cities.</p>
+  <h3>Building limits</h3><p>Each city can complete one building or wonder per turn, and none while a hostile unit stands next to it. When a city is captured, it may be razed:</p>
+  <ul><li>holding a wonder: 5%;</li>
+  <li>buildings that survive the sack: never;</li>
+  <li>stripped of every building it had: 50% at level 1, down to 10% for large cities;</li>
+  <li>never built anything: 33% at level 1, down to 18% for large cities.</li></ul><p></p>
   <h3>Map modes</h3><p>Press <b>M</b> or use the Map menu: Terrain, Political (tribe colours only), Culture (stripes mark peoples under foreign rule), Specialty (and what unclaimed land would become), and Unrest.</p>
   <h3>War</h3>
   <ul><li>Select a unit: white hexes = move, red = attack, gold = capture an undefended enemy city.</li>

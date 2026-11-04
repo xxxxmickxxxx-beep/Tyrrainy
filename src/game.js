@@ -399,6 +399,7 @@ export class Game {
     this.players[city.owner].gold -= B.cost;
     city.buildings.push(b);
     city.builtTurn = this.turn;
+    city.everBuilt = true;
     if (B.calm) city.festivals = Math.max(0, (city.festivals || 0) - 2);
     if (B.pop) this.addPop(city, B.pop);
     if (b === 'temple') this.addPop(city, 1);
@@ -705,6 +706,7 @@ export class Game {
     city.wonders = city.wonders || [];
     city.wonders.push(w);
     city.builtTurn = this.turn;
+    city.everBuilt = true;
     if (w === 'greatgranary') for (const c of this.cities) if (c.owner === pl.id) this.addPop(c, 2);
     if (w === 'lighthouse') for (let i = 0; i < this.tiles.length; i++) if (this.tiles[i].t === 'shallows') pl.explored[i] = 1;
     this.updateVision(pl.id);
@@ -782,6 +784,17 @@ export class Game {
     this.addLog(`${BUILDINGS[b].name} in ${city.name} was destroyed${why ? ' ' + why : ''}`, city.owner, city.idx);
     if (b === 'watchtower') this.updateVision(city.owner);
     return b;
+  }
+  // Chance a city is razed when captured (after the sack has taken its toll).
+  //  - holds a wonder: 5%
+  //  - still has buildings: never
+  //  - stripped bare (had buildings once): 60% at level 1, −10% per level, min 10%
+  //  - never built anything: 33% at level 1, −3% per level, min 18%
+  razeChance(c) {
+    if (c.wonders?.length) return 0.05;
+    if (c.buildings.length) return 0;
+    if (c.everBuilt) return Math.max(0.1, 0.6 - 0.1 * c.level);
+    return Math.max(0.18, 0.36 - 0.03 * c.level);
   }
   razeCity(c, by) {
     const old = c.owner;
@@ -1091,8 +1104,7 @@ export class Game {
     const had = c.buildings.length;
     for (const b of [...c.buildings]) if (this.rng() < 0.35) { c.buildings.splice(c.buildings.indexOf(b), 1); }
     if (had && c.buildings.length < had) this.addLog(`${had - c.buildings.length} building(s) in ${c.name} were lost in the sack`, old, c.idx);
-    // a city left with no buildings (stripped in the sack, or never built up) may be razed
-    if (!c.buildings.length && !(c.wonders?.length) && this.rng() < Math.max(0.1, 0.6 - 0.1 * c.level)) {
+    if (this.rng() < this.razeChance(c)) {
       this.razeCity(c, pid);
       this.checkElimination(old);
       return;
@@ -1439,7 +1451,7 @@ export class Game {
     if (g.coalition == null) g.coalition = -1;
     g.history = g.history || [];
     for (const p of g.players) if (!p.color2) { const keep = p.alive; p.alive = false; [p.color, p.color2] = pickTribeColors(g.players.filter(q => q.color2)); p.alive = keep; }
-    for (const c of g.cities) if (c.culture == null) c.culture = c.owner;
+    for (const c of g.cities) { if (c.culture == null) c.culture = c.owner; if (c.everBuilt == null) c.everBuilt = !!(c.buildings.length || c.wonders?.length); }
     for (const p of g.players) { if (p.founded == null) p.founded = p.born ?? 1; if (p.peak == null) p.peak = g.cities.filter(c => c.owner === p.id).length; }
     for (const p of g.players) {
       if (p.rebel && !p.home) { // older saves: a single homeless Rebels faction

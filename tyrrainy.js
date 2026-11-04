@@ -1023,6 +1023,7 @@ class Game {
     this.players[city.owner].gold -= B.cost;
     city.buildings.push(b);
     city.builtTurn = this.turn;
+    city.everBuilt = true;
     if (B.calm) city.festivals = Math.max(0, (city.festivals || 0) - 2);
     if (B.pop) this.addPop(city, B.pop);
     if (b === 'temple') this.addPop(city, 1);
@@ -1329,6 +1330,7 @@ class Game {
     city.wonders = city.wonders || [];
     city.wonders.push(w);
     city.builtTurn = this.turn;
+    city.everBuilt = true;
     if (w === 'greatgranary') for (const c of this.cities) if (c.owner === pl.id) this.addPop(c, 2);
     if (w === 'lighthouse') for (let i = 0; i < this.tiles.length; i++) if (this.tiles[i].t === 'shallows') pl.explored[i] = 1;
     this.updateVision(pl.id);
@@ -1406,6 +1408,17 @@ class Game {
     this.addLog(`${BUILDINGS[b].name} in ${city.name} was destroyed${why ? ' ' + why : ''}`, city.owner, city.idx);
     if (b === 'watchtower') this.updateVision(city.owner);
     return b;
+  }
+  // Chance a city is razed when captured (after the sack has taken its toll).
+  //  - holds a wonder: 5%
+  //  - still has buildings: never
+  //  - stripped bare (had buildings once): 60% at level 1, −10% per level, min 10%
+  //  - never built anything: 33% at level 1, −3% per level, min 18%
+  razeChance(c) {
+    if (c.wonders?.length) return 0.05;
+    if (c.buildings.length) return 0;
+    if (c.everBuilt) return Math.max(0.1, 0.6 - 0.1 * c.level);
+    return Math.max(0.18, 0.36 - 0.03 * c.level);
   }
   razeCity(c, by) {
     const old = c.owner;
@@ -1715,8 +1728,7 @@ class Game {
     const had = c.buildings.length;
     for (const b of [...c.buildings]) if (this.rng() < 0.35) { c.buildings.splice(c.buildings.indexOf(b), 1); }
     if (had && c.buildings.length < had) this.addLog(`${had - c.buildings.length} building(s) in ${c.name} were lost in the sack`, old, c.idx);
-    // a city left with no buildings (stripped in the sack, or never built up) may be razed
-    if (!c.buildings.length && !(c.wonders?.length) && this.rng() < Math.max(0.1, 0.6 - 0.1 * c.level)) {
+    if (this.rng() < this.razeChance(c)) {
       this.razeCity(c, pid);
       this.checkElimination(old);
       return;
@@ -2063,7 +2075,7 @@ class Game {
     if (g.coalition == null) g.coalition = -1;
     g.history = g.history || [];
     for (const p of g.players) if (!p.color2) { const keep = p.alive; p.alive = false; [p.color, p.color2] = pickTribeColors(g.players.filter(q => q.color2)); p.alive = keep; }
-    for (const c of g.cities) if (c.culture == null) c.culture = c.owner;
+    for (const c of g.cities) { if (c.culture == null) c.culture = c.owner; if (c.everBuilt == null) c.everBuilt = !!(c.buildings.length || c.wonders?.length); }
     for (const p of g.players) { if (p.founded == null) p.founded = p.born ?? 1; if (p.peak == null) p.peak = g.cities.filter(c => c.owner === p.id).length; }
     for (const p of g.players) {
       if (p.rebel && !p.home) { // older saves: a single homeless Rebels faction
@@ -4041,7 +4053,11 @@ function showHelp() {
   <p>Depending on game options, you can take over a rebellion when your tribe falls, or every rebellion can be a human seat.</p>
   <h3>War damage</h3>
   <p>Enemy units standing on a city's tiles cut it off: each occupied or damaged worked tile costs that city 1 gold, and enemies on its land raise unrest. A unit that spends a turn on an enemy improvement may <b>damage</b> it, then <b>destroy</b> it. Destroying it removes the pop it gave, so cities can shrink. Repair damaged improvements from the tile panel. Attacks on a city's garrison may wreck buildings, and a captured city loses each building with 35% chance. A city stripped of all its buildings in the sack may be <b>razed</b>, leaving ruins.</p>
-  <h3>Building limits</h3><p>Each city can complete one building or wonder per turn, and none while a hostile unit stands next to it. A captured city left with no buildings, whether stripped in the sack or never built up, may be razed: 50% at level 1, falling to 10% for large cities.</p>
+  <h3>Building limits</h3><p>Each city can complete one building or wonder per turn, and none while a hostile unit stands next to it. When a city is captured, it may be razed:</p>
+  <ul><li>holding a wonder: 5%;</li>
+  <li>buildings that survive the sack: never;</li>
+  <li>stripped of every building it had: 50% at level 1, down to 10% for large cities;</li>
+  <li>never built anything: 33% at level 1, down to 18% for large cities.</li></ul><p></p>
   <h3>Map modes</h3><p>Press <b>M</b> or use the Map menu: Terrain, Political (tribe colours only), Culture (stripes mark peoples under foreign rule), Specialty (and what unclaimed land would become), and Unrest.</p>
   <h3>War</h3>
   <ul><li>Select a unit: white hexes = move, red = attack, gold = capture an undefended enemy city.</li>
