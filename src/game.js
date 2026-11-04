@@ -8,6 +8,7 @@ import {
 import { generateMap, pickStarts, MAP_SIZES } from './mapgen.js';
 
 const INTEGRATION_TURNS = 10;
+export const REVOLT_AT = 12;
 
 export class Game {
   constructor() {
@@ -59,6 +60,13 @@ export class Game {
       c.name = g.takeCityName();
       for (const t of g.within(c.idx, 3)) g.players[c.owner].explored[t] = 1;
     }
+    // Rebels: a non-playing faction that takes over cities which revolt.
+    g.rebelId = g.players.length;
+    g.players.push({
+      id: g.rebelId, name: 'Rebels', color: '#5a5a5a', home: 'plains', human: false, rebel: true,
+      gold: 0, techs: [], explored: new Array(g.W * g.H).fill(1), alive: true, kills: 0, losses: 0,
+    });
+    g.coalition = -1;
     for (const pl of g.players) g.updateVision(pl.id);
     g.startTurn();
     return g;
@@ -192,6 +200,9 @@ export class Game {
     const pl = this.players[city.owner];
     const aff = this.affinity(city);
     let g = 1 + Math.ceil(city.level * 0.6) + (city.capital ? 1 : 0) + AFFINITY[aff].gold;
+    if (pl.rebel) return 0;
+    const riot = this.unrest(city).net;
+    if (riot > 0) g -= riot; // restless cities withhold taxes
     if (city.specialty === 'riverside' || city.specialty === 'desert') g += 1;
     if (this.has(pl.id, 'trade') && city.level >= 3) g += 1;
     if (this.hasWonder(pl.id, 'grandbazaar')) g += 1;
@@ -208,7 +219,7 @@ export class Game {
     if (city.specialty === 'forest') g += tiles.filter(t => this.tiles[t].imp === 'lumber').length;
     if (city.specialty === 'coastal') g += tiles.filter(t => this.tiles[t].imp === 'fishery' || this.tiles[t].imp === 'whaling').length;
     if (city.specialty === 'mountain') g += tiles.filter(t => this.tiles[t].imp === 'mine').length;
-    return Math.max(1, g);
+    return Math.max(riot > 0 ? 0 : 1, g);
   }
 
   grossIncome(pid) {
@@ -324,6 +335,111 @@ export class Game {
     if (b === 'watchtower') this.updateVision(city.owner);
     this.addLog(`${city.name} built ${B.name}`, city.owner, city.idx);
     return { ok: true };
+  }
+
+  // ------------------------------------------------------------ unrest
+  // Pressure (empire size, culture, conquest, city size) vs compliance (garrison,
+  // buildings, capital, homeland, festivals). Positive net accumulates unrest; at
+  // REVOLT_AT the city rises up and joins the Rebels.
+  unrest(city) {
+    const pid = city.owner;
+    const pl = this.players[pid];
+    const pressure = [], calm = [];
+    if (pl.rebel) return { pressure, calm, net: 0, total: 0 };
+    const n = this.cities.filter(c => c.owner === pid).length;
+    const size = Math.floor(Math.max(0, n - 3) / 2);
+    if (size) pressure.push(['Sprawling realm (' + n + ' cities)', size]);
+    const aff = this.affinity(city);
+    if (aff >= 2) pressure.push([AFFINITY[aff].name, aff - 1]);
+    if (city.capturedTurn != null && this.turn - city.capturedTurn < 15) pressure.push(['Recently conquered', 2]);
+    const big = Math.floor(city.level / 4);
+    if (big) pressure.push(['Crowded city', big]);
+    if (city.capital) calm.push(['Capital', 3]);
+    if (aff === 0) calm.push(['Homeland', 1]);
+    const gar = this.unitAt(city.idx);
+    if (gar && gar.owner === pid && gar.type !== 'settler') calm.push(['Garrison', 1]);
+    for (const b of city.buildings) if (BUILDINGS[b].calm) calm.push([BUILDINGS[b].name, BUILDINGS[b].calm]);
+    if (city.festivalUntil != null && this.turn <= city.festivalUntil) calm.push(['Festival', 2]);
+    const P = pressure.reduce((a, x) => a + x[1], 0), C = calm.reduce((a, x) => a + x[1], 0);
+    return { pressure, calm, net: P - C, total: P };
+  }
+  placateCost(city) { return 4 + city.level * 2 + Math.floor((city.unrest || 0) / 2); }
+  canPlacate(city) {
+    if ((city.unrest || 0) <= 0 && this.unrest(city).net <= 0) return { ok: false, why: 'City is content' };
+    if (city.festivalUntil != null && this.turn <= city.festivalUntil) return { ok: false, why: 'Festival under way' };
+    const cost = this.placateCost(city);
+    if (this.players[city.owner].gold < cost) return { ok: false, why: `Need ${cost} gold` };
+    return { ok: true, cost };
+  }
+  placate(city) {
+    const chk = this.canPlacate(city);
+    if (!chk.ok) return chk;
+    this.players[city.owner].gold -= chk.cost;
+    city.unrest = 0;
+    city.festivalUntil = this.turn + 5;
+    this.addLog(`${city.name} holds a festival — unrest quelled`, city.owner, city.idx);
+    return { ok: true };
+  }
+  revolt(city) {
+    const old = city.owner;
+    const rid = this.rebelId;
+    const gar = this.unitAt(city.idx);
+    if (gar && gar.owner === old) { gar.owner = rid; gar.goto = null; } // the garrison defects
+    city.owner = rid;
+    city.unrest = 0;
+    city.capital = false;
+    city.held = 0; city.adapt = 0;
+    for (const t of this.within(city.idx, 2)) if (this.tiles[t].ownerCity === city.id) this.tiles[t].owner = rid;
+    if (!this.unitAt(city.idx)) this.spawnUnit(rid, this.turn > 35 ? 'swordsman' : 'warrior', city.idx);
+    const spot = this.freeNeighbor(city.idx, n => !this.isWater(n) && this.tiles[n].t !== 'mountain');
+    if (spot !== null) this.spawnUnit(rid, this.turn > 35 ? 'archer' : 'warrior', spot);
+    this.rebuildUnitMap();
+    this.addLog(`${city.name} has revolted against ${this.players[old].name}!`, old, city.idx);
+    this.emit('revolt', { city, old });
+    this.checkElimination(old);
+  }
+
+  // ------------------------------------------------------------ balance of power
+  power(pid) {
+    let p = 0;
+    for (const c of this.cities) if (c.owner === pid) p += c.level + 2;
+    for (const u of this.units) if (u.owner === pid && u.type !== 'settler') p += 0.5;
+    return p;
+  }
+  // How far the strongest tribe has pulled ahead: 0 (no runaway) .. 1 (dominant).
+  dominance() {
+    if (this._dom && this._dom.key === this.turn + ':' + this.current) return this._dom;
+    const alive = this.players.filter(p => p.alive && !p.rebel);
+    let res = { leader: -1, d: 0, key: this.turn + ':' + this.current };
+    if (alive.length >= 3 && this.turn >= 15) {
+      const pw = alive.map(p => [p.id, this.power(p.id)]).sort((a, b) => b[1] - a[1]);
+      const rest = pw.slice(1).reduce((a, x) => a + x[1], 0) / (pw.length - 1);
+      const ratio = pw[0][1] / Math.max(1, rest);
+      res = { leader: pw[0][0], d: Math.max(0, Math.min(1, (ratio - 1.3) / 0.9)), ratio, key: res.key };
+    }
+    this._dom = res;
+    return res;
+  }
+  // Targeting weight an AI tribe gives to fighting `target`: >1 attractive, <1 avoided.
+  hostility(pid, target) {
+    if (target === pid) return 0;
+    if (this.players[target]?.rebel) return 1.3;
+    const { leader, d } = this.dominance();
+    if (d <= 0 || leader === pid) return 1;
+    if (target === leader) return 1 + 3 * d;
+    return 1 - 0.85 * d;
+  }
+  updateCoalition() {
+    const { leader, d } = this.dominance();
+    if (this.coalition === undefined) this.coalition = -1;
+    if (this.coalition < 0 && d >= 0.25) {
+      this.coalition = leader;
+      this.addLog(`The tribes of the world rally against ${this.players[leader].name}!`, leader);
+      this.emit('coalition', { leader });
+    } else if (this.coalition >= 0 && (d < 0.1 || leader !== this.coalition)) {
+      this.addLog(`The coalition against ${this.players[this.coalition].name} breaks apart.`, this.coalition);
+      this.coalition = -1;
+    }
   }
 
   // ------------------------------------------------------------ wonders
@@ -616,6 +732,8 @@ export class Game {
     c.held = 0;
     c.adapt = 0;
     c.capital = false;
+    c.unrest = 0;
+    c.capturedTurn = this.turn;
     for (const t of this.within(c.idx, 2)) {
       if (this.tiles[t].ownerCity === c.id) this.tiles[t].owner = pid;
     }
@@ -626,7 +744,7 @@ export class Game {
 
   checkElimination(pid) {
     const pl = this.players[pid];
-    if (!pl.alive) return;
+    if (!pl.alive || pl.rebel) return;
     const hasCity = this.cities.some(c => c.owner === pid);
     if (!hasCity) {
       pl.alive = false;
@@ -635,7 +753,7 @@ export class Game {
       for (const t of this.tiles) if (t.owner === pid) { t.owner = -1; }
       this.addLog(`${pl.name} has fallen.`, pid);
       this.emit('eliminated', pl);
-      const alive = this.players.filter(p => p.alive);
+      const alive = this.players.filter(p => p.alive && !p.rebel);
       if (alive.length === 1) this.declareWinner(alive[0].id, 'conquest');
       else if (!this.players.some(p => p.alive && p.human) && this.players.some(p => p.human)) {
         // all humans dead: game over, highest-score AI wins
@@ -823,6 +941,18 @@ export class Game {
         this.addLog(`${c.name} is integrating into ${pl.name} culture (${AFFINITY[this.affinity(c)].name})`, pl.id, c.idx);
       }
     }
+    // unrest
+    if (!pl.rebel) {
+      for (const c of this.cities.slice()) {
+        if (c.owner !== pl.id) continue;
+        const { net } = this.unrest(c);
+        c.unrest = c.unrest || 0;
+        if (net > 0) c.unrest += net;
+        else c.unrest = Math.max(0, c.unrest - Math.max(1, -net));
+        if (net > 0 && c.unrest >= REVOLT_AT - 4 && c.unrest - net < REVOLT_AT - 4) this.addLog(`${c.name} is close to revolt!`, pl.id, c.idx);
+        if (c.unrest >= REVOLT_AT && !c.capital) this.revolt(c);
+      }
+    }
     // units: heal + reset
     for (const u of this.units) {
       if (u.owner !== pl.id) continue;
@@ -854,6 +984,7 @@ export class Game {
     }
     if (wrapped || next <= this.current) {
       this.turn++;
+      this.updateCoalition();
       const lim = this.settings.turnLimit || 0;
       if (lim && this.turn > lim) {
         const top = this.ranking()[0];
@@ -874,7 +1005,7 @@ export class Game {
     return Math.round(s);
   }
   ranking() {
-    return this.players.map(p => ({ id: p.id, score: p.alive ? this.score(p.id) : -1 })).sort((a, b) => b.score - a.score);
+    return this.players.filter(p => !p.rebel).map(p => ({ id: p.id, score: p.alive ? this.score(p.id) : -1 })).sort((a, b) => b.score - a.score);
   }
 
   // ------------------------------------------------------------ save/load
@@ -882,7 +1013,7 @@ export class Game {
     return JSON.stringify({
       v: 1, W: this.W, H: this.H, seed: this.seed, settings: this.settings, tiles: this.tiles,
       elev: this.elev, turn: this.turn, current: this.current, nextId: this.nextId,
-      cities: this.cities, units: this.units, log: this.log, winner: this.winner,
+      cities: this.cities, units: this.units, log: this.log, winner: this.winner, rebelId: this.rebelId, coalition: this.coalition,
       players: this.players.map(p => ({ ...p, _vis: undefined })), rng: this.rng.state(),
       cityNamePool: this.cityNamePool,
     });
@@ -892,6 +1023,11 @@ export class Game {
     const g = new Game();
     Object.assign(g, o);
     g.rng = makeRng(1); g.rng.setState(o.rng);
+    if (g.rebelId == null) { // saves from before rebels existed
+      g.rebelId = g.players.length;
+      g.players.push({ id: g.rebelId, name: 'Rebels', color: '#5a5a5a', home: 'plains', human: false, rebel: true, gold: 0, techs: [], explored: new Array(g.W * g.H).fill(1), alive: true, kills: 0, losses: 0 });
+      g.coalition = -1;
+    }
     g.rebuildUnitMap();
     for (const p of g.players) g.updateVision(p.id);
     return g;

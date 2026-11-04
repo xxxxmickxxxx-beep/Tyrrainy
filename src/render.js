@@ -433,6 +433,17 @@ export class Renderer {
       ctx.fillRect(x - tw / 2, ly - fs * 0.85, 3, fs * 1.25);
       ctx.fillStyle = '#fff';
       ctx.fillText(label, x, ly + fs * 0.1);
+      // unrest marker
+      if (c.owner === this.viewer || this.revealAll) {
+        const un = g.unrest(c).net;
+        if (un > 0 || (c.unrest || 0) >= 6) {
+          const mx = x + tw / 2 + 7, my = ly - fs * 0.25;
+          ctx.fillStyle = (c.unrest || 0) >= 8 ? '#ff4030' : '#ffa030';
+          ctx.beginPath(); ctx.arc(mx, my, 7, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = '#111'; ctx.font = 'bold 11px sans-serif'; ctx.fillText('!', mx, my + 4);
+          ctx.font = `bold ${fs}px sans-serif`;
+        }
+      }
       // pop pips
       const need = c.level + 1;
       const pw = Math.min(6, (tw - 8) / need);

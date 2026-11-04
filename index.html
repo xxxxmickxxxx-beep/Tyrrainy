@@ -56,6 +56,8 @@
 
 <div id="pass" class="hidden"><div class="menu-box"><h2 id="passTitle"></h2><p>Pass the device. Click when ready.</p><button id="btnPass" class="primary">I'm ready</button></div></div>
 
-<script type="module" src="src/main.js"></script>
+<div id="loadError" class="hidden" style="position:fixed;bottom:20px;left:50%;transform:translateX(-50%);z-index:99;background:#5a1a1a;padding:10px 16px;border-radius:8px">The game script failed to load. Make sure <code>tyrrainy.js</code> sits next to index.html.</div>
+<script src="tyrrainy.js"></script>
+<script>if (!window.tyrrainy) document.getElementById('loadError').classList.remove('hidden');</script>
 </body>
 </html>

@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "build": "node tools/build.js",
     "sim": "node tools/sim.js",
     "serve": "python3 -m http.server 8080"
   }

@@ -1,5 +1,6 @@
 // Computer opponents. Greedy heuristics, fast enough for 8 tribes on huge maps.
 import { UNITS, TECHS, IMPROVEMENTS, BUILDINGS, WONDERS, KIN_DIST, TERRAIN, SPECIALTY } from './data.js';
+import { REVOLT_AT } from './game.js';
 
 const HOME_TECH_BIAS = {
   plains: { agriculture: 4, husbandry: 2, riding: 3 },
@@ -76,6 +77,7 @@ export function runAI(g, pid) {
   const prof = profile(g, pid);
   const cache = new Map();
   g.rebuildUnitMap();
+  if (pl.rebel) { rebelAct(g, pid); return; }
 
   const myCities = () => g.cities.filter(c => c.owner === pid);
   const military = () => g.units.filter(u => u.owner === pid && u.type !== 'settler');
@@ -95,6 +97,21 @@ export function runAI(g, pid) {
   spend(g, pid, prof);
 }
 
+// Is enemy unit e threatening one of pid's cities? Self-defence ignores diplomacy.
+function threatensUs(g, pid, e) {
+  for (const c of g.cities) if (c.owner === pid && g.dist(c.idx, e.idx) <= 1) return true;
+  return false;
+}
+
+// Targeting gradient: hostility (from game.hostility) scales the *gain* of an attack,
+// so AIs still take easy kills on anyone but grind sieges mostly against the leader.
+function targetWeight(g, pid, e, kill) {
+  let w = g.hostility(pid, e.owner);
+  if (threatensUs(g, pid, e)) w = Math.max(w, 1);
+  if (kill) w = Math.max(w, 0.75);
+  return w;
+}
+
 function tryAttack(g, u) {
   const targets = g.attackTargets(u);
   let best = null, bestV = 0;
@@ -103,14 +120,16 @@ function tryAttack(g, u) {
     const { dmg, ret } = g.combatPreview(u, d);
     const kill = dmg >= d.hp;
     const die = !kill && ret >= u.hp;
-    let v = dmg + (kill ? 8 + unitValue(d.type) : 0) - ret * 1.1 - (die ? 15 + unitValue(u.type) : 0);
+    let gain = dmg + (kill ? 8 + unitValue(d.type) : 0);
+    const loss = ret * 1.1 + (die ? 15 + unitValue(u.type) : 0);
     const ec = g.cityAt(t);
     if (ec && ec.owner === d.owner) {
       // siege: wearing down garrisons is worth it if we have friends nearby
       const friends = g.units.filter(x => x.owner === u.owner && x !== u && g.dist(x.idx, t) <= 2).length;
-      v += 3 + dmg * 0.4 + friends * 1.5;
+      gain += 3 + dmg * 0.4 + friends * 1.5;
     }
-    if (g.stats(u).rng > 1 && ret === 0) v += 2;
+    if (g.stats(u).rng > 1 && ret === 0) gain += 2;
+    const v = gain * targetWeight(g, u.owner, d, kill) - loss;
     if (v > bestV) { bestV = v; best = t; }
   }
   if (best !== null) { g.attack(u, best); return true; }
@@ -150,6 +169,9 @@ function militaryAct(g, u, cache, prof) {
   if (here && here.owner === pid) {
     const others = g.units.filter(x => x !== u && x.owner === pid && g.dist(x.idx, here.idx) <= 1).length;
     if (enemiesNear(g, pid, here.idx, 3) > 0 && others < 1) { return; }
+    // keeping order: stay if leaving would make the city restless
+    const un = g.unrest(here);
+    if (un.total > 0 && un.net + 1 > 0) return;
   }
   // threatened own city without defender -> go there
   let target = null;
@@ -161,25 +183,32 @@ function militaryAct(g, u, cache, prof) {
   // offensive: nearest known enemy city / unit
   const mil = g.units.filter(x => x.owner === pid && x.type !== 'settler').length;
   const nCities = g.cities.filter(c => c.owner === pid).length;
-  const aggressive = mil >= nCities * (2.2 - prof.aggression * 1.4) || g.turn > 25;
+  const inCoalition = g.coalition >= 0 && g.coalition !== pid;
+  const aggressive = mil >= nCities * (inCoalition ? 1 : 2.2 - prof.aggression * 1.4) || g.turn > 25;
   if (target === null && aggressive) {
-    let bd = Infinity;
+    // pick the objective with the best (hostility x ease) / distance
+    let bs = 0;
     const pl = g.players[pid];
     for (const c of g.cities) {
       if (c.owner === pid || !pl.explored[c.idx]) continue;
       const d = g.dist(c.idx, u.idx);
-      if (d < bd) { bd = d; target = c.idx; }
+      const gar = g.unitAt(c.idx);
+      const ease = !gar ? 2.5 : 1.6 / (1 + g.stats(gar).def * gar.hp / g.maxHp(gar) * g.defenseBonus(gar) * 0.4);
+      const sc = g.hostility(pid, c.owner) * ease / (d + 4);
+      if (sc > bs) { bs = sc; target = c.idx; }
     }
     for (const e of g.units) {
       if (e.owner === pid || g.isHiddenFrom(e, pid)) continue;
       const d = g.dist(e.idx, u.idx);
-      if (d <= 4 && d < bd) { bd = d; target = e.idx; }
+      if (d > 4) continue;
+      const sc = targetWeight(g, pid, e, e.hp <= 4) * 1.3 / (d + 4);
+      if (sc > bs) { bs = sc; target = e.idx; }
     }
   }
   if (target === null) {
     // nearby enemy units within 3 - engage
     for (const e of g.units) {
-      if (e.owner !== pid && g.dist(e.idx, u.idx) <= 3 && !g.isHiddenFrom(e, pid)) { target = e.idx; break; }
+      if (e.owner !== pid && g.dist(e.idx, u.idx) <= 3 && !g.isHiddenFrom(e, pid) && targetWeight(g, pid, e, false) >= 0.8) { target = e.idx; break; }
     }
   }
   if (target === null) target = exploreTarget(g, u);
@@ -188,6 +217,21 @@ function militaryAct(g, u, cache, prof) {
   const step = bestStep(g, u, dist, false);
   if (step !== null) g.moveUnit(u, step);
   if (g.units.includes(u)) tryAttack(g, u);
+}
+
+// Rebels hold their cities: strike adjacent enemies, regroup on undefended rebel cities.
+function rebelAct(g, pid) {
+  for (const u of g.units.filter(x => x.owner === pid)) {
+    if (!g.units.includes(u)) continue;
+    if (tryAttack(g, u) && (!g.units.includes(u) || u.mvLeft <= 0)) continue;
+    if (g.cityAt(u.idx)?.owner === pid) continue;
+    const home = g.cities.filter(c => c.owner === pid && !g.unitAt(c.idx)).sort((a, b) => g.dist(a.idx, u.idx) - g.dist(b.idx, u.idx))[0];
+    if (home && g.dist(home.idx, u.idx) <= 6) {
+      const step = bestStep(g, u, field(g, home.idx, u, new Map()), false);
+      if (step !== null) g.moveUnit(u, step);
+    }
+    if (g.units.includes(u)) tryAttack(g, u);
+  }
 }
 
 function exploreTarget(g, u) {
@@ -312,6 +356,17 @@ function spend(g, pid, prof) {
     const capLeft = Math.min(g.unitCap(pid) - units.length, net >= 3 || pl.gold > 40 ? 99 : 0);
     let acted = false;
 
+    // 0) keep the peace: compliance buildings first, festivals when revolt is near
+    for (const c of cities) {
+      const un = g.unrest(c);
+      const cur = c.unrest || 0;
+      if (un.net <= 0 && cur < 6) continue;
+      const calmB = g.buildable(c).filter(b => BUILDINGS[b].calm && g.canBuild(c, b).ok).sort((a, b) => BUILDINGS[a].cost - BUILDINGS[b].cost)[0];
+      if (calmB) { g.build(c, calmB); acted = true; break; }
+      if (cur + Math.max(0, un.net) >= REVOLT_AT - 3 && g.canPlacate(c).ok) { g.placate(c); acted = true; break; }
+    }
+    if (acted) continue;
+
     // a) defend threatened cities
     for (const c of cities) {
       if (enemiesNear(g, pid, c.idx, 3) > 0 && !g.unitAt(c.idx) && capLeft > 0) {
@@ -322,7 +377,8 @@ function spend(g, pid, prof) {
     if (acted) continue;
 
     // b) expansion
-    const wantCities = Math.min(14, Math.round((3 + g.turn / 5) * prof.expansion));
+    const restless = cities.filter(c => g.unrest(c).net > 0).length;
+    const wantCities = Math.min(14, Math.round((3 + g.turn / 5) * prof.expansion)) - restless * 2;
     if (settlers < 2 && cities.length + settlers < wantCities && capLeft > 0 && mil >= Math.min(2, cities.length)) {
       const c = cities.filter(c => !g.unitAt(c.idx) && c.trainedTurn !== g.turn).sort((a, b) => b.level - a.level)[0];
       if (c) {

@@ -152,7 +152,9 @@ export const RESOURCES = {
 // ---------------- Buildings ----------------
 export const BUILDINGS = {
   walls:        { name: 'Walls', cost: 6, tech: 'masonry', desc: 'City defense x2 (stacks with specialty).' },
-  temple:       { name: 'Shrine', cost: 8, tech: 'philosophy', desc: '+1 pop, +1 gold. Integration twice as fast.' },
+  courthouse:   { name: 'Courthouse', cost: 5, calm: 1, desc: '-1 unrest pressure.' },
+  amphitheater: { name: 'Amphitheater', cost: 9, tech: 'masonry', calm: 2, desc: '-2 unrest pressure.' },
+  temple:       { name: 'Shrine', cost: 8, tech: 'philosophy', calm: 2, desc: '+1 pop, +1 gold, -2 unrest. Integration twice as fast.' },
   granary:      { name: 'Granary', cost: 6, special: 'plains', desc: '+2 pop.' , pop: 2 },
   watchtower:   { name: 'Watchtower', cost: 5, special: 'hilltop', desc: '+2 vision, city defense +50%.' },
   harbor:       { name: 'Harbor', cost: 7, special: 'coastal', desc: '+2 gold per turn.', gold: 2 },
