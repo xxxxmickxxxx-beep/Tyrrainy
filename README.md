@@ -75,33 +75,43 @@ When net pressure is positive, it builds unrest. The effects escalate:
 | 9+ | Insurrection | 30% chance each turn of a Rebel insurgent spawning next to the city |
 | 12 | Revolt | the garrison defects and the city joins the Rebels (capitals never revolt) |
 
-### Rebels
-The Rebels are a full AI tribe that takes its turn last. It is dormant while it holds nothing.
-- No homeland: every land is kin to it.
-- On each revolt it inherits the old owner's techs, receives gold and holds a big grudge against that owner.
-- Its own cities can't revolt.
-- It counts for conquest and score, so it can win.
+### Rebellions
+Every revolt (and every insurrection's first insurgent) belongs to a **rebellion**: a new tribe appended to the turn order.
+- **Homeland:** the specialty of the city it rose in, so it is subject to the same homeland bias as everyone else.
+- **Merging:** a revolt joins an existing rebellion if one holds a city within 5 tiles and is kin to the city's land. Otherwise it founds a new one (soft cap of 20 tribes alive).
+- **Starting kit:** the parent's techs, some gold, and a 40-point grudge against the parent.
+- **Afterwards** it's an ordinary tribe: its own cities can revolt, it can fall, and it can win.
+- **Fizzling:** an uprising that never takes a city disbands once its source city calms below rioting.
 
-### Balance of power (AI coalition)
-`power` = Σ(city level + 2) + 0.5 per military unit. Dominance `d = clamp((leader / mean(others) − 1.3) / 0.9, 0, 1)` applies from turn 15 with 3+ tribes in play. The leader is "sticky": a challenger must clearly pass it by 10% before attention shifts.
+Menu option *Rebellions*:
+- **AI — I take one over if my tribe falls** (default): when a human falls, they take command of the strongest AI rebellion.
+- **AI only.**
+- **Played by humans (hotseat):** every new rebellion is a human seat.
 
-Each AI rolls a **temperament** (`TEMPERAMENTS` in `src/data.js`) with jittered parameters:
+### Balance of power
+**Runaway detection.** `power` = Σ(city level + 2) + 0.5 per military unit. Dominance is the minimum of two terms:
+- leader vs. field: `(leader / mean(others) − 1.3) / 0.9`
+- leader vs. runner-up: `(leader / second − 1.2) / 0.6`
 
-| Temperament | Joins at d ≥ | Commitment | Notes |
+It's clamped to 0–1 and applies from turn 15 with 3+ tribes holding cities. **Two near-peers give d ≈ 0**, so no world coalition forms.
+
+**Threat** (per pair, cached per turn) combines proximity of the closest cities, shared border length, enemy attack strength within 3 tiles of my cities, and relative power. **Containment** for an AI = `d × balance × reach(leader) × (1 − 0.7 × pressing)`. `reach` falls off past 6 tiles, and `pressing` is the largest threat from anyone other than the leader.
+
+**Hostility** (no hard rules; temperaments only set weights):
+- **vs. the leader:** `1 + grudge + threat·caution + 3·containment − appease·d·1.5·(1 − 1.5·threat)`. An appeaser's restraint vanishes as the leader becomes a direct threat.
+- **vs. anyone else:** `(1 + grudge + prey) × restraint + threat·caution`. Restraint (≥ 0.3) comes from containment, so coalition members go easy on each other but always defend themselves. `prey` is the bully weight against much weaker tribes.
+
+Coalition *membership* is a label: an AI counts itself in when its containment passes its threshold, and out below threshold × patience.
+
+| Temperament | balance | caution | other |
 |---|---|---|---|
-| Balancer | 0.05–0.2 | strong | first in |
-| Opportunist | 0.45–0.65 | weak | takes easy kills and undefended cities from anyone |
-| Vengeful | 0.2–0.4 | medium | grudges weigh 1.4–2× |
-| Steadfast | 0.3–0.45 | medium | leaves only when d < 10–25% of its threshold |
-| Appeaser | never | — | avoids hitting the leader and bullies the weak instead |
+| Balancer | 1.3–1.7 | 0.6–0.9 | joins early when the leader is within reach |
+| Opportunist | 0.4–0.7 | 0.5–0.8 | bully 0.6–1.0, high opportunism |
+| Vengeful | 0.6–0.9 | 0.7–1.0 | vengeance 1.4–2.0 |
+| Appeaser | 0.1–0.25 | 1.1–1.5 | appease 0.6–0.9, bully 0.4–0.8 |
+| Steadfast | 0.8–1.1 | 0.8–1.1 | patience 0.15–0.3 (sticks around) |
 
-Hostility toward a target starts at 1 and is shaped by three things:
-- **Grudges:** damage taken from that tribe, plus 30 per lost city. They decay 10% per turn.
-- **Coalition members:** hostility is multiplied by `1 + 3·e·balance` against the leader and by `1 − 0.85·e·balance` against everyone else. `e` is the member's commitment, which grows as dominance rises past its own threshold.
-- **Floors:** kills never fall below opportunism × 0.85, and enemies next to the AI's own cities never fall below 1.
-
-Attacks are valued as gain × hostility − loss. Campaign targets are chosen by hostility × ease ÷ distance.
-Joins, switches and departures appear in the log, and the Tribes screen shows each met tribe's temperament, coalition and grudges against you.
+Sims with a boosted runaway (`node tools/sim.js boost=12 …`) show the intended distance gradient. Steadfast tribes within 8 tiles of the leader aimed all their attacks at it, and those farther away none. Opportunists near it: 35%; far away: 0%.
 
 ### Combat
 Attack and defense forces are scaled by HP and terrain or city defense, and the formula is deterministic. Defenders that survive and are in range retaliate.
@@ -123,7 +133,7 @@ Three kills make a unit a veteran.
 ## Open design questions (not yet decided)
 1. **Snowballing** is now dampened by unrest and the AI coalition. On large 8-tribe maps the top tribes end within about 15–17 cities of each other. Coalitions only steer the AI, though. A human leader feels them, but a human in a coalition gets no shared benefit (shared vision, a truce).
 2. **Late-game gold still piles up.** Nine world wonders (one per land type, level 5+ city) now soak some of it, but all techs are usually researched by about turn 80–100. Unit upgrades or repeatable techs are the next candidates.
-3. **Humans can't play the Rebels.** They're AI-only. With 8+ tribes and a realm-size penalty, the Rebels often reach 5–15 cities. That might be too strong, because they inherit full tech trees.
+3. **Rebellions inherit the full tech tree** of their parent. With homeland bias applied they now stay small (1–5 cities in sims), but a late-game rebellion is still technologically mature on day one.
 4. **Coastal threshold.** With 2 water neighbours, coastal cities dominated, so the threshold is now 3. Mixed tiles (a forest on the coast) still get only one identity. A primary/secondary specialty system is the obvious next step.
 5. **No diplomacy.** Everyone is at war with everyone. Peace and alliances matter more on big multi-faction maps.
 6. **AI cheats slightly.** It knows enemy unit positions near its units without fog checks.

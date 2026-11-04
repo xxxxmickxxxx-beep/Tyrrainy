@@ -42,6 +42,7 @@ function startNew(watch) {
     players: +$('optPlayers').value,
     humans: watch ? 0 : Math.min(+$('optHumans').value, +$('optPlayers').value),
     turnLimit: +$('optTurns').value,
+    rebelControl: watch ? 'ai' : $('optRebels').value,
     seed: $('optSeed').value.trim() || undefined,
   };
   const g = Game.create(opts);
@@ -95,7 +96,11 @@ function onEvent(type, d) {
   } else if (type === 'win') {
     setTimeout(showWin, 400);
   } else if (type === 'revolt') {
-    if (d.old === viewer) toast(`${d.city.name} has revolted and joined the Rebels!`);
+    if (d.old === viewer) toast(`${d.city.name} has revolted and joined the ${game.players[d.city.owner].name}!`);
+  } else if (type === 'rebellion') {
+    if (d.from === viewer) toast(`Rebellion! The ${game.players[d.pid].name} rise in ${d.city.name}.`);
+  } else if (type === 'adopt') {
+    if (game.players[d.from].human) setTimeout(() => toast(`Your tribe has fallen — you now lead the ${game.players[d.to].name}!`), 50);
   } else if (type === 'coalition') {
     toast(d.leader === viewer ? `The other tribes are uniting against you!` : `The tribes rally against ${game.players[d.leader].name}.`);
   } else if (type === 'wonder') {
@@ -182,7 +187,7 @@ function runAITurns() {
     if (game.winner) { busy = false; refreshAll(); return; }
     const pl = game.players[game.current];
     if (pl.human && pl.alive) { busy = false; beginTurnUI(); return; }
-    if (watchMode && !pl.rebel) R.viewer = pl.id;
+    if (watchMode) R.viewer = pl.id;
     try { runAI(game, pl.id); } catch (e) { console.error('AI error', e); }
     game.endTurn();
     R.dirty = true;
@@ -660,7 +665,8 @@ function showTribes() {
       if (T.joined >= 0) temper += ` <span class="tag" style="background:${game.players[T.joined].color};color:#111">vs ${esc(game.players[T.joined].name)}</span>`;
       if ((T.grudges[viewer.id] || 0) >= 15) temper += ` <span class="tag" style="background:#803030">grudge vs you</span>`;
     }
-    const homeName = p.home ? SPECIALTY[p.home].name : 'None — all lands kin';
+    let homeName = p.home ? SPECIALTY[p.home].name : '—';
+    if (p.rebel && p.rebelFrom != null) homeName += ` <span class="dim">(rose against ${esc(game.players[p.rebelFrom].name)})</span>`;
     h += `<tr style="opacity:${p.alive ? 1 : 0.4}"><td><span class="chip" style="background:${p.color}"></span></td><td>${met ? esc(p.name) : '<i>Unknown tribe</i>'}${p.human ? ' (human)' : ''}${p.alive ? '' : ' — fallen'}</td><td>${met ? homeName : '?'}</td><td>${temper}</td><td>${met ? cs : '?'}</td><td>${p.alive ? game.score(p.id) : '-'}</td><td>${met ? p.techs.length : '?'}</td><td>${met ? p.kills : '?'}</td></tr>`;
   }
   h += `</table>`;
@@ -668,7 +674,12 @@ function showTribes() {
   if (game.coalition >= 0) {
     const mem = game.coalitionMembers();
     h += `<p><b style="color:${game.players[game.coalition].color}">Coalition</b> against <b>${esc(game.players[game.coalition].name)}</b>${game.coalition === viewer.id ? ' — that is you' : ''} (dominance ${(dom.d * 100) | 0}%). Members: ${mem.map(id => esc(game.players[id].name)).join(', ') || '—'}.</p>`;
-  } else h += `<p class="dim">No coalition. If one tribe grows far stronger than the rest, other tribes may turn on it — each at its own threshold, depending on temperament.</p>`;
+  } else h += `<p class="dim">No coalition. Only a single runaway power, clearly ahead of the runner-up and the field, draws one. Otherwise tribes guard against their nearest major threat.</p>`;
+  if (!viewer.human || true) {
+    const thr = game.threats(viewer.id);
+    const near = Object.entries(thr.by).filter(([id]) => watchMode || game.cities.some(c => c.owner === +id && viewer.explored[c.idx])).sort((a, b) => b[1].threat - a[1].threat).slice(0, 3);
+    if (near.length) h += `<p class="dim">Biggest threats to you: ${near.map(([id, x]) => `${esc(game.players[id].name)} (border ${x.border}, ${x.dmin < 99 ? x.dmin + ' tiles' : 'far'}, ${x.rp.toFixed(1)}× your power)`).join('; ')}.</p>`;
+  }
   const trad = game.traditions(viewer.id);
   h += `<h3>Traditions</h3><p class="dim">Own 3+ Homeland/Kin cities of one land type and every one of your cities can train its unique unit (+1 cost).</p><p>${trad.length ? trad.map(s => `<b>${SPECIALTY[s].name}</b> → ${UNITS[SPECIALTY[s].unit].name}`).join(', ') : 'None yet.'}</p>`;
   h += `<h3>Cultural kinship</h3><p class="dim">How easily a ${SPECIALTY[viewer.home].name} people runs cities on each land type:</p><table class="spectable">`;
@@ -704,11 +715,27 @@ function showHelp() {
   <ul><li><b>Restless</b>: the city withholds gold.</li>
   <li><b>Rioting</b> (${RIOT_AT}): no training or construction except compliance buildings, and the riots spread pressure to your nearby cities.</li>
   <li><b>Insurrection</b> (${INSURRECTION_AT}): insurgents may take up arms.</li>
-  <li><b>Revolt</b> (${REVOLT_AT}): the garrison defects and the city joins the Rebels.</li></ul>
+  <li><b>Revolt</b> (${REVOLT_AT}): the garrison defects and the city founds a rebellion, or joins a nearby kindred one.</li></ul>
   <h3>Balance of power</h3>
-  <p>If one tribe's power (cities, levels, armies) runs far ahead of the average, AI tribes may join a <b>coalition</b> against it. They still snap up easy kills and undefended cities anywhere, but members prefer marching on the leader and go easy on each other. Each AI has a <b>temperament</b>. <i>Balancers</i> join early. <i>Opportunists</i> join late and prey on the weak. <i>Vengeful</i> tribes chase whoever hurt them most. <i>Steadfast</i> tribes are slow to join and slow to leave. <i>Appeasers</i> never join and pick on the small instead. Everyone holds grudges against recent attackers, and those fade over time.</p>
-  <h3>Rebels</h3>
-  <p>Revolted cities join the <b>Rebels</b>, a full tribe that takes its turn last. Rebels have no homeland, so every land is kin to them. They inherit the techs of the realm they broke from, hold a fierce grudge against it, and expand and fight like anyone else. They can win.</p>
+  <p>AI tribes weigh three forces when choosing whom to fight:</p>
+  <ul><li><b>Threat</b>: neighbours that are close, share a long border, have armies near their cities, or are stronger.</li>
+  <li><b>Grudges</b>: whoever hurt them recently.</li>
+  <li><b>Containment</b>: only when a single runaway power is clearly ahead of both the runner-up and the field.</li></ul>
+  <p>Containment fades with distance and with how pressing a tribe's own threats are. A far-off tribe beset by neighbours won't march across the world.</p>
+  <p>Each AI has a <b>temperament</b> that sets the weights, not rules:</p>
+  <ul><li><i>Balancers</i> care most about containment.</li>
+  <li><i>Opportunists</i> prey on the weak.</li>
+  <li><i>Vengeful</i> tribes chase grudges.</li>
+  <li><i>Steadfast</i> tribes are slow to commit and slow to quit.</li>
+  <li><i>Appeasers</i> avoid provoking the leader, until it threatens them directly.</li></ul>
+  <p>Tribes whose containment pull is strong enough call themselves a <b>coalition</b>, and they go easy on each other.</p>
+  <h3>Rebellions</h3>
+  <p>Revolts and insurrections give birth to new tribes, which take their turn after everyone else.</p>
+  <ul><li>A rebellion takes the <b>homeland of the city it rises in</b>, so it faces the same culture penalties as everyone else.</li>
+  <li>It inherits its parent's techs and holds a grudge against it.</li>
+  <li>Kindred rebellions within 5 tiles merge.</li>
+  <li>An uprising that never takes a city melts away once the unrest feeding it dies down.</li></ul>
+  <p>Depending on game options, you can take over a rebellion when your tribe falls, or every rebellion can be a human seat.</p>
   <h3>War</h3>
   <ul><li>Select a unit: white hexes = move, red = attack, gold = capture an undefended enemy city.</li>
   <li>Damage depends on attack vs. defense, health and terrain. Defenders in cities, hills, forests and mountains are tougher. Survivors in range strike back.</li>

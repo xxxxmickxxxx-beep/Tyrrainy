@@ -310,18 +310,22 @@ const WONDERS = {
 };
 
 // ---------------- AI temperaments ----------------
-// Ranges are [min, max]; each AI rolls its own values so no two behave alike.
-//  threshold:  dominance at which it joins a coalition against the leader
-//  balance:    how hard it commits once joined (<0: appeaser, courts the strong, bullies the weak)
-//  patience:   leaves the coalition when dominance falls below threshold * patience
-//  vengeance:  how much grudges (damage taken from a tribe) raise hostility
-//  opportunism: floor on hostility for kills and undefended cities
+// Temperaments are weights, not rules. Every AI weighs the same three forces:
+//   threat      – nearby, long-bordered, well-armed or stronger neighbours (self-preservation)
+//   grudges     – damage recently taken from a tribe
+//   containment – stopping a runaway leader, scaled by how far away it is and by how
+//                 pressing the AI's other threats are
+// Ranges are [min, max]; each AI rolls its own values.
+//   balance:   weight on containment          caution:   weight on threat
+//   vengeance: weight on grudges              appease:   reluctance to provoke the leader (threat overrides it)
+//   bully:     appetite for much weaker prey  opportunism: floor for kills and undefended cities
+//   threshold: containment level at which it calls itself a coalition member; patience: leaves below threshold × patience
 const TEMPERAMENTS = {
-  balancer:    { name: 'Balancer',    desc: 'Watches the balance of power and joins coalitions early.', threshold: [0.05, 0.2], balance: [1.2, 1.6], patience: [0.4, 0.6], vengeance: [0.4, 0.8], opportunism: [0.6, 0.8] },
-  opportunist: { name: 'Opportunist', desc: 'Preys on whoever is weakest nearby; joins coalitions late.', threshold: [0.45, 0.65], balance: [0.5, 0.8], patience: [0.5, 0.7], vengeance: [0.3, 0.6], opportunism: [0.95, 1.1] },
-  vengeful:    { name: 'Vengeful',    desc: 'Never forgets who struck it.', threshold: [0.2, 0.4], balance: [0.7, 1.0], patience: [0.4, 0.6], vengeance: [1.4, 2.0], opportunism: [0.7, 0.9] },
-  appeaser:    { name: 'Appeaser',    desc: 'Avoids provoking the strong and bullies the weak.', threshold: [9, 9], balance: [-0.6, -0.25], patience: [0.5, 0.5], vengeance: [0.5, 0.9], opportunism: [0.85, 1.0] },
-  steadfast:   { name: 'Steadfast',   desc: 'Slow to join a coalition, slower to leave it.', threshold: [0.3, 0.45], balance: [0.9, 1.2], patience: [0.1, 0.25], vengeance: [0.6, 1.0], opportunism: [0.6, 0.8] },
+  balancer:    { name: 'Balancer',    desc: 'Cares most about the balance of power. Joins coalitions early, if the leader is within reach.', balance: [1.3, 1.7], caution: [0.6, 0.9], vengeance: [0.4, 0.8], appease: [0, 0], bully: [0, 0.15], opportunism: [0.6, 0.8], threshold: [0.1, 0.18], patience: [0.5, 0.7] },
+  opportunist: { name: 'Opportunist', desc: 'Preys on whoever is weakest nearby; rarely bothers with distant giants.', balance: [0.4, 0.7], caution: [0.5, 0.8], vengeance: [0.3, 0.6], appease: [0, 0.2], bully: [0.6, 1.0], opportunism: [0.95, 1.1], threshold: [0.25, 0.35], patience: [0.5, 0.7] },
+  vengeful:    { name: 'Vengeful',    desc: 'Never forgets who struck it.', balance: [0.6, 0.9], caution: [0.7, 1.0], vengeance: [1.4, 2.0], appease: [0, 0.1], bully: [0.1, 0.3], opportunism: [0.7, 0.9], threshold: [0.2, 0.3], patience: [0.4, 0.6] },
+  appeaser:    { name: 'Appeaser',    desc: 'Avoids provoking the strong and picks on the weak — but fights hard when its own cities are threatened.', balance: [0.1, 0.25], caution: [1.1, 1.5], vengeance: [0.5, 0.9], appease: [0.6, 0.9], bully: [0.4, 0.8], opportunism: [0.85, 1.0], threshold: [0.15, 0.2], patience: [0.5, 0.6] },
+  steadfast:   { name: 'Steadfast',   desc: 'Slow to commit, slower to give up.', balance: [0.8, 1.1], caution: [0.8, 1.1], vengeance: [0.6, 1.0], appease: [0, 0.1], bully: [0.1, 0.3], opportunism: [0.6, 0.8], threshold: [0.25, 0.35], patience: [0.15, 0.3] },
 };
 
 // ---------------- Techs ----------------
@@ -617,15 +621,18 @@ function rollTemper(rng, key) {
   key = key || keys[Math.floor(rng() * keys.length)];
   const T = TEMPERAMENTS[key];
   const roll = ([a, b]) => a + rng() * (b - a);
-  return { key, threshold: roll(T.threshold), balance: roll(T.balance), patience: roll(T.patience), vengeance: roll(T.vengeance), opportunism: roll(T.opportunism), joined: -1, grudges: {} };
+  const out = { key, joined: -1, grudges: {} };
+  for (const f of ['balance', 'caution', 'vengeance', 'appease', 'bully', 'opportunism', 'threshold', 'patience']) out[f] = roll(T[f]);
+  return out;
 }
 
-function makeRebels(g) {
-  return {
-    id: g.players.length, name: 'Rebels', color: '#5a5a5a', home: null, human: false, rebel: true,
-    gold: 0, techs: [], explored: new Array(g.W * g.H).fill(0), alive: true, kills: 0, losses: 0,
-    temper: rollTemper(g.rng, 'vengeful'),
-  };
+const MAX_TRIBES = 20;
+function rebelColor(id) {
+  const h = (id * 137.5 + 20) % 360;
+  // hsl -> hex so every colour in the game is a hex string
+  const s = 0.5, l = 0.55, k = (n) => (n + h / 30) % 12, a = s * Math.min(l, 1 - l);
+  const f = (n) => Math.round(255 * (l - a * Math.max(-1, Math.min(k(n) - 3, 9 - k(n), 1)))).toString(16).padStart(2, '0');
+  return '#' + f(0) + f(8) + f(4);
 }
 
 class Game {
@@ -679,9 +686,6 @@ class Game {
       c.name = g.takeCityName();
       for (const t of g.within(c.idx, 3)) g.players[c.owner].explored[t] = 1;
     }
-    // Rebels: a non-playing faction that takes over cities which revolt.
-    g.rebelId = g.players.length;
-    g.players.push(makeRebels(g));
     g.coalition = -1;
     for (const pl of g.players) g.updateVision(pl.id);
     g.startTurn();
@@ -1037,9 +1041,38 @@ class Game {
     this.emit('festival', { city, backfired: false });
     return { ok: true, backfired: false };
   }
+  // A rebellion takes the homeland of the city it rises in. Kindred rebellions close by merge.
+  rebellionFor(city) {
+    const owner = city.owner;
+    const cur = this.players[city.rebellion];
+    if (cur && cur.alive && cur.id !== owner) return cur.id;
+    for (const p of this.players) {
+      if (!p.rebel || !p.alive || p.id === owner) continue;
+      if (this.kinDist(p.id, city.specialty) > 1) continue;
+      if (this.cities.some(c => c.owner === p.id && this.dist(c.idx, city.idx) <= 5)) { city.rebellion = p.id; return p.id; }
+    }
+    const nearest = () => this.players.filter(p => p.rebel && p.alive && p.id !== owner)
+      .map(p => [p.id, Math.min(99, ...this.cities.filter(c => c.owner === p.id).map(c => this.dist(c.idx, city.idx)))]).sort((a, b) => a[1] - b[1])[0];
+    if (this.players.filter(p => p.alive).length >= MAX_TRIBES) { const n = nearest(); if (n) { city.rebellion = n[0]; return n[0]; } }
+    const old = this.players[owner];
+    const id = this.players.length;
+    const human = this.settings.rebelControl === 'human' && this.players.some(p => p.human);
+    const pl = {
+      id, name: 'Free ' + city.name, color: rebelColor(id), home: city.specialty, human, rebel: true, rebelFrom: owner,
+      gold: 4, techs: [...old.techs], explored: new Array(this.W * this.H).fill(0), alive: true, kills: 0, losses: 0, born: this.turn,
+    };
+    if (!human) { pl.temper = rollTemper(this.rng); pl.temper.grudges[owner] = 40; }
+    this.players.push(pl);
+    for (const t of this.within(city.idx, 4)) pl.explored[t] = 1;
+    city.rebellion = id;
+    this.addLog(`A rebellion rises in ${city.name}: the ${pl.name}, a ${SPECIALTY[pl.home].name} people, defy ${old.name}!`, owner, city.idx);
+    this.emit('rebellion', { pid: id, city, from: owner });
+    return id;
+  }
+
   revolt(city) {
     const old = city.owner;
-    const rid = this.rebelId;
+    const rid = this.rebellionFor(city);
     const gar = this.unitAt(city.idx);
     if (gar && gar.owner === old) { gar.owner = rid; gar.goto = null; } // the garrison defects
     city.owner = rid;
@@ -1053,12 +1086,12 @@ class Game {
     if (spot !== null) this.spawnUnit(rid, this.turn > 35 ? 'archer' : 'warrior', spot);
     this.rebuildUnitMap();
     const reb = this.players[rid];
-    for (const t of this.players[old].techs) if (!reb.techs.includes(t)) reb.techs.push(t);
+    reb.heldCity = true;
     reb.gold += 5 + city.level * 2;
     for (const t of this.within(city.idx, 3)) reb.explored[t] = 1;
     if (reb.temper) reb.temper.grudges[old] = (reb.temper.grudges[old] || 0) + 40;
     this.updateVision(rid);
-    this.addLog(`${city.name} has revolted against ${this.players[old].name}!`, old, city.idx);
+    this.addLog(`${city.name} has revolted against ${this.players[old].name} and joined the ${reb.name}!`, old, city.idx);
     this.emit('revolt', { city, old });
     this.checkElimination(old);
   }
@@ -1070,75 +1103,122 @@ class Game {
     for (const u of this.units) if (u.owner === pid && u.type !== 'settler') p += 0.5;
     return p;
   }
-  // Tribes still in the game: everyone alive, plus the Rebels while they hold a city.
+  // Tribes still in the game: alive and holding at least one city.
   contenders() {
-    return this.players.filter(p => p.alive && (!p.rebel || this.cities.some(c => c.owner === p.id)));
+    const holders = new Set(this.cities.map(c => c.owner));
+    return this.players.filter(p => p.alive && holders.has(p.id));
   }
   addGrudge(victim, attacker, amount) {
     const t = this.players[victim]?.temper;
     if (!t || victim === attacker) return;
     t.grudges[attacker] = (t.grudges[attacker] || 0) + amount;
   }
-  // How far the strongest tribe has pulled ahead: 0 (no runaway) .. 1 (dominant).
+  // A single runaway power: 0 .. 1. Needs a clear lead over the runner-up AND the field,
+  // so two near-peer empires don't trigger a world coalition.
   dominance() {
     if (this._dom && this._dom.key === this.turn + ':' + this.current) return this._dom;
     const alive = this.contenders();
     let res = { leader: -1, d: 0, key: this.turn + ':' + this.current };
     if (alive.length >= 3 && this.turn >= 15) {
       const pw = alive.map(p => [p.id, this.power(p.id)]).sort((a, b) => b[1] - a[1]);
-      // sticky leader: a challenger must clearly overtake before the world's attention shifts
-      const prev = pw.findIndex(x => x[0] === this.lastLeader);
-      if (prev > 0 && pw[prev][1] >= pw[0][1] * 0.9) pw.unshift(pw.splice(prev, 1)[0]);
-      this.lastLeader = pw[0][0];
       const rest = pw.slice(1).reduce((a, x) => a + x[1], 0) / (pw.length - 1);
-      const ratio = pw[0][1] / Math.max(1, rest);
-      res = { leader: pw[0][0], d: Math.max(0, Math.min(1, (ratio - 1.3) / 0.9)), ratio, key: res.key };
+      const vsField = (pw[0][1] / Math.max(1, rest) - 1.3) / 0.9;
+      const vsSecond = (pw[0][1] / Math.max(1, pw[1][1]) - 1.2) / 0.6;
+      res = { leader: pw[0][0], d: Math.max(0, Math.min(1, vsField, vsSecond)), ratio: pw[0][1] / Math.max(1, rest), ratio2: pw[0][1] / Math.max(1, pw[1][1]), key: res.key };
     }
     this._dom = res;
     return res;
   }
-  // Targeting weight an AI tribe gives to fighting `target`: >1 attractive, <1 avoided.
-  // Each AI's temperament shapes it: grudges, when it joins a coalition, how hard it commits.
+  // How dangerous each other tribe is to pid: proximity, shared border, armies near pid's
+  // cities, relative power. Cached per player-turn.
+  threats(pid) {
+    const key = this.turn + ':' + this.current + ':' + this.units.length + ':' + this.cities.length;
+    this._thr = this._thr || {};
+    if (this._thr[pid]?.key === key) return this._thr[pid];
+    const mine = this.cities.filter(c => c.owner === pid);
+    const myPow = Math.max(1, this.power(pid));
+    const border = {};
+    for (let i = 0; i < this.tiles.length; i++) {
+      if (this.tiles[i].owner !== pid) continue;
+      const seen = new Set();
+      for (const n of this.neighbors(i)) {
+        const o = this.tiles[n].owner;
+        if (o >= 0 && o !== pid && !seen.has(o)) { seen.add(o); border[o] = (border[o] || 0) + 1; }
+      }
+    }
+    const out = { key, by: {} };
+    for (const p of this.players) {
+      if (!p.alive || p.id === pid) continue;
+      const theirs = this.cities.filter(c => c.owner === p.id);
+      let dmin = 99;
+      for (const a of mine) for (const b of theirs) dmin = Math.min(dmin, this.dist(a.idx, b.idx));
+      let army = 0;
+      for (const u of this.units) {
+        if (u.owner !== p.id || UNITS[u.type].atk <= 0) continue;
+        if (mine.some(c => this.dist(c.idx, u.idx) <= 3)) army += UNITS[u.type].atk / 2;
+      }
+      if (!theirs.length && !army) continue;
+      const rp = Math.max(0.25, Math.min(2.5, this.power(p.id) / myPow));
+      const prox = 1 / (1 + Math.max(0, dmin - 4) / 4);
+      const bord = (border[p.id] || 0) / ((border[p.id] || 0) + 8);
+      const threat = (0.5 * prox + 0.8 * bord + Math.min(1, army / 5)) * Math.pow(rp, 0.7) / 1.5;
+      out.by[p.id] = { threat, rp, dmin, border: border[p.id] || 0, army, reach: 1 / (1 + Math.max(0, dmin - 6) / 5) };
+    }
+    const { leader, d } = this.dominance();
+    let pressing = 0;
+    for (const [t, x] of Object.entries(out.by)) if (+t !== leader) pressing = Math.max(pressing, x.threat);
+    out.pressing = Math.min(1, pressing);
+    const T = this.players[pid].temper;
+    out.containment = leader >= 0 && leader !== pid && T
+      ? d * T.balance * (out.by[leader]?.reach ?? 0) * (1 - 0.7 * out.pressing)
+      : 0;
+    this._thr[pid] = out;
+    return out;
+  }
+  // Targeting weight an AI tribe gives to fighting `target`. Temperament sets the weights;
+  // nothing is forbidden. An appeaser whose core is threatened fights back, and a far-away
+  // balancer beset by its own neighbours does not march across the world.
   hostility(pid, target) {
     if (target === pid) return 0;
     const T = this.players[pid].temper;
     if (!T) return 1;
-    let w = 1 + Math.min(1.5, (T.grudges[target] || 0) / 25 * T.vengeance);
-    if (this.players[target]?.rebel) w *= 1.15;
+    const thr = this.threats(pid);
+    const x = thr.by[target] || { threat: 0, rp: 1, reach: 0 };
+    const caution = T.caution ?? 0.8, appease = T.appease ?? 0, bully = T.bully ?? 0;
+    const grudge = Math.min(1.5, (T.grudges[target] || 0) / 25 * (T.vengeance ?? 1));
+    const threatW = x.threat * caution;
+    const preyW = bully * Math.max(0, 0.7 - x.rp);
     const { leader, d } = this.dominance();
-    if (leader < 0 || leader === pid) return w;
-    if (T.joined === leader) {
-      const e = Math.max(0.15, Math.min(1, (d - T.threshold * T.patience) / (1 - T.threshold * T.patience)));
-      if (target === leader) w *= 1 + 3 * e * T.balance;
-      else w *= Math.max(0.15, 1 - 0.85 * e * T.balance);
-    } else if (T.balance < 0 && d > 0.2) {
-      // appeasers keep their heads down and pick on the weak instead
-      if (target === leader) w *= Math.max(0.2, 1 + T.balance * d * 1.2);
-      else w *= 1 + 0.3 * d;
+    const C = thr.containment;
+    let w;
+    if (leader >= 0 && leader !== pid && target === leader) {
+      w = 1 + grudge + threatW + 3 * C;
+      w -= appease * d * 1.5 * Math.max(0, 1 - x.threat * 1.5); // fades as the leader becomes a direct threat
+    } else {
+      // members go easy on fellow non-leaders, but never at the cost of self-defence
+      const restraint = Math.max(0.3, 1 - 0.7 * Math.min(1, C * 2));
+      w = (1 + grudge + preyW) * restraint + threatW;
     }
-    return w;
+    return Math.max(0.1, w);
   }
   coalitionMembers() {
     const live = new Set(this.contenders().map(p => p.id));
     return this.players.filter(p => p.temper && live.has(p.id) && p.temper.joined >= 0 && p.temper.joined === this.coalition).map(p => p.id);
   }
-  // Each AI decides for itself, at its own threshold, whether to join or leave.
+  // Coalition membership is descriptive: an AI counts itself in when its own containment
+  // pull passes its threshold (and out when it falls below threshold × patience).
   updateCoalition() {
-    const { leader, d } = this.dominance();
+    const { leader } = this.dominance();
     for (const p of this.contenders()) {
       const T = p.temper;
       if (!T) continue;
       for (const k in T.grudges) { T.grudges[k] *= 0.9; if (T.grudges[k] < 1) delete T.grudges[k]; }
-      if (T.joined >= 0 && T.joined !== leader && leader >= 0 && leader !== p.id && d >= T.threshold) {
-        T.joined = leader; // turns its coalition on the new leader
-        this.addLog(`${p.name} turns on ${this.players[leader].name}.`, p.id);
-        continue;
-      }
-      if (T.joined >= 0 && (T.joined !== leader || d < T.threshold * T.patience)) {
+      const C = this.threats(p.id).containment;
+      if (T.joined >= 0 && (T.joined !== leader || C < T.threshold * T.patience)) {
         this.addLog(`${p.name} abandons the coalition against ${this.players[T.joined].name}.`, p.id);
         T.joined = -1;
       }
-      if (T.joined < 0 && leader >= 0 && leader !== p.id && T.balance > 0 && d >= T.threshold) {
+      if (T.joined < 0 && leader >= 0 && leader !== p.id && C >= T.threshold) {
         T.joined = leader;
         this.addLog(`${p.name} joins the coalition against ${this.players[leader].name}!`, p.id);
         this.emit('coalition', { leader, member: p.id });
@@ -1454,23 +1534,35 @@ class Game {
   checkElimination(pid) {
     const pl = this.players[pid];
     if (!pl.alive) return;
-    if (pl.rebel) { this.checkConquest(); return; } // rebels go dormant, they never fall
     const hasCity = this.cities.some(c => c.owner === pid);
+    // a rebellion that has not yet taken a city lives on while its insurgents do
+    if (!hasCity && pl.rebel && this.units.some(u => u.owner === pid)) { this.checkConquest(); return; }
     if (!hasCity) {
       pl.alive = false;
       this.units = this.units.filter(u => u.owner !== pid);
       this.rebuildUnitMap();
       for (const t of this.tiles) if (t.owner === pid) { t.owner = -1; }
-      this.addLog(`${pl.name} has fallen.`, pid);
+      this.addLog(pl.rebel && !pl.heldCity ? `The ${pl.name} uprising is crushed.` : `${pl.name} has fallen.`, pid);
       this.emit('eliminated', pl);
+      if (pl.human) this.offerRebellion(pl);
       this.checkConquest();
       if (this.winner) return;
-      if (false) {}
-      else if (!this.players.some(p => p.alive && p.human) && this.players.some(p => p.human)) {
+      if (!this.players.some(p => p.alive && p.human) && this.players.some(p => p.human)) {
         // all humans dead: game over, highest-score AI wins
         this.declareWinner(this.ranking()[0].id, 'conquest');
       }
     }
+  }
+
+  // Optional comeback: a fallen human takes command of the strongest AI rebellion.
+  offerRebellion(pl) {
+    if (!['fall', 'human'].includes(this.settings.rebelControl)) return;
+    const cand = this.contenders().filter(p => p.rebel && !p.human).sort((a, b) => this.power(b.id) - this.power(a.id))[0];
+    if (!cand) return;
+    cand.human = true;
+    cand.adoptedBy = pl.name;
+    this.addLog(`The leaders of the ${pl.name} flee to the ${cand.name} and take command.`, cand.id);
+    this.emit('adopt', { from: pl.id, to: cand.id });
   }
 
   checkConquest() {
@@ -1575,6 +1667,7 @@ class Game {
   killUnit(u, killer) {
     this.units = this.units.filter(x => x !== u);
     this.rebuildUnitMap();
+    if (this.players[u.owner].rebel && !this.cities.some(c => c.owner === u.owner)) this.checkElimination(u.owner);
     this.players[u.owner].losses++;
     if (killer) {
       killer.kills++;
@@ -1668,16 +1761,26 @@ class Game {
       // trust in festivals returns when the city is content without one
       if (underlying <= 0) { c.calmStreak = (c.calmStreak || 0) + 1; if (c.calmStreak >= 6 && c.festivals) { c.festivals--; c.calmStreak = 0; } }
       else c.calmStreak = 0;
-      if (pl.rebel) { c.unrest = Math.min(c.unrest, REVOLT_AT - 1); continue; }
       if (net > 0 && c.unrest >= REVOLT_AT - 4 && c.unrest - net < REVOLT_AT - 4) this.addLog(`${c.name} is close to revolt!`, pl.id, c.idx);
       if (c.unrest >= REVOLT_AT && !c.capital) { this.revolt(c); continue; }
       if (c.unrest >= INSURRECTION_AT && this.rng() < 0.3) {
         const spot = this.freeNeighbor(c.idx, n => !this.isWater(n) && this.tiles[n].t !== 'mountain');
         if (spot !== null) {
-          const pu = this.spawnUnit(this.rebelId, this.turn > 35 ? 'swordsman' : 'warrior', spot);
+          const rid = this.rebellionFor(c);
+          const pu = this.spawnUnit(rid, this.turn > 35 ? 'swordsman' : 'warrior', spot);
           pu.mvLeft = 0;
           this.addLog(`Insurgents take up arms outside ${c.name}!`, pl.id, c.idx);
         }
+      }
+    }
+    // a city-less uprising melts away once the unrest that fed it has died down
+    if (pl.rebel && !this.cities.some(c => c.owner === pl.id)) {
+      const fed = this.cities.some(c => c.rebellion === pl.id && c.owner !== pl.id && (c.unrest || 0) >= RIOT_AT);
+      if (!fed && this.turn - (pl.born ?? 0) >= 3) {
+        this.units = this.units.filter(u => u.owner !== pl.id);
+        this.rebuildUnitMap();
+        this.checkElimination(pl.id);
+        return;
       }
     }
     // units: heal + reset
@@ -1707,8 +1810,7 @@ class Game {
     for (let k = 0; k < this.players.length; k++) {
       next = (next + 1) % this.players.length;
       if (next === 0) wrapped = true;
-      const np = this.players[next];
-      if (np.alive && (!np.rebel || this.cities.some(c => c.owner === next) || this.units.some(u => u.owner === next))) break;
+      if (this.players[next].alive) break;
     }
     if (wrapped || next <= this.current) {
       this.turn++;
@@ -1733,7 +1835,7 @@ class Game {
     return Math.round(s);
   }
   ranking() {
-    return this.players.filter(p => !p.rebel || this.cities.some(c => c.owner === p.id)).map(p => ({ id: p.id, score: p.alive ? this.score(p.id) : -1 })).sort((a, b) => b.score - a.score);
+    return this.players.filter(p => !p.rebel || p.heldCity).map(p => ({ id: p.id, score: p.alive ? this.score(p.id) : -1 })).sort((a, b) => b.score - a.score);
   }
 
   // ------------------------------------------------------------ save/load
@@ -1741,7 +1843,7 @@ class Game {
     return JSON.stringify({
       v: 1, W: this.W, H: this.H, seed: this.seed, settings: this.settings, tiles: this.tiles,
       elev: this.elev, turn: this.turn, current: this.current, nextId: this.nextId,
-      cities: this.cities, units: this.units, log: this.log, winner: this.winner, rebelId: this.rebelId, coalition: this.coalition, lastLeader: this.lastLeader,
+      cities: this.cities, units: this.units, log: this.log, winner: this.winner, coalition: this.coalition,
       players: this.players.map(p => ({ ...p, _vis: undefined })), rng: this.rng.state(),
       cityNamePool: this.cityNamePool,
     });
@@ -1751,15 +1853,20 @@ class Game {
     const g = new Game();
     Object.assign(g, o);
     g.rng = makeRng(1); g.rng.setState(o.rng);
-    if (g.rebelId == null) { // saves from before rebels existed
-      g.rebelId = g.players.length;
-      g.players.push(makeRebels(g));
-      g.coalition = -1;
-    }
+    if (g.coalition == null) g.coalition = -1;
     for (const p of g.players) {
-      if (p.rebel) p.home = null;
-      if (!p.human && !p.temper) p.temper = rollTemper(g.rng, p.rebel ? 'vengeful' : undefined);
+      if (p.rebel && !p.home) { // older saves: a single homeless Rebels faction
+        const c = g.cities.find(c => c.owner === p.id);
+        p.home = c ? c.specialty : 'plains';
+        p.heldCity = !!c;
+      }
+      if (!p.human && (!p.temper || p.temper.caution == null)) {
+        const old = p.temper;
+        p.temper = rollTemper(g.rng, old && TEMPERAMENTS[old.key] ? old.key : undefined);
+        if (old) { p.temper.grudges = old.grudges || {}; }
+      }
     }
+    delete g.rebelId;
     g.rebuildUnitMap();
     for (const p of g.players) g.updateVision(p.id);
     return g;
@@ -1987,21 +2094,6 @@ function militaryAct(g, u, cache, prof) {
   const step = bestStep(g, u, dist, false);
   if (step !== null) g.moveUnit(u, step);
   if (g.units.includes(u)) tryAttack(g, u);
-}
-
-// Rebels hold their cities: strike adjacent enemies, regroup on undefended rebel cities.
-function rebelAct(g, pid) {
-  for (const u of g.units.filter(x => x.owner === pid)) {
-    if (!g.units.includes(u)) continue;
-    if (tryAttack(g, u) && (!g.units.includes(u) || u.mvLeft <= 0)) continue;
-    if (g.cityAt(u.idx)?.owner === pid) continue;
-    const home = g.cities.filter(c => c.owner === pid && !g.unitAt(c.idx)).sort((a, b) => g.dist(a.idx, u.idx) - g.dist(b.idx, u.idx))[0];
-    if (home && g.dist(home.idx, u.idx) <= 6) {
-      const step = bestStep(g, u, field(g, home.idx, u, new Map()), false);
-      if (step !== null) g.moveUnit(u, step);
-    }
-    if (g.units.includes(u)) tryAttack(g, u);
-  }
 }
 
 function exploreTarget(g, u) {
@@ -2790,6 +2882,7 @@ function startNew(watch) {
     players: +$('optPlayers').value,
     humans: watch ? 0 : Math.min(+$('optHumans').value, +$('optPlayers').value),
     turnLimit: +$('optTurns').value,
+    rebelControl: watch ? 'ai' : $('optRebels').value,
     seed: $('optSeed').value.trim() || undefined,
   };
   const g = Game.create(opts);
@@ -2843,7 +2936,11 @@ function onEvent(type, d) {
   } else if (type === 'win') {
     setTimeout(showWin, 400);
   } else if (type === 'revolt') {
-    if (d.old === viewer) toast(`${d.city.name} has revolted and joined the Rebels!`);
+    if (d.old === viewer) toast(`${d.city.name} has revolted and joined the ${game.players[d.city.owner].name}!`);
+  } else if (type === 'rebellion') {
+    if (d.from === viewer) toast(`Rebellion! The ${game.players[d.pid].name} rise in ${d.city.name}.`);
+  } else if (type === 'adopt') {
+    if (game.players[d.from].human) setTimeout(() => toast(`Your tribe has fallen — you now lead the ${game.players[d.to].name}!`), 50);
   } else if (type === 'coalition') {
     toast(d.leader === viewer ? `The other tribes are uniting against you!` : `The tribes rally against ${game.players[d.leader].name}.`);
   } else if (type === 'wonder') {
@@ -2930,7 +3027,7 @@ function runAITurns() {
     if (game.winner) { busy = false; refreshAll(); return; }
     const pl = game.players[game.current];
     if (pl.human && pl.alive) { busy = false; beginTurnUI(); return; }
-    if (watchMode && !pl.rebel) R.viewer = pl.id;
+    if (watchMode) R.viewer = pl.id;
     try { runAI(game, pl.id); } catch (e) { console.error('AI error', e); }
     game.endTurn();
     R.dirty = true;
@@ -3408,7 +3505,8 @@ function showTribes() {
       if (T.joined >= 0) temper += ` <span class="tag" style="background:${game.players[T.joined].color};color:#111">vs ${esc(game.players[T.joined].name)}</span>`;
       if ((T.grudges[viewer.id] || 0) >= 15) temper += ` <span class="tag" style="background:#803030">grudge vs you</span>`;
     }
-    const homeName = p.home ? SPECIALTY[p.home].name : 'None — all lands kin';
+    let homeName = p.home ? SPECIALTY[p.home].name : '—';
+    if (p.rebel && p.rebelFrom != null) homeName += ` <span class="dim">(rose against ${esc(game.players[p.rebelFrom].name)})</span>`;
     h += `<tr style="opacity:${p.alive ? 1 : 0.4}"><td><span class="chip" style="background:${p.color}"></span></td><td>${met ? esc(p.name) : '<i>Unknown tribe</i>'}${p.human ? ' (human)' : ''}${p.alive ? '' : ' — fallen'}</td><td>${met ? homeName : '?'}</td><td>${temper}</td><td>${met ? cs : '?'}</td><td>${p.alive ? game.score(p.id) : '-'}</td><td>${met ? p.techs.length : '?'}</td><td>${met ? p.kills : '?'}</td></tr>`;
   }
   h += `</table>`;
@@ -3416,7 +3514,12 @@ function showTribes() {
   if (game.coalition >= 0) {
     const mem = game.coalitionMembers();
     h += `<p><b style="color:${game.players[game.coalition].color}">Coalition</b> against <b>${esc(game.players[game.coalition].name)}</b>${game.coalition === viewer.id ? ' — that is you' : ''} (dominance ${(dom.d * 100) | 0}%). Members: ${mem.map(id => esc(game.players[id].name)).join(', ') || '—'}.</p>`;
-  } else h += `<p class="dim">No coalition. If one tribe grows far stronger than the rest, other tribes may turn on it — each at its own threshold, depending on temperament.</p>`;
+  } else h += `<p class="dim">No coalition. Only a single runaway power, clearly ahead of the runner-up and the field, draws one. Otherwise tribes guard against their nearest major threat.</p>`;
+  if (!viewer.human || true) {
+    const thr = game.threats(viewer.id);
+    const near = Object.entries(thr.by).filter(([id]) => watchMode || game.cities.some(c => c.owner === +id && viewer.explored[c.idx])).sort((a, b) => b[1].threat - a[1].threat).slice(0, 3);
+    if (near.length) h += `<p class="dim">Biggest threats to you: ${near.map(([id, x]) => `${esc(game.players[id].name)} (border ${x.border}, ${x.dmin < 99 ? x.dmin + ' tiles' : 'far'}, ${x.rp.toFixed(1)}× your power)`).join('; ')}.</p>`;
+  }
   const trad = game.traditions(viewer.id);
   h += `<h3>Traditions</h3><p class="dim">Own 3+ Homeland/Kin cities of one land type and every one of your cities can train its unique unit (+1 cost).</p><p>${trad.length ? trad.map(s => `<b>${SPECIALTY[s].name}</b> → ${UNITS[SPECIALTY[s].unit].name}`).join(', ') : 'None yet.'}</p>`;
   h += `<h3>Cultural kinship</h3><p class="dim">How easily a ${SPECIALTY[viewer.home].name} people runs cities on each land type:</p><table class="spectable">`;
@@ -3452,11 +3555,27 @@ function showHelp() {
   <ul><li><b>Restless</b>: the city withholds gold.</li>
   <li><b>Rioting</b> (${RIOT_AT}): no training or construction except compliance buildings, and the riots spread pressure to your nearby cities.</li>
   <li><b>Insurrection</b> (${INSURRECTION_AT}): insurgents may take up arms.</li>
-  <li><b>Revolt</b> (${REVOLT_AT}): the garrison defects and the city joins the Rebels.</li></ul>
+  <li><b>Revolt</b> (${REVOLT_AT}): the garrison defects and the city founds a rebellion, or joins a nearby kindred one.</li></ul>
   <h3>Balance of power</h3>
-  <p>If one tribe's power (cities, levels, armies) runs far ahead of the average, AI tribes may join a <b>coalition</b> against it. They still snap up easy kills and undefended cities anywhere, but members prefer marching on the leader and go easy on each other. Each AI has a <b>temperament</b>. <i>Balancers</i> join early. <i>Opportunists</i> join late and prey on the weak. <i>Vengeful</i> tribes chase whoever hurt them most. <i>Steadfast</i> tribes are slow to join and slow to leave. <i>Appeasers</i> never join and pick on the small instead. Everyone holds grudges against recent attackers, and those fade over time.</p>
-  <h3>Rebels</h3>
-  <p>Revolted cities join the <b>Rebels</b>, a full tribe that takes its turn last. Rebels have no homeland, so every land is kin to them. They inherit the techs of the realm they broke from, hold a fierce grudge against it, and expand and fight like anyone else. They can win.</p>
+  <p>AI tribes weigh three forces when choosing whom to fight:</p>
+  <ul><li><b>Threat</b>: neighbours that are close, share a long border, have armies near their cities, or are stronger.</li>
+  <li><b>Grudges</b>: whoever hurt them recently.</li>
+  <li><b>Containment</b>: only when a single runaway power is clearly ahead of both the runner-up and the field.</li></ul>
+  <p>Containment fades with distance and with how pressing a tribe's own threats are. A far-off tribe beset by neighbours won't march across the world.</p>
+  <p>Each AI has a <b>temperament</b> that sets the weights, not rules:</p>
+  <ul><li><i>Balancers</i> care most about containment.</li>
+  <li><i>Opportunists</i> prey on the weak.</li>
+  <li><i>Vengeful</i> tribes chase grudges.</li>
+  <li><i>Steadfast</i> tribes are slow to commit and slow to quit.</li>
+  <li><i>Appeasers</i> avoid provoking the leader, until it threatens them directly.</li></ul>
+  <p>Tribes whose containment pull is strong enough call themselves a <b>coalition</b>, and they go easy on each other.</p>
+  <h3>Rebellions</h3>
+  <p>Revolts and insurrections give birth to new tribes, which take their turn after everyone else.</p>
+  <ul><li>A rebellion takes the <b>homeland of the city it rises in</b>, so it faces the same culture penalties as everyone else.</li>
+  <li>It inherits its parent's techs and holds a grudge against it.</li>
+  <li>Kindred rebellions within 5 tiles merge.</li>
+  <li>An uprising that never takes a city melts away once the unrest feeding it dies down.</li></ul>
+  <p>Depending on game options, you can take over a rebellion when your tribe falls, or every rebellion can be a human seat.</p>
   <h3>War</h3>
   <ul><li>Select a unit: white hexes = move, red = attack, gold = capture an undefended enemy city.</li>
   <li>Damage depends on attack vs. defense, health and terrain. Defenders in cities, hills, forests and mountains are tougher. Survivors in range strike back.</li>

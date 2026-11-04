@@ -181,18 +181,22 @@ export const WONDERS = {
 };
 
 // ---------------- AI temperaments ----------------
-// Ranges are [min, max]; each AI rolls its own values so no two behave alike.
-//  threshold:  dominance at which it joins a coalition against the leader
-//  balance:    how hard it commits once joined (<0: appeaser, courts the strong, bullies the weak)
-//  patience:   leaves the coalition when dominance falls below threshold * patience
-//  vengeance:  how much grudges (damage taken from a tribe) raise hostility
-//  opportunism: floor on hostility for kills and undefended cities
+// Temperaments are weights, not rules. Every AI weighs the same three forces:
+//   threat      – nearby, long-bordered, well-armed or stronger neighbours (self-preservation)
+//   grudges     – damage recently taken from a tribe
+//   containment – stopping a runaway leader, scaled by how far away it is and by how
+//                 pressing the AI's other threats are
+// Ranges are [min, max]; each AI rolls its own values.
+//   balance:   weight on containment          caution:   weight on threat
+//   vengeance: weight on grudges              appease:   reluctance to provoke the leader (threat overrides it)
+//   bully:     appetite for much weaker prey  opportunism: floor for kills and undefended cities
+//   threshold: containment level at which it calls itself a coalition member; patience: leaves below threshold × patience
 export const TEMPERAMENTS = {
-  balancer:    { name: 'Balancer',    desc: 'Watches the balance of power and joins coalitions early.', threshold: [0.05, 0.2], balance: [1.2, 1.6], patience: [0.4, 0.6], vengeance: [0.4, 0.8], opportunism: [0.6, 0.8] },
-  opportunist: { name: 'Opportunist', desc: 'Preys on whoever is weakest nearby; joins coalitions late.', threshold: [0.45, 0.65], balance: [0.5, 0.8], patience: [0.5, 0.7], vengeance: [0.3, 0.6], opportunism: [0.95, 1.1] },
-  vengeful:    { name: 'Vengeful',    desc: 'Never forgets who struck it.', threshold: [0.2, 0.4], balance: [0.7, 1.0], patience: [0.4, 0.6], vengeance: [1.4, 2.0], opportunism: [0.7, 0.9] },
-  appeaser:    { name: 'Appeaser',    desc: 'Avoids provoking the strong and bullies the weak.', threshold: [9, 9], balance: [-0.6, -0.25], patience: [0.5, 0.5], vengeance: [0.5, 0.9], opportunism: [0.85, 1.0] },
-  steadfast:   { name: 'Steadfast',   desc: 'Slow to join a coalition, slower to leave it.', threshold: [0.3, 0.45], balance: [0.9, 1.2], patience: [0.1, 0.25], vengeance: [0.6, 1.0], opportunism: [0.6, 0.8] },
+  balancer:    { name: 'Balancer',    desc: 'Cares most about the balance of power. Joins coalitions early, if the leader is within reach.', balance: [1.3, 1.7], caution: [0.6, 0.9], vengeance: [0.4, 0.8], appease: [0, 0], bully: [0, 0.15], opportunism: [0.6, 0.8], threshold: [0.1, 0.18], patience: [0.5, 0.7] },
+  opportunist: { name: 'Opportunist', desc: 'Preys on whoever is weakest nearby; rarely bothers with distant giants.', balance: [0.4, 0.7], caution: [0.5, 0.8], vengeance: [0.3, 0.6], appease: [0, 0.2], bully: [0.6, 1.0], opportunism: [0.95, 1.1], threshold: [0.25, 0.35], patience: [0.5, 0.7] },
+  vengeful:    { name: 'Vengeful',    desc: 'Never forgets who struck it.', balance: [0.6, 0.9], caution: [0.7, 1.0], vengeance: [1.4, 2.0], appease: [0, 0.1], bully: [0.1, 0.3], opportunism: [0.7, 0.9], threshold: [0.2, 0.3], patience: [0.4, 0.6] },
+  appeaser:    { name: 'Appeaser',    desc: 'Avoids provoking the strong and picks on the weak — but fights hard when its own cities are threatened.', balance: [0.1, 0.25], caution: [1.1, 1.5], vengeance: [0.5, 0.9], appease: [0.6, 0.9], bully: [0.4, 0.8], opportunism: [0.85, 1.0], threshold: [0.15, 0.2], patience: [0.5, 0.6] },
+  steadfast:   { name: 'Steadfast',   desc: 'Slow to commit, slower to give up.', balance: [0.8, 1.1], caution: [0.8, 1.1], vengeance: [0.6, 1.0], appease: [0, 0.1], bully: [0.1, 0.3], opportunism: [0.6, 0.8], threshold: [0.25, 0.35], patience: [0.15, 0.3] },
 };
 
 // ---------------- Techs ----------------

@@ -220,21 +220,6 @@ function militaryAct(g, u, cache, prof) {
   if (g.units.includes(u)) tryAttack(g, u);
 }
 
-// Rebels hold their cities: strike adjacent enemies, regroup on undefended rebel cities.
-function rebelAct(g, pid) {
-  for (const u of g.units.filter(x => x.owner === pid)) {
-    if (!g.units.includes(u)) continue;
-    if (tryAttack(g, u) && (!g.units.includes(u) || u.mvLeft <= 0)) continue;
-    if (g.cityAt(u.idx)?.owner === pid) continue;
-    const home = g.cities.filter(c => c.owner === pid && !g.unitAt(c.idx)).sort((a, b) => g.dist(a.idx, u.idx) - g.dist(b.idx, u.idx))[0];
-    if (home && g.dist(home.idx, u.idx) <= 6) {
-      const step = bestStep(g, u, field(g, home.idx, u, new Map()), false);
-      if (step !== null) g.moveUnit(u, step);
-    }
-    if (g.units.includes(u)) tryAttack(g, u);
-  }
-}
-
 function exploreTarget(g, u) {
   const pl = g.players[u.owner];
   const seen = new Set([u.idx]);
