@@ -115,7 +115,7 @@ export class Renderer {
         this.drawTerrainGlyph(tl.t, x, y, S, i);
         continue;
       }
-      if (T.water) { ctx.fillStyle = shade(T.color, 0.55); ctx.fill(); continue; }
+      if (T.water) { ctx.fillStyle = T.deep ? '#10161d' : '#18212b'; ctx.fill(); continue; } // neutral seas never clash with tribe colours
       const m = this.modeFill(i);
       ctx.fillStyle = m.fill; ctx.fill();
       if (m.hatch) { ctx.fillStyle = this.hatch(m.hatch, m.thin); ctx.fill(); }
@@ -169,15 +169,22 @@ export class Renderer {
       if (tl.owner < 0) continue;
       const [x, y] = this.tileCenter(i);
       const col = g.players[tl.owner].color;
-      const corners = hexCorners(x, y, S - 1.5);
+      const col2 = g.players[tl.owner].color2 || '#111';
       const nb = this.neighborDirs(i);
-      ctx.strokeStyle = col;
-      ctx.lineWidth = Math.max(1.5, S * 0.09);
-      for (let k = 0; k < 6; k++) {
-        const n = nb[k];
-        if (n !== null && g.tiles[n].owner === tl.owner) continue;
-        const a = corners[(k + 5) % 6], b = corners[k];
-        ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke();
+      // two-tone border: accent colour on the outside edge, fill colour just inside it
+      const bw = Math.max(1.5, S * 0.08);
+      for (const [rad, c] of [[S - 0.5 - bw / 2, col2], [S - 0.5 - bw * 1.5, col]]) {
+        const corners = hexCorners(x, y, rad);
+        ctx.strokeStyle = c;
+        ctx.lineWidth = bw;
+        ctx.beginPath();
+        for (let k = 0; k < 6; k++) {
+          const n = nb[k];
+          if (n !== null && g.tiles[n].owner === tl.owner) continue;
+          const a = corners[(k + 5) % 6], b = corners[k];
+          ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]);
+        }
+        ctx.stroke();
       }
       if (!terrainMode) continue;
       ctx.globalAlpha = 0.12;
@@ -465,7 +472,7 @@ export class Renderer {
       const hx = x + dx * S, hy = y + dy * S, w = S * 0.22;
       ctx.fillStyle = col;
       ctx.fillRect(hx - w / 2, hy - w * 0.4, w, w * 0.7);
-      ctx.fillStyle = '#5a3a2a';
+      ctx.fillStyle = g.players[c.owner].color2 || '#5a3a2a';
       ctx.beginPath(); ctx.moveTo(hx - w * 0.6, hy - w * 0.4); ctx.lineTo(hx, hy - w); ctx.lineTo(hx + w * 0.6, hy - w * 0.4); ctx.fill();
       ctx.strokeStyle = '#111'; ctx.lineWidth = 0.8; ctx.strokeRect(hx - w / 2, hy - w * 0.4, w, w * 0.7);
     }
@@ -495,7 +502,9 @@ export class Renderer {
       ctx.fillStyle = 'rgba(10,10,15,0.78)';
       ctx.fillRect(x - tw / 2, ly - fs * 0.85, tw, fs * 1.25);
       ctx.fillStyle = col;
-      ctx.fillRect(x - tw / 2, ly - fs * 0.85, 3, fs * 1.25);
+      ctx.fillRect(x - tw / 2, ly - fs * 0.85, 4, fs * 1.25);
+      ctx.fillStyle = g.players[c.owner].color2 || col;
+      ctx.fillRect(x - tw / 2 + 4, ly - fs * 0.85, 2, fs * 1.25);
       ctx.fillStyle = '#fff';
       ctx.fillText(label, x, ly + fs * 0.1);
       // unrest marker
@@ -533,8 +542,8 @@ export class Renderer {
     ctx.fillStyle = 'rgba(0,0,0,0.35)';
     ctx.beginPath(); ctx.ellipse(x, y + rad * 0.85, rad * 0.9, rad * 0.3, 0, 0, Math.PI * 2); ctx.fill();
     ctx.fillStyle = col;
-    ctx.strokeStyle = u.vet ? '#ffd700' : '#111';
-    ctx.lineWidth = u.vet ? 2.5 : 1.5;
+    ctx.strokeStyle = g.players[u.owner].color2 || '#111';
+    ctx.lineWidth = Math.max(2, rad * 0.22);
     ctx.beginPath();
     if (U.traits?.includes('mounted')) {
       ctx.moveTo(x, cy - rad); ctx.lineTo(x + rad, cy); ctx.lineTo(x, cy + rad); ctx.lineTo(x - rad, cy); ctx.closePath();
@@ -554,6 +563,13 @@ export class Renderer {
     ctx.strokeText(gl, x, cy + (U.rng > 1 ? rad * 0.2 : 0));
     ctx.fillText(gl, x, cy + (U.rng > 1 ? rad * 0.2 : 0));
     ctx.textBaseline = 'alphabetic';
+    if (u.vet) {
+      ctx.fillStyle = '#ffd700'; ctx.strokeStyle = '#111'; ctx.lineWidth = 1;
+      const sx = x + rad * 0.95, sy = cy - rad * 0.85, r1 = Math.max(3, rad * 0.32);
+      ctx.beginPath();
+      for (let k = 0; k < 5; k++) { const a = -Math.PI / 2 + k * Math.PI * 0.4, a2 = a + Math.PI * 0.2; ctx.lineTo(sx + Math.cos(a) * r1, sy + Math.sin(a) * r1); ctx.lineTo(sx + Math.cos(a2) * r1 * 0.45, sy + Math.sin(a2) * r1 * 0.45); }
+      ctx.closePath(); ctx.fill(); ctx.stroke();
+    }
     // hp bar
     const mh = g.maxHp(u);
     if (u.hp < mh) {

@@ -123,6 +123,8 @@ function addLog(msg, pid, idx) {
   log.scrollTop = log.scrollHeight;
 }
 
+function chip(p) { return `<span class="chip" style="background:${p.color};border-color:${p.color2 || '#111'}"></span>`; }
+
 function esc(s) { return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 
 let toastT = 0;
@@ -421,6 +423,7 @@ function refreshAll() { updateTopbar(); refreshPanel(); R.dirty = true; }
 function updateTopbar() {
   const pl = game.players[R.viewer];
   $('tribeChip').style.background = pl.color;
+  $('tribeChip').style.borderColor = pl.color2 || '#111';
   $('tribeName').textContent = pl.name;
   $('tribeHome').textContent = SPECIALTY[pl.home].name + ' people';
   $('tribeHome').style.background = SPECIALTY[pl.home].color;
@@ -721,7 +724,7 @@ function showTribes() {
     let homeName = p.home ? SPECIALTY[p.home].name : '—';
     if (p.rebel && p.rebelFrom != null) homeName += ` <span class="dim">(rose against ${esc(game.players[p.rebelFrom].name)})</span>`;
     const q = (v) => met ? v : '?';
-    h += `<tr style="opacity:${p.alive ? 1 : 0.45}"><td><span class="chip" style="background:${p.color}"></span></td><td>${met ? esc(p.name) : '<i>Unknown tribe</i>'}${p.human ? ' (human)' : ''}${p.alive ? '' : ' — fallen'}</td><td>${q(homeName)}</td><td>${temper}</td><td>${q(cs)}</td><td>${q(p.peak || 0)}</td><td>${q('T' + (p.founded ?? 1))}</td><td>${p.fell != null ? q('T' + p.fell) : ''}</td><td>${p.alive ? q(game.score(p.id)) : '-'}</td><td>${q(p.techs.length)}</td><td>${q(p.kills)}</td></tr>`;
+    h += `<tr style="opacity:${p.alive ? 1 : 0.45}"><td>${chip(p)}</td><td>${met ? esc(p.name) : '<i>Unknown tribe</i>'}${p.human ? ' (human)' : ''}${p.alive ? '' : ' — fallen'}</td><td>${q(homeName)}</td><td>${temper}</td><td>${q(cs)}</td><td>${q(p.peak || 0)}</td><td>${q('T' + (p.founded ?? 1))}</td><td>${p.fell != null ? q('T' + p.fell) : ''}</td><td>${p.alive ? q(game.score(p.id)) : '-'}</td><td>${q(p.techs.length)}</td><td>${q(p.kills)}</td></tr>`;
   }
   h += `</table>`;
   const dom = game.dominance();
@@ -798,7 +801,7 @@ function drawHistomap(cv) {
     for (let k = e.length - 1; k >= 0; k--) ctx.lineTo(e[k][1], y(k));
     ctx.closePath();
     ctx.fillStyle = game.players[id].color; ctx.fill();
-    ctx.strokeStyle = 'rgba(0,0,0,0.55)'; ctx.lineWidth = 0.8; ctx.stroke();
+    ctx.strokeStyle = game.players[id].color2 || 'rgba(0,0,0,0.55)'; ctx.lineWidth = 1.2; ctx.stroke();
   }
   // time axis
   ctx.font = '11px sans-serif'; ctx.textAlign = 'right';
@@ -898,6 +901,7 @@ function showHelp() {
   <p>Depending on game options, you can take over a rebellion when your tribe falls, or every rebellion can be a human seat.</p>
   <h3>War damage</h3>
   <p>Enemy units standing on a city's tiles cut it off: each occupied or damaged worked tile costs that city 1 gold, and enemies on its land raise unrest. A unit that spends a turn on an enemy improvement may <b>damage</b> it, then <b>destroy</b> it. Destroying it removes the pop it gave, so cities can shrink. Repair damaged improvements from the tile panel. Attacks on a city's garrison may wreck buildings, and a captured city loses each building with 35% chance. A city stripped of all its buildings in the sack may be <b>razed</b>, leaving ruins.</p>
+  <h3>Building limits</h3><p>Each city can complete one building or wonder per turn, and none while a hostile unit stands next to it. A captured city left with no buildings, whether stripped in the sack or never built up, may be razed: 50% at level 1, falling to 10% for large cities.</p>
   <h3>Map modes</h3><p>Press <b>M</b> or use the Map menu: Terrain, Political (tribe colours only), Culture (stripes mark peoples under foreign rule), Specialty (and what unclaimed land would become), and Unrest.</p>
   <h3>War</h3>
   <ul><li>Select a unit: white hexes = move, red = attack, gold = capture an undefended enemy city.</li>
@@ -923,7 +927,7 @@ function showWin() {
   let h = `<h2 style="color:${w.color}">${esc(w.name)} wins by ${game.winner.how}!</h2><p>Turn ${game.turn}.</p><table class="tribes"><tr><th></th><th>Tribe</th><th>Score</th></tr>`;
   for (const r of game.ranking()) {
     const p = game.players[r.id];
-    h += `<tr><td><span class="chip" style="background:${p.color}"></span></td><td>${esc(p.name)}${p.human ? ' (human)' : ''}</td><td>${p.alive ? r.score : 'fallen'}</td></tr>`;
+    h += `<tr><td>${chip(p)}</td><td>${esc(p.name)}${p.human ? ' (human)' : ''}</td><td>${p.alive ? r.score : 'fallen'}</td></tr>`;
   }
   h += `</table>${histomapHTML()}<p><button class="primary" id="btnAgain">New game</button> <button id="btnReveal">Reveal map</button></p>`;
   openModal(h);

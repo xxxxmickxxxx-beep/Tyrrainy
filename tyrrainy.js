@@ -387,10 +387,30 @@ const CITY_NAMES = [
   'Kell', 'Lea', 'Moor', 'Ness', 'Oak', 'Pike', 'Rill', 'Shaw', 'Tor', 'Vale', 'Weir',
 ];
 
-const PLAYER_COLORS = [
-  '#e0453a', '#3a7be0', '#f0c419', '#9b4ae0', '#20c0a0', '#f07c20', '#e04aa8', '#e8e8e8',
-  '#6b4423', '#80e040',
+// Two-tone tribe identities: [fill, border/accent]. Tribes are assigned the pair that is
+// perceptually farthest (CIELAB) from every tribe still alive; see pickTribeColors().
+const TRIBE_PALETTE = [
+  ['#d7263d', '#ffd23f'], // red / gold
+  ['#1b62c4', '#f4f4f4'], // blue / white
+  ['#2a9d3c', '#111111'], // green / black
+  ['#f2c014', '#3a1d70'], // yellow / deep purple
+  ['#8e44ad', '#f7e1a0'], // purple / cream
+  ['#f07c1e', '#13294b'], // orange / navy
+  ['#19b5b0', '#5a1020'], // teal / maroon
+  ['#e94fa8', '#1d1d1d'], // pink / black
+  ['#f4f4f4', '#c0392b'], // white / red
+  ['#6b3e1f', '#9ae66e'], // brown / lime
+  ['#1d2b5c', '#f2a541'], // navy / amber
+  ['#7fd13b', '#2b2b80'], // lime / indigo
+  ['#5fa8e8', '#7a2a00'], // sky / rust
+  ['#4a4a4a', '#ff6f3c'], // charcoal / flame
+  ['#c9a227', '#0b3d2e'], // ochre / pine
+  ['#00755e', '#ffb3c6'], // jade / rose
+  ['#b9a3f5', '#3b1f00'], // lavender / umber
+  ['#8c1c13', '#9fd8cb'], // oxblood / mint
 ];
+const PLAYER_COLORS = TRIBE_PALETTE.map(p => p[0]);
+
 
 // ---- src/mapgen.js ----
 // Procedural world generation: elevation, climate, biomes, rivers, resources.
@@ -627,12 +647,42 @@ function rollTemper(rng, key) {
 }
 
 const MAX_TRIBES = 20;
-function rebelColor(id) {
-  const h = (id * 137.5 + 20) % 360;
-  // hsl -> hex so every colour in the game is a hex string
-  const s = 0.5, l = 0.55, k = (n) => (n + h / 30) % 12, a = s * Math.min(l, 1 - l);
+// ---- colour identity
+function hexRgb(h) { const n = parseInt(h.slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; }
+function toLab(h) {
+  const [r, g, b] = hexRgb(h).map(v => { v /= 255; return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; });
+  let x = (r * 0.4124 + g * 0.3576 + b * 0.1805) / 0.95047, y = r * 0.2126 + g * 0.7152 + b * 0.0722, z = (r * 0.0193 + g * 0.1192 + b * 0.9505) / 1.08883;
+  const f = (t) => t > 0.008856 ? Math.cbrt(t) : 7.787 * t + 16 / 116;
+  x = f(x); y = f(y); z = f(z);
+  return [116 * y - 16, 500 * (x - y), 200 * (y - z)];
+}
+function colorDist(a, b) { const A = toLab(a), B = toLab(b); return Math.hypot(A[0] - B[0], A[1] - B[1], A[2] - B[2]); }
+function hslHex(h, s, l) {
+  const k = (n) => (n + h / 30) % 12, a = s * Math.min(l, 1 - l);
   const f = (n) => Math.round(255 * (l - a * Math.max(-1, Math.min(k(n) - 3, 9 - k(n), 1)))).toString(16).padStart(2, '0');
   return '#' + f(0) + f(8) + f(4);
+}
+// Pick the [fill, border] pair most distinct from every tribe still in play.
+function pickTribeColors(players) {
+  const live = players.filter(p => p.alive !== false && p.color);
+  const score = ([f, c]) => live.length ? Math.min(...live.map(p => colorDist(f, p.color) + 0.4 * colorDist(c, p.color2 || p.color))) : 1e9;
+  const taken = new Set(live.map(p => p.color + p.color2));
+  let best = null, bestS = -1;
+  for (const pair of TRIBE_PALETTE) {
+    if (taken.has(pair[0] + pair[1])) continue;
+    const sc = score(pair);
+    if (sc > bestS) { bestS = sc; best = pair; }
+  }
+  if (best && bestS >= 25) return best;
+  // palette exhausted or too close: generate
+  const accents = ['#111111', '#f4f4f4', '#ffd23f', '#13294b', '#c0392b', '#2a9d3c'];
+  for (let hue = 0; hue < 360; hue += 12) for (const l of [0.32, 0.5, 0.68]) {
+    const f = hslHex(hue, 0.65, l);
+    const c = accents.reduce((a, b) => colorDist(b, f) > colorDist(a, f) ? b : a);
+    const sc = score([f, c]);
+    if (sc > bestS) { bestS = sc; best = [f, c]; }
+  }
+  return best;
 }
 
 class Game {
@@ -669,11 +719,12 @@ class Game {
       usedNames.add(nm);
       const human = p < (opts.humans ?? 1);
       g.players.push({
-        id: p, name: nm, color: PLAYER_COLORS[p % PLAYER_COLORS.length], home,
+        id: p, name: nm, color: null, color2: null, home,
         human, gold: 5, techs: [], explored: new Array(g.W * g.H).fill(0), alive: true,
         kills: 0, losses: 0, cityNameIdx: 0,
       });
       if (!human) g.players[p].temper = rollTemper(g.rng);
+      [g.players[p].color, g.players[p].color2] = pickTribeColors(g.players);
       const city = g.foundCityAt(p, idx, true);
       city.pop = 1;
       // starting units
@@ -944,12 +995,20 @@ class Game {
   canBuild(city, b) {
     const B = BUILDINGS[b];
     if (city.buildings.includes(b)) return { ok: false, why: 'Built' };
+    const lim = this.buildBlock(city);
+    if (lim) return { ok: false, why: lim };
     if (this.rioting(city) && !B.calm) return { ok: false, why: 'City is rioting (only compliance buildings)' };
     if (B.special && B.special !== city.specialty) return { ok: false, why: 'Wrong specialty' };
     if (B.tech && !this.has(city.owner, B.tech)) return { ok: false, why: 'Requires ' + TECHS[B.tech].name };
     if (B.special && this.affinity(city) >= 3) return { ok: false, why: 'Alien culture — integrate first' };
     if (this.players[city.owner].gold < B.cost) return { ok: false, why: `Need ${B.cost} gold` };
     return { ok: true };
+  }
+  // One construction per city per turn, and none while hostile troops stand next to it.
+  buildBlock(city) {
+    if (city.builtTurn === this.turn) return 'Already built this turn';
+    if (this.neighbors(city.idx).some(n => { const u = this.unitAt(n); return u && u.owner !== city.owner; })) return 'Enemies at the gates';
+    return null;
   }
   buildable(city) {
     return Object.keys(BUILDINGS).filter(b => {
@@ -963,6 +1022,7 @@ class Game {
     const B = BUILDINGS[b];
     this.players[city.owner].gold -= B.cost;
     city.buildings.push(b);
+    city.builtTurn = this.turn;
     if (B.calm) city.festivals = Math.max(0, (city.festivals || 0) - 2);
     if (B.pop) this.addPop(city, B.pop);
     if (b === 'temple') this.addPop(city, 1);
@@ -1071,11 +1131,12 @@ class Game {
     const id = this.players.length;
     const human = this.settings.rebelControl === 'human' && this.players.some(p => p.human);
     const pl = {
-      id, name: this.uniqueTribeName('Free ' + city.name), color: rebelColor(id), home: city.specialty, human, rebel: true, rebelFrom: owner,
+      id, name: this.uniqueTribeName('Free ' + city.name), color: null, color2: null, home: city.specialty, human, rebel: true, rebelFrom: owner,
       gold: 4, techs: [...old.techs], explored: new Array(this.W * this.H).fill(0), alive: true, kills: 0, losses: 0, born: this.turn,
     };
     if (!human) { pl.temper = rollTemper(this.rng); pl.temper.grudges[owner] = 40; }
     pl.founded = this.turn; pl.peak = 0;
+    [pl.color, pl.color2] = pickTribeColors(this.players);
     this.players.push(pl);
     for (const t of this.within(city.idx, 4)) pl.explored[t] = 1;
     city.rebellion = id;
@@ -1253,6 +1314,8 @@ class Game {
     const o = this.wonderOwner(w);
     if (o) return { ok: false, why: o.owner === city.owner ? 'Already yours' : `Built by ${this.players[o.owner].name}` };
     if (city.level < 5) return { ok: false, why: 'City must be level 5' };
+    const lim = this.buildBlock(city);
+    if (lim) return { ok: false, why: lim };
     if (this.rioting(city)) return { ok: false, why: 'City is rioting' };
     if (this.players[city.owner].gold < W.cost) return { ok: false, why: `Need ${W.cost} gold` };
     return { ok: true };
@@ -1265,6 +1328,7 @@ class Game {
     pl.gold -= W.cost;
     city.wonders = city.wonders || [];
     city.wonders.push(w);
+    city.builtTurn = this.turn;
     if (w === 'greatgranary') for (const c of this.cities) if (c.owner === pl.id) this.addPop(c, 2);
     if (w === 'lighthouse') for (let i = 0; i < this.tiles.length; i++) if (this.tiles[i].t === 'shallows') pl.explored[i] = 1;
     this.updateVision(pl.id);
@@ -1651,7 +1715,8 @@ class Game {
     const had = c.buildings.length;
     for (const b of [...c.buildings]) if (this.rng() < 0.35) { c.buildings.splice(c.buildings.indexOf(b), 1); }
     if (had && c.buildings.length < had) this.addLog(`${had - c.buildings.length} building(s) in ${c.name} were lost in the sack`, old, c.idx);
-    if (had && !c.buildings.length && this.rng() < Math.max(0.1, 0.6 - 0.1 * c.level)) {
+    // a city left with no buildings (stripped in the sack, or never built up) may be razed
+    if (!c.buildings.length && !(c.wonders?.length) && this.rng() < Math.max(0.1, 0.6 - 0.1 * c.level)) {
       this.razeCity(c, pid);
       this.checkElimination(old);
       return;
@@ -1997,6 +2062,7 @@ class Game {
     g.rng = makeRng(1); g.rng.setState(o.rng);
     if (g.coalition == null) g.coalition = -1;
     g.history = g.history || [];
+    for (const p of g.players) if (!p.color2) { const keep = p.alive; p.alive = false; [p.color, p.color2] = pickTribeColors(g.players.filter(q => q.color2)); p.alive = keep; }
     for (const c of g.cities) if (c.culture == null) c.culture = c.owner;
     for (const p of g.players) { if (p.founded == null) p.founded = p.born ?? 1; if (p.peak == null) p.peak = g.cities.filter(c => c.owner === p.id).length; }
     for (const p of g.players) {
@@ -2580,7 +2646,7 @@ class Renderer {
         this.drawTerrainGlyph(tl.t, x, y, S, i);
         continue;
       }
-      if (T.water) { ctx.fillStyle = shade(T.color, 0.55); ctx.fill(); continue; }
+      if (T.water) { ctx.fillStyle = T.deep ? '#10161d' : '#18212b'; ctx.fill(); continue; } // neutral seas never clash with tribe colours
       const m = this.modeFill(i);
       ctx.fillStyle = m.fill; ctx.fill();
       if (m.hatch) { ctx.fillStyle = this.hatch(m.hatch, m.thin); ctx.fill(); }
@@ -2634,15 +2700,22 @@ class Renderer {
       if (tl.owner < 0) continue;
       const [x, y] = this.tileCenter(i);
       const col = g.players[tl.owner].color;
-      const corners = hexCorners(x, y, S - 1.5);
+      const col2 = g.players[tl.owner].color2 || '#111';
       const nb = this.neighborDirs(i);
-      ctx.strokeStyle = col;
-      ctx.lineWidth = Math.max(1.5, S * 0.09);
-      for (let k = 0; k < 6; k++) {
-        const n = nb[k];
-        if (n !== null && g.tiles[n].owner === tl.owner) continue;
-        const a = corners[(k + 5) % 6], b = corners[k];
-        ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke();
+      // two-tone border: accent colour on the outside edge, fill colour just inside it
+      const bw = Math.max(1.5, S * 0.08);
+      for (const [rad, c] of [[S - 0.5 - bw / 2, col2], [S - 0.5 - bw * 1.5, col]]) {
+        const corners = hexCorners(x, y, rad);
+        ctx.strokeStyle = c;
+        ctx.lineWidth = bw;
+        ctx.beginPath();
+        for (let k = 0; k < 6; k++) {
+          const n = nb[k];
+          if (n !== null && g.tiles[n].owner === tl.owner) continue;
+          const a = corners[(k + 5) % 6], b = corners[k];
+          ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]);
+        }
+        ctx.stroke();
       }
       if (!terrainMode) continue;
       ctx.globalAlpha = 0.12;
@@ -2930,7 +3003,7 @@ class Renderer {
       const hx = x + dx * S, hy = y + dy * S, w = S * 0.22;
       ctx.fillStyle = col;
       ctx.fillRect(hx - w / 2, hy - w * 0.4, w, w * 0.7);
-      ctx.fillStyle = '#5a3a2a';
+      ctx.fillStyle = g.players[c.owner].color2 || '#5a3a2a';
       ctx.beginPath(); ctx.moveTo(hx - w * 0.6, hy - w * 0.4); ctx.lineTo(hx, hy - w); ctx.lineTo(hx + w * 0.6, hy - w * 0.4); ctx.fill();
       ctx.strokeStyle = '#111'; ctx.lineWidth = 0.8; ctx.strokeRect(hx - w / 2, hy - w * 0.4, w, w * 0.7);
     }
@@ -2960,7 +3033,9 @@ class Renderer {
       ctx.fillStyle = 'rgba(10,10,15,0.78)';
       ctx.fillRect(x - tw / 2, ly - fs * 0.85, tw, fs * 1.25);
       ctx.fillStyle = col;
-      ctx.fillRect(x - tw / 2, ly - fs * 0.85, 3, fs * 1.25);
+      ctx.fillRect(x - tw / 2, ly - fs * 0.85, 4, fs * 1.25);
+      ctx.fillStyle = g.players[c.owner].color2 || col;
+      ctx.fillRect(x - tw / 2 + 4, ly - fs * 0.85, 2, fs * 1.25);
       ctx.fillStyle = '#fff';
       ctx.fillText(label, x, ly + fs * 0.1);
       // unrest marker
@@ -2998,8 +3073,8 @@ class Renderer {
     ctx.fillStyle = 'rgba(0,0,0,0.35)';
     ctx.beginPath(); ctx.ellipse(x, y + rad * 0.85, rad * 0.9, rad * 0.3, 0, 0, Math.PI * 2); ctx.fill();
     ctx.fillStyle = col;
-    ctx.strokeStyle = u.vet ? '#ffd700' : '#111';
-    ctx.lineWidth = u.vet ? 2.5 : 1.5;
+    ctx.strokeStyle = g.players[u.owner].color2 || '#111';
+    ctx.lineWidth = Math.max(2, rad * 0.22);
     ctx.beginPath();
     if (U.traits?.includes('mounted')) {
       ctx.moveTo(x, cy - rad); ctx.lineTo(x + rad, cy); ctx.lineTo(x, cy + rad); ctx.lineTo(x - rad, cy); ctx.closePath();
@@ -3019,6 +3094,13 @@ class Renderer {
     ctx.strokeText(gl, x, cy + (U.rng > 1 ? rad * 0.2 : 0));
     ctx.fillText(gl, x, cy + (U.rng > 1 ? rad * 0.2 : 0));
     ctx.textBaseline = 'alphabetic';
+    if (u.vet) {
+      ctx.fillStyle = '#ffd700'; ctx.strokeStyle = '#111'; ctx.lineWidth = 1;
+      const sx = x + rad * 0.95, sy = cy - rad * 0.85, r1 = Math.max(3, rad * 0.32);
+      ctx.beginPath();
+      for (let k = 0; k < 5; k++) { const a = -Math.PI / 2 + k * Math.PI * 0.4, a2 = a + Math.PI * 0.2; ctx.lineTo(sx + Math.cos(a) * r1, sy + Math.sin(a) * r1); ctx.lineTo(sx + Math.cos(a2) * r1 * 0.45, sy + Math.sin(a2) * r1 * 0.45); }
+      ctx.closePath(); ctx.fill(); ctx.stroke();
+    }
     // hp bar
     const mh = g.maxHp(u);
     if (u.hp < mh) {
@@ -3180,6 +3262,8 @@ function addLog(msg, pid, idx) {
   while (log.children.length > 80) log.firstChild.remove();
   log.scrollTop = log.scrollHeight;
 }
+
+function chip(p) { return `<span class="chip" style="background:${p.color};border-color:${p.color2 || '#111'}"></span>`; }
 
 function esc(s) { return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 
@@ -3479,6 +3563,7 @@ function refreshAll() { updateTopbar(); refreshPanel(); R.dirty = true; }
 function updateTopbar() {
   const pl = game.players[R.viewer];
   $('tribeChip').style.background = pl.color;
+  $('tribeChip').style.borderColor = pl.color2 || '#111';
   $('tribeName').textContent = pl.name;
   $('tribeHome').textContent = SPECIALTY[pl.home].name + ' people';
   $('tribeHome').style.background = SPECIALTY[pl.home].color;
@@ -3779,7 +3864,7 @@ function showTribes() {
     let homeName = p.home ? SPECIALTY[p.home].name : '—';
     if (p.rebel && p.rebelFrom != null) homeName += ` <span class="dim">(rose against ${esc(game.players[p.rebelFrom].name)})</span>`;
     const q = (v) => met ? v : '?';
-    h += `<tr style="opacity:${p.alive ? 1 : 0.45}"><td><span class="chip" style="background:${p.color}"></span></td><td>${met ? esc(p.name) : '<i>Unknown tribe</i>'}${p.human ? ' (human)' : ''}${p.alive ? '' : ' — fallen'}</td><td>${q(homeName)}</td><td>${temper}</td><td>${q(cs)}</td><td>${q(p.peak || 0)}</td><td>${q('T' + (p.founded ?? 1))}</td><td>${p.fell != null ? q('T' + p.fell) : ''}</td><td>${p.alive ? q(game.score(p.id)) : '-'}</td><td>${q(p.techs.length)}</td><td>${q(p.kills)}</td></tr>`;
+    h += `<tr style="opacity:${p.alive ? 1 : 0.45}"><td>${chip(p)}</td><td>${met ? esc(p.name) : '<i>Unknown tribe</i>'}${p.human ? ' (human)' : ''}${p.alive ? '' : ' — fallen'}</td><td>${q(homeName)}</td><td>${temper}</td><td>${q(cs)}</td><td>${q(p.peak || 0)}</td><td>${q('T' + (p.founded ?? 1))}</td><td>${p.fell != null ? q('T' + p.fell) : ''}</td><td>${p.alive ? q(game.score(p.id)) : '-'}</td><td>${q(p.techs.length)}</td><td>${q(p.kills)}</td></tr>`;
   }
   h += `</table>`;
   const dom = game.dominance();
@@ -3856,7 +3941,7 @@ function drawHistomap(cv) {
     for (let k = e.length - 1; k >= 0; k--) ctx.lineTo(e[k][1], y(k));
     ctx.closePath();
     ctx.fillStyle = game.players[id].color; ctx.fill();
-    ctx.strokeStyle = 'rgba(0,0,0,0.55)'; ctx.lineWidth = 0.8; ctx.stroke();
+    ctx.strokeStyle = game.players[id].color2 || 'rgba(0,0,0,0.55)'; ctx.lineWidth = 1.2; ctx.stroke();
   }
   // time axis
   ctx.font = '11px sans-serif'; ctx.textAlign = 'right';
@@ -3956,6 +4041,7 @@ function showHelp() {
   <p>Depending on game options, you can take over a rebellion when your tribe falls, or every rebellion can be a human seat.</p>
   <h3>War damage</h3>
   <p>Enemy units standing on a city's tiles cut it off: each occupied or damaged worked tile costs that city 1 gold, and enemies on its land raise unrest. A unit that spends a turn on an enemy improvement may <b>damage</b> it, then <b>destroy</b> it. Destroying it removes the pop it gave, so cities can shrink. Repair damaged improvements from the tile panel. Attacks on a city's garrison may wreck buildings, and a captured city loses each building with 35% chance. A city stripped of all its buildings in the sack may be <b>razed</b>, leaving ruins.</p>
+  <h3>Building limits</h3><p>Each city can complete one building or wonder per turn, and none while a hostile unit stands next to it. A captured city left with no buildings, whether stripped in the sack or never built up, may be razed: 50% at level 1, falling to 10% for large cities.</p>
   <h3>Map modes</h3><p>Press <b>M</b> or use the Map menu: Terrain, Political (tribe colours only), Culture (stripes mark peoples under foreign rule), Specialty (and what unclaimed land would become), and Unrest.</p>
   <h3>War</h3>
   <ul><li>Select a unit: white hexes = move, red = attack, gold = capture an undefended enemy city.</li>
@@ -3981,7 +4067,7 @@ function showWin() {
   let h = `<h2 style="color:${w.color}">${esc(w.name)} wins by ${game.winner.how}!</h2><p>Turn ${game.turn}.</p><table class="tribes"><tr><th></th><th>Tribe</th><th>Score</th></tr>`;
   for (const r of game.ranking()) {
     const p = game.players[r.id];
-    h += `<tr><td><span class="chip" style="background:${p.color}"></span></td><td>${esc(p.name)}${p.human ? ' (human)' : ''}</td><td>${p.alive ? r.score : 'fallen'}</td></tr>`;
+    h += `<tr><td>${chip(p)}</td><td>${esc(p.name)}${p.human ? ' (human)' : ''}</td><td>${p.alive ? r.score : 'fallen'}</td></tr>`;
   }
   h += `</table>${histomapHTML()}<p><button class="primary" id="btnAgain">New game</button> <button id="btnReveal">Reveal map</button></p>`;
   openModal(h);

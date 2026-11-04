@@ -258,7 +258,27 @@ export const CITY_NAMES = [
   'Kell', 'Lea', 'Moor', 'Ness', 'Oak', 'Pike', 'Rill', 'Shaw', 'Tor', 'Vale', 'Weir',
 ];
 
-export const PLAYER_COLORS = [
-  '#e0453a', '#3a7be0', '#f0c419', '#9b4ae0', '#20c0a0', '#f07c20', '#e04aa8', '#e8e8e8',
-  '#6b4423', '#80e040',
+// Two-tone tribe identities: [fill, border/accent]. Tribes are assigned the pair that is
+// perceptually farthest (CIELAB) from every tribe still alive; see pickTribeColors().
+export const TRIBE_PALETTE = [
+  ['#d7263d', '#ffd23f'], // red / gold
+  ['#1b62c4', '#f4f4f4'], // blue / white
+  ['#2a9d3c', '#111111'], // green / black
+  ['#f2c014', '#3a1d70'], // yellow / deep purple
+  ['#8e44ad', '#f7e1a0'], // purple / cream
+  ['#f07c1e', '#13294b'], // orange / navy
+  ['#19b5b0', '#5a1020'], // teal / maroon
+  ['#e94fa8', '#1d1d1d'], // pink / black
+  ['#f4f4f4', '#c0392b'], // white / red
+  ['#6b3e1f', '#9ae66e'], // brown / lime
+  ['#1d2b5c', '#f2a541'], // navy / amber
+  ['#7fd13b', '#2b2b80'], // lime / indigo
+  ['#5fa8e8', '#7a2a00'], // sky / rust
+  ['#4a4a4a', '#ff6f3c'], // charcoal / flame
+  ['#c9a227', '#0b3d2e'], // ochre / pine
+  ['#00755e', '#ffb3c6'], // jade / rose
+  ['#b9a3f5', '#3b1f00'], // lavender / umber
+  ['#8c1c13', '#9fd8cb'], // oxblood / mint
 ];
+export const PLAYER_COLORS = TRIBE_PALETTE.map(p => p[0]);
+

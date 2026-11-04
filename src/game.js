@@ -3,7 +3,7 @@ import { neighborsOf, hexDist } from './hex.js';
 import { makeRng } from './rng.js';
 import {
   TERRAIN, SPECIALTY, KIN_DIST, AFFINITY, UNITS, EMBARKED, IMPROVEMENTS,
-  BUILDINGS, WONDERS, TECHS, TEMPERAMENTS, techCost, TERRAIN_TO_SPECIALTY, TRIBE_NAMES, CITY_NAMES, PLAYER_COLORS,
+  BUILDINGS, WONDERS, TECHS, TEMPERAMENTS, TRIBE_PALETTE, techCost, TERRAIN_TO_SPECIALTY, TRIBE_NAMES, CITY_NAMES, PLAYER_COLORS,
 } from './data.js';
 import { generateMap, pickStarts, MAP_SIZES } from './mapgen.js';
 
@@ -23,12 +23,42 @@ export function rollTemper(rng, key) {
 }
 
 const MAX_TRIBES = 20;
-function rebelColor(id) {
-  const h = (id * 137.5 + 20) % 360;
-  // hsl -> hex so every colour in the game is a hex string
-  const s = 0.5, l = 0.55, k = (n) => (n + h / 30) % 12, a = s * Math.min(l, 1 - l);
+// ---- colour identity
+function hexRgb(h) { const n = parseInt(h.slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; }
+function toLab(h) {
+  const [r, g, b] = hexRgb(h).map(v => { v /= 255; return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; });
+  let x = (r * 0.4124 + g * 0.3576 + b * 0.1805) / 0.95047, y = r * 0.2126 + g * 0.7152 + b * 0.0722, z = (r * 0.0193 + g * 0.1192 + b * 0.9505) / 1.08883;
+  const f = (t) => t > 0.008856 ? Math.cbrt(t) : 7.787 * t + 16 / 116;
+  x = f(x); y = f(y); z = f(z);
+  return [116 * y - 16, 500 * (x - y), 200 * (y - z)];
+}
+export function colorDist(a, b) { const A = toLab(a), B = toLab(b); return Math.hypot(A[0] - B[0], A[1] - B[1], A[2] - B[2]); }
+function hslHex(h, s, l) {
+  const k = (n) => (n + h / 30) % 12, a = s * Math.min(l, 1 - l);
   const f = (n) => Math.round(255 * (l - a * Math.max(-1, Math.min(k(n) - 3, 9 - k(n), 1)))).toString(16).padStart(2, '0');
   return '#' + f(0) + f(8) + f(4);
+}
+// Pick the [fill, border] pair most distinct from every tribe still in play.
+export function pickTribeColors(players) {
+  const live = players.filter(p => p.alive !== false && p.color);
+  const score = ([f, c]) => live.length ? Math.min(...live.map(p => colorDist(f, p.color) + 0.4 * colorDist(c, p.color2 || p.color))) : 1e9;
+  const taken = new Set(live.map(p => p.color + p.color2));
+  let best = null, bestS = -1;
+  for (const pair of TRIBE_PALETTE) {
+    if (taken.has(pair[0] + pair[1])) continue;
+    const sc = score(pair);
+    if (sc > bestS) { bestS = sc; best = pair; }
+  }
+  if (best && bestS >= 25) return best;
+  // palette exhausted or too close: generate
+  const accents = ['#111111', '#f4f4f4', '#ffd23f', '#13294b', '#c0392b', '#2a9d3c'];
+  for (let hue = 0; hue < 360; hue += 12) for (const l of [0.32, 0.5, 0.68]) {
+    const f = hslHex(hue, 0.65, l);
+    const c = accents.reduce((a, b) => colorDist(b, f) > colorDist(a, f) ? b : a);
+    const sc = score([f, c]);
+    if (sc > bestS) { bestS = sc; best = [f, c]; }
+  }
+  return best;
 }
 
 export class Game {
@@ -65,11 +95,12 @@ export class Game {
       usedNames.add(nm);
       const human = p < (opts.humans ?? 1);
       g.players.push({
-        id: p, name: nm, color: PLAYER_COLORS[p % PLAYER_COLORS.length], home,
+        id: p, name: nm, color: null, color2: null, home,
         human, gold: 5, techs: [], explored: new Array(g.W * g.H).fill(0), alive: true,
         kills: 0, losses: 0, cityNameIdx: 0,
       });
       if (!human) g.players[p].temper = rollTemper(g.rng);
+      [g.players[p].color, g.players[p].color2] = pickTribeColors(g.players);
       const city = g.foundCityAt(p, idx, true);
       city.pop = 1;
       // starting units
@@ -340,12 +371,20 @@ export class Game {
   canBuild(city, b) {
     const B = BUILDINGS[b];
     if (city.buildings.includes(b)) return { ok: false, why: 'Built' };
+    const lim = this.buildBlock(city);
+    if (lim) return { ok: false, why: lim };
     if (this.rioting(city) && !B.calm) return { ok: false, why: 'City is rioting (only compliance buildings)' };
     if (B.special && B.special !== city.specialty) return { ok: false, why: 'Wrong specialty' };
     if (B.tech && !this.has(city.owner, B.tech)) return { ok: false, why: 'Requires ' + TECHS[B.tech].name };
     if (B.special && this.affinity(city) >= 3) return { ok: false, why: 'Alien culture — integrate first' };
     if (this.players[city.owner].gold < B.cost) return { ok: false, why: `Need ${B.cost} gold` };
     return { ok: true };
+  }
+  // One construction per city per turn, and none while hostile troops stand next to it.
+  buildBlock(city) {
+    if (city.builtTurn === this.turn) return 'Already built this turn';
+    if (this.neighbors(city.idx).some(n => { const u = this.unitAt(n); return u && u.owner !== city.owner; })) return 'Enemies at the gates';
+    return null;
   }
   buildable(city) {
     return Object.keys(BUILDINGS).filter(b => {
@@ -359,6 +398,7 @@ export class Game {
     const B = BUILDINGS[b];
     this.players[city.owner].gold -= B.cost;
     city.buildings.push(b);
+    city.builtTurn = this.turn;
     if (B.calm) city.festivals = Math.max(0, (city.festivals || 0) - 2);
     if (B.pop) this.addPop(city, B.pop);
     if (b === 'temple') this.addPop(city, 1);
@@ -467,11 +507,12 @@ export class Game {
     const id = this.players.length;
     const human = this.settings.rebelControl === 'human' && this.players.some(p => p.human);
     const pl = {
-      id, name: this.uniqueTribeName('Free ' + city.name), color: rebelColor(id), home: city.specialty, human, rebel: true, rebelFrom: owner,
+      id, name: this.uniqueTribeName('Free ' + city.name), color: null, color2: null, home: city.specialty, human, rebel: true, rebelFrom: owner,
       gold: 4, techs: [...old.techs], explored: new Array(this.W * this.H).fill(0), alive: true, kills: 0, losses: 0, born: this.turn,
     };
     if (!human) { pl.temper = rollTemper(this.rng); pl.temper.grudges[owner] = 40; }
     pl.founded = this.turn; pl.peak = 0;
+    [pl.color, pl.color2] = pickTribeColors(this.players);
     this.players.push(pl);
     for (const t of this.within(city.idx, 4)) pl.explored[t] = 1;
     city.rebellion = id;
@@ -649,6 +690,8 @@ export class Game {
     const o = this.wonderOwner(w);
     if (o) return { ok: false, why: o.owner === city.owner ? 'Already yours' : `Built by ${this.players[o.owner].name}` };
     if (city.level < 5) return { ok: false, why: 'City must be level 5' };
+    const lim = this.buildBlock(city);
+    if (lim) return { ok: false, why: lim };
     if (this.rioting(city)) return { ok: false, why: 'City is rioting' };
     if (this.players[city.owner].gold < W.cost) return { ok: false, why: `Need ${W.cost} gold` };
     return { ok: true };
@@ -661,6 +704,7 @@ export class Game {
     pl.gold -= W.cost;
     city.wonders = city.wonders || [];
     city.wonders.push(w);
+    city.builtTurn = this.turn;
     if (w === 'greatgranary') for (const c of this.cities) if (c.owner === pl.id) this.addPop(c, 2);
     if (w === 'lighthouse') for (let i = 0; i < this.tiles.length; i++) if (this.tiles[i].t === 'shallows') pl.explored[i] = 1;
     this.updateVision(pl.id);
@@ -1047,7 +1091,8 @@ export class Game {
     const had = c.buildings.length;
     for (const b of [...c.buildings]) if (this.rng() < 0.35) { c.buildings.splice(c.buildings.indexOf(b), 1); }
     if (had && c.buildings.length < had) this.addLog(`${had - c.buildings.length} building(s) in ${c.name} were lost in the sack`, old, c.idx);
-    if (had && !c.buildings.length && this.rng() < Math.max(0.1, 0.6 - 0.1 * c.level)) {
+    // a city left with no buildings (stripped in the sack, or never built up) may be razed
+    if (!c.buildings.length && !(c.wonders?.length) && this.rng() < Math.max(0.1, 0.6 - 0.1 * c.level)) {
       this.razeCity(c, pid);
       this.checkElimination(old);
       return;
@@ -1393,6 +1438,7 @@ export class Game {
     g.rng = makeRng(1); g.rng.setState(o.rng);
     if (g.coalition == null) g.coalition = -1;
     g.history = g.history || [];
+    for (const p of g.players) if (!p.color2) { const keep = p.alive; p.alive = false; [p.color, p.color2] = pickTribeColors(g.players.filter(q => q.color2)); p.alive = keep; }
     for (const c of g.cities) if (c.culture == null) c.culture = c.owner;
     for (const p of g.players) { if (p.founded == null) p.founded = p.born ?? 1; if (p.peak == null) p.peak = g.cities.filter(c => c.owner === p.id).length; }
     for (const p of g.players) {
