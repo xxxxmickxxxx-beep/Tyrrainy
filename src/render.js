@@ -313,7 +313,7 @@ export class Renderer {
         if (!city || owner < 0) return { fill: NEUTRAL };
         if (owner !== this.viewer && !this.revealAll) return { fill: shade(g.players[owner].color, 0.4) };
         const MOOD = { content: '#4caf50', calming: '#c8c840', restless: '#f09030', rioting: '#e04030', insurrection: '#901818' };
-        return { fill: MOOD[g.moodState(city)], hatch: city.taxRelief ? 'rgba(80,160,255,0.8)' : null, thin: true };
+        return { fill: MOOD[g.moodState(city)], hatch: city.subsidy ? ['', 'rgba(80,160,255,0.6)', 'rgba(80,160,255,0.85)', 'rgba(150,200,255,1)'][city.subsidy] : null, thin: city.subsidy < 3 };
       }
     }
     return { fill: NEUTRAL };
@@ -510,7 +510,7 @@ export class Renderer {
       // unrest marker
       if (c.owner === this.viewer || this.revealAll) {
         const un = g.unrest(c).net;
-        if (un > 0 || (c.unrest || 0) >= 6 || c.taxRelief) {
+        if (un > 0 || (c.unrest || 0) >= 6 || c.subsidy) {
           const mx = x + tw / 2 + 7, my = ly - fs * 0.25;
           ctx.fillStyle = (c.unrest || 0) >= 6 ? '#ff4030' : un > 0 ? '#ffa030' : '#70b0e0';
           ctx.beginPath(); ctx.arc(mx, my, 7, 0, Math.PI * 2); ctx.fill();

@@ -61,9 +61,10 @@ Tribes also move at cost 1 across their homeland terrain. Coastal tribes embark 
 ### Unrest & revolts
 Each city weighs **pressure** against **compliance**.
 
-- **Pressure:** realm size (+1 per 2 cities past 4), Foreign +1, Alien +2, recently conquered +2 for 15 turns, crowding +1 per 4 levels, riots in a city of yours within 3 tiles +1, festival riot +2.
-- **Compliance:** capital 3, homeland 1, garrison 1, Courthouse 1, Amphitheater 2 (Masonry), Shrine 2 (Philosophy), festival 2 for 5 turns, tax relief 2.
-- **Tax relief** is a per-city toggle: −2 pressure, but the city pays no gold. It's reliable and unlimited, but expensive.
+- **Generic pressure** is scaled by the city's **cultural sensitivity** to its ruler (`SENSITIVITY` in `src/data.js`): Homeland ×0.6, Kin ×0.85, Foreign ×1.2, Alien ×1.5, plus 0.25 if the city's people are another tribe's culture. Generic pressure covers realm size (+1 per 2 cities past 4), recent conquest (+2 for 15 turns), crowding (+1 per 4 levels), enemies on its land (+1) and riots within 3 tiles (+1).
+- **Flat pressure:** Foreign +1, Alien +2, festival riot +2.
+- **Compliance:** capital 3, homeland 1, garrison 1, Courthouse 1, Amphitheater 2 (Masonry), Shrine 2 (Philosophy), festival 2 for 5 turns, and subsidies.
+- **Subsidies** (`SUBSIDIES`) stop the city's taxes and buy calm: Tax relief −2 (free), Grain dole −4 (2 gold/turn), Patronage −6 (5 gold/turn). If the treasury goes negative, the costliest subsidies lapse to Tax relief.
 - **Festivals** cost `4 + 2×level` gold and are a gamble. Backfire risk is `5% + 12%` per recent festival, capped at 70%. A backfire adds +3 unrest and +2 pressure for 4 turns. Trust recovers by one festival after 6 turns of being content without help, and each compliance building restores two.
 
 When net pressure is positive, it builds unrest. The effects escalate:
@@ -125,6 +126,8 @@ Sims with a boosted runaway (`node tools/sim.js boost=12 …`) show the intended
 | still has buildings | 0% |
 | stripped bare (had buildings once) | `max(10%, 60% − 10%×level)` |
 | never built anything | `max(18%, 36% − 3%×level)`: 33% at level 1, down to 18% at level 6+ |
+
+If the city survives that roll, the **conqueror chooses** whether to keep it or raze it. Humans get a dialog with advisor reasoning, and the AI follows the advice. `razeAdvice()` estimates long-run unrest (excluding the 15-turn conquest shock) after adding every compliance building the conqueror could build plus a garrison. It then prices the subsidy needed to cover the rest against the city's worth: taxes, plus unit capacity, score and power. Alien land, grudges against the city's people and a poor treasury push toward razing. Wonders and the conqueror's own people push hard against it. A deliberate razing gives the city's people a +40 grudge against the razer and its former ruler +20.
 - **Construction limits:** a city can complete one building or wonder per turn, and none while a hostile unit is adjacent to it.
 - **Colours:** each tribe has a two-tone identity, a fill plus an accent used for borders, roofs and unit rims, taken from `TRIBE_PALETTE`. Newcomers (rebellions) get the pair farthest in CIELAB from all living tribes, and colours of fallen tribes become available again.
 
@@ -150,6 +153,9 @@ Three kills make a unit a veteran.
 | `src/main.js` | UI, input, turn flow, hotseat |
 | `tools/sim.js` | Headless AI-vs-AI sims with coalition, revolt and festival stats: `node tools/sim.js games=3 turns=100 size=large players=8` |
 | `tools/build.js` | Bundles `src/` into `tyrrainy.js` (run after edits) |
+
+## Roadmap
+See [`docs/ROADMAP.md`](docs/ROADMAP.md) for proposed next systems: diplomacy, tributaries, trade goods, cultural pull and resettling the wilds.
 
 ## Open design questions (not yet decided)
 1. **Snowballing** is now dampened by unrest and the AI coalition. On large 8-tribe maps the top tribes end within about 15–17 cities of each other. Coalitions only steer the AI, though. A human leader feels them, but a human in a coalition gets no shared benefit (shared vision, a truce).

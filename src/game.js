@@ -3,7 +3,7 @@ import { neighborsOf, hexDist } from './hex.js';
 import { makeRng } from './rng.js';
 import {
   TERRAIN, SPECIALTY, KIN_DIST, AFFINITY, UNITS, EMBARKED, IMPROVEMENTS,
-  BUILDINGS, WONDERS, TECHS, TEMPERAMENTS, TRIBE_PALETTE, techCost, TERRAIN_TO_SPECIALTY, TRIBE_NAMES, CITY_NAMES, PLAYER_COLORS,
+  BUILDINGS, WONDERS, TECHS, TEMPERAMENTS, TRIBE_PALETTE, SUBSIDIES, SENSITIVITY, FOREIGN_PEOPLE_SENSITIVITY, techCost, TERRAIN_TO_SPECIALTY, TRIBE_NAMES, CITY_NAMES, PLAYER_COLORS,
 } from './data.js';
 import { generateMap, pickStarts, MAP_SIZES } from './mapgen.js';
 
@@ -257,7 +257,7 @@ export class Game {
     const pl = this.players[city.owner];
     const aff = this.affinity(city);
     let g = 1 + Math.ceil(city.level * 0.6) + (city.capital ? 1 : 0) + AFFINITY[aff].gold;
-    if (city.taxRelief) return 0;
+    if (city.subsidy) return 0;
     const riot = this.unrest(city).net;
     if (riot > 0) g -= riot; // restless cities withhold taxes
     if (city.specialty === 'riverside' || city.specialty === 'desert') g += 1;
@@ -291,7 +291,13 @@ export class Game {
     const free = this.cities.filter(c => c.owner === pid).length * 2;
     return Math.max(0, n - free);
   }
-  income(pid) { return Math.max(0, this.grossIncome(pid) - this.upkeep(pid)); }
+  subsidyCost(pid) {
+    let s = 0;
+    for (const c of this.cities) if (c.owner === pid && c.subsidy) s += SUBSIDIES[c.subsidy].cost;
+    return s;
+  }
+  // Net income; can go negative when subsidies outrun revenue.
+  income(pid) { return Math.max(0, this.grossIncome(pid) - this.upkeep(pid)) - this.subsidyCost(pid); }
 
   unitCap(pid) {
     let s = 0;
@@ -416,33 +422,44 @@ export class Game {
     const pid = city.owner;
     const pl = this.players[pid];
     const pressure = [], calm = [];
+    // generic pressures are felt more keenly the more foreign the ruler is to the city
+    const generic = [];
     const n = this.cities.filter(c => c.owner === pid).length;
     const size = Math.floor(Math.max(0, n - 4) / 2);
-    if (size) pressure.push(['Sprawling realm (' + n + ' cities)', size]);
+    if (size) generic.push(['Sprawling realm (' + n + ' cities)', size]);
     const aff = this.affinity(city);
-    if (aff >= 2) pressure.push([AFFINITY[aff].name, aff - 1]);
-    if (city.capturedTurn != null && this.turn - city.capturedTurn < 15) pressure.push(['Recently conquered', 2]);
-    if (this.occupation(city).occupied > 0) pressure.push(['Enemies in our lands', 1]);
+    if (city.capturedTurn != null && this.turn - city.capturedTurn < 15) generic.push(['Recently conquered', 2]);
+    if (this.occupation(city).occupied > 0) generic.push(['Enemies in our lands', 1]);
     const big = Math.floor(city.level / 4);
-    if (big) pressure.push(['Crowded city', big]);
-    if (this.cities.some(o => o !== city && o.owner === pid && (o.unrest || 0) >= RIOT_AT && this.dist(o.idx, city.idx) <= 3)) pressure.push(['Riots nearby', 1]);
+    if (big) generic.push(['Crowded city', big]);
+    if (this.cities.some(o => o !== city && o.owner === pid && (o.unrest || 0) >= RIOT_AT && this.dist(o.idx, city.idx) <= 3)) generic.push(['Riots nearby', 1]);
+    pressure.push(...generic);
+    const foreignPeople = city.culture != null && city.culture !== pid && !!this.players[city.culture];
+    const sens = SENSITIVITY[aff] + (foreignPeople ? FOREIGN_PEOPLE_SENSITIVITY : 0);
+    const raw = generic.reduce((a, x) => a + x[1], 0);
+    const adj = Math.round(raw * sens) - raw;
+    if (raw && adj) pressure.push([`Cultural sensitivity ×${sens.toFixed(2).replace(/0$/, '')}`, adj]);
+    if (aff >= 2) pressure.push([AFFINITY[aff].name, aff - 1]);
     if (city.riotUntil != null && this.turn <= city.riotUntil) pressure.push(['Festival riot', 2]);
     if (city.capital) calm.push(['Capital', 3]);
     if (aff === 0) calm.push(['Homeland', 1]);
     const gar = this.unitAt(city.idx);
     if (gar && gar.owner === pid && gar.type !== 'settler') calm.push(['Garrison', 1]);
     for (const b of city.buildings) if (BUILDINGS[b].calm) calm.push([BUILDINGS[b].name, BUILDINGS[b].calm]);
-    if (city.taxRelief) calm.push(['Tax relief', 2]);
+    if (city.subsidy) calm.push([SUBSIDIES[city.subsidy].name, SUBSIDIES[city.subsidy].calm]);
     const fest = city.festivalUntil != null && this.turn <= city.festivalUntil;
     if (fest) calm.push(['Festival', 2]);
     const P = pressure.reduce((a, x) => a + x[1], 0), C = calm.reduce((a, x) => a + x[1], 0);
     // underlying: the mood without any festival propping it up
-    return { pressure, calm, net: P - C, total: P, underlying: P - C + (fest ? 2 : 0) };
+    return { pressure, calm, net: P - C, total: P, underlying: P - C + (fest ? 2 : 0), sensitivity: sens };
   }
-  // Tax relief: the city pays nothing but grumbles less. A reliable, unlimited, costly valve.
-  setTaxRelief(city, on) {
+  // Subsidies: tiers of bought calm (see SUBSIDIES). Reliable, unlimited, costly.
+  setSubsidy(city, tier) {
     if (city.owner !== this.current) return { ok: false, why: 'Not your turn' };
-    city.taxRelief = !!on;
+    tier = Math.max(0, Math.min(SUBSIDIES.length - 1, tier | 0));
+    const extra = SUBSIDIES[tier].cost - SUBSIDIES[city.subsidy || 0].cost;
+    if (extra > 0 && this.players[city.owner].gold < extra) return { ok: false, why: `Need ${extra} gold in the treasury` };
+    city.subsidy = tier;
     return { ok: true };
   }
   rioting(city) { return (city.unrest || 0) >= RIOT_AT; }
@@ -530,7 +547,7 @@ export class Game {
     city.owner = rid;
     city.culture = rid; // the rebels are this city's own people
     city.unrest = 0;
-    city.taxRelief = false;
+    city.subsidy = 0;
     city.capital = false;
     city.held = 0; city.adapt = 0;
     for (const t of this.within(city.idx, 2)) if (this.tiles[t].ownerCity === city.id) this.tiles[t].owner = rid;
@@ -796,7 +813,61 @@ export class Game {
     if (c.everBuilt) return Math.max(0.1, 0.6 - 0.1 * c.level);
     return Math.max(0.18, 0.36 - 0.03 * c.level);
   }
-  razeCity(c, by) {
+  // Should the conqueror raze this freshly captured city? Favours razing cities that will
+  // be restless and unproductive; never one of the conqueror's own people.
+  razeAdvice(c, pid) {
+    const reasons = [];
+    const un = this.unrest(c);
+    const aff = this.affinity(c, pid);
+    // judge the long run: conquest shock fades after 15 turns
+    const shock = c.capturedTurn === this.turn ? Math.round(2 * un.sensitivity) : 0;
+    const longRun = un.net - shock;
+    // calm we could still add without subsidies: compliance buildings we can build, and a garrison
+    let calmB = 0;
+    for (const [k, B] of Object.entries(BUILDINGS)) if (B.calm && !c.buildings.includes(k) && (!B.tech || this.has(pid, B.tech))) calmB += B.calm;
+    const gar = this.unitAt(c.idx);
+    if (!gar || gar.owner !== pid) calmB += 1;
+    const rest = longRun - calmB;
+    const yieldNow = Math.max(0, 1 + Math.ceil(c.level * 0.6) + AFFINITY[aff].gold);
+    let value;
+    if (rest <= 0) {
+      value = yieldNow;
+      reasons.push(`Governable: long-run unrest ${longRun > 0 ? '+' + longRun : longRun}, offset by buildings and a garrison`);
+      reasons.push(`worth about ${yieldNow} gold/turn`);
+    } else {
+      const tier = SUBSIDIES.findIndex(S => S.calm >= rest);
+      if (tier > 0) {
+        value = -SUBSIDIES[tier].cost - 0.5;
+        reasons.push(`Long-run unrest +${longRun}: needs ${SUBSIDIES[tier].name} (${SUBSIDIES[tier].cost ? SUBSIDIES[tier].cost + ' gold/turn, ' : ''}no taxes) on top of buildings`);
+      } else {
+        value = -10;
+        reasons.push(`Long-run unrest +${longRun}: ungovernable, it will revolt`);
+      }
+    }
+    // gold matters less to a full treasury; a city is also worth unit capacity, score and power
+    const rich = this.players[pid].gold > 150 ? 0.5 : 1;
+    let score = -value * (value < 0 ? rich : 1) - (1 + c.level * 0.6);
+    if (aff === 3) { score += 1; reasons.push('Alien land'); }
+    if (c.wonders?.length) { score -= 6; reasons.push('Holds a wonder'); }
+    if (c.culture === pid) { score -= 20; reasons.push('Our own people'); }
+    const T = this.players[pid].temper;
+    if (T && c.culture != null && T.grudges[c.culture]) { const gb = Math.min(1.5, T.grudges[c.culture] / 30 * (T.vengeance ?? 1)); score += gb; if (gb > 0.5) reasons.push('Old grudge'); }
+    return { raze: score > 2, score, reasons };
+  }
+  // Deliberate razing by a human conqueror, allowed on the turn of capture.
+  razeByChoice(c) {
+    if (c.razeDecision !== this.turn || c.owner !== this.current) return { ok: false, why: 'Too late to raze' };
+    const old = c.culture;
+    this.razeCity(c, c.owner, true);
+    return { ok: true, old };
+  }
+  keepCity(c) { c.razeDecision = undefined; return { ok: true }; }
+  razeCity(c, by, deliberate = false) {
+    if (deliberate) {
+      // atrocities are remembered by the city's people and its former rulers
+      if (c.culture != null && c.culture !== by) this.addGrudge(c.culture, by, 40);
+      if (c.capturedFrom != null && c.capturedFrom !== c.culture) this.addGrudge(c.capturedFrom, by, 20);
+    }
     const old = c.owner;
     for (const t of this.within(c.idx, 2)) {
       const tl = this.tiles[t];
@@ -806,7 +877,7 @@ export class Game {
     this.tiles[c.idx].ruin = true;
     this.cities = this.cities.filter(x => x !== c);
     for (const o of this.cities) if (o.owner >= 0) this.claimTerritory(o); // neighbours reclaim free land
-    this.addLog(`${c.name} was razed to the ground by ${this.players[by].name}!`, by, c.idx);
+    this.addLog(`${c.name} was ${deliberate ? 'put to the torch' : 'razed to the ground'} by ${this.players[by].name}!`, by, c.idx);
     this.emit('razed', { c, by, old });
   }
   bumpPeak(pid) {
@@ -1093,8 +1164,9 @@ export class Game {
     c.adapt = 0;
     c.capital = false;
     c.unrest = 0;
-    c.taxRelief = false;
+    c.subsidy = 0;
     c.capturedTurn = this.turn;
+    c.capturedFrom = old;
     for (const t of this.within(c.idx, 2)) {
       if (this.tiles[t].ownerCity === c.id) this.tiles[t].owner = pid;
     }
@@ -1109,8 +1181,17 @@ export class Game {
       this.checkElimination(old);
       return;
     }
+    // the conqueror decides: keep it, or put it to the torch
+    if (this.players[pid].human) {
+      c.razeDecision = this.turn;
+    } else if (this.razeAdvice(c, pid).raze) {
+      this.razeCity(c, pid, true);
+      this.checkElimination(old);
+      return;
+    }
     this.bumpPeak(pid);
     this.emit('capture', { c, old, pid });
+    if (c.razeDecision === this.turn) this.emit('razeChoice', { city: c, pid });
     this.checkElimination(old);
   }
 
@@ -1325,6 +1406,11 @@ export class Game {
     // income
     const inc = this.income(pl.id);
     pl.gold += inc;
+    if (pl.gold < 0) { // the treasury cannot cover subsidies: the most expensive lapse first
+      const subs = this.cities.filter(c => c.owner === pl.id && c.subsidy >= 2).sort((a, b) => b.subsidy - a.subsidy);
+      for (const c of subs) { if (pl.gold >= 0) break; pl.gold += SUBSIDIES[c.subsidy].cost; c.subsidy = 1; this.addLog(`The treasury is empty: subsidies in ${c.name} lapse`, pl.id, c.idx); }
+      pl.gold = Math.max(0, pl.gold);
+    }
     // cities: integration
     for (const c of this.cities) {
       if (c.owner !== pl.id) continue;
@@ -1451,7 +1537,7 @@ export class Game {
     if (g.coalition == null) g.coalition = -1;
     g.history = g.history || [];
     for (const p of g.players) if (!p.color2) { const keep = p.alive; p.alive = false; [p.color, p.color2] = pickTribeColors(g.players.filter(q => q.color2)); p.alive = keep; }
-    for (const c of g.cities) { if (c.culture == null) c.culture = c.owner; if (c.everBuilt == null) c.everBuilt = !!(c.buildings.length || c.wonders?.length); }
+    for (const c of g.cities) { if (c.taxRelief) { c.subsidy = 1; delete c.taxRelief; } if (c.culture == null) c.culture = c.owner; if (c.everBuilt == null) c.everBuilt = !!(c.buildings.length || c.wonders?.length); }
     for (const p of g.players) { if (p.founded == null) p.founded = p.born ?? 1; if (p.peak == null) p.peak = g.cities.filter(c => c.owner === p.id).length; }
     for (const p of g.players) {
       if (p.rebel && !p.home) { // older saves: a single homeless Rebels faction

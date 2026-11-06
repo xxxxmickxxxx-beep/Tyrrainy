@@ -20,7 +20,7 @@ for (let k = 0; k < games; k++) {
       if (victim === dom.leader) b.leader++; else b.other++;
     }
     if (t === 'revolt') st.revolts++;
-    if (t === 'razed') st.razed = (st.razed || 0) + 1;
+    if (t === 'razed') { st.razed = (st.razed || 0) + 1; if (/torch/.test(g.log[g.log.length - 1]?.msg || '')) st.chosen = (st.chosen || 0) + 1; }
     if (t === 'log' && /destroyed a /.test(d.msg)) st.impLost = (st.impLost || 0) + 1;
     if (t === 'log' && /was destroyed|lost in the sack/.test(d.msg)) st.bldLost = (st.bldLost || 0) + 1;
     if (t === 'rebellion') st.rebellions = (st.rebellions || 0) + 1;
@@ -32,9 +32,11 @@ for (let k = 0; k < games; k++) {
   const boost = +(args.boost || 0); // test runaway behaviour: tribe 0 gets free gold each turn
   while (!g.winner && steps < 5000) { if (boost && g.current === 0) g.players[0].gold += boost; runAI(g, g.current); g.endTurn(); steps++; }
   console.log(`game ${k}: turn ${g.turn} winner ${g.winner && g.players[g.winner.pid].name} (${g.winner?.how}) in ${Date.now() - t0}ms`);
-  console.log(`  revolts=${st.revolts} insurgents=${st.insurg} festivals=${st.fest} backfired=${st.backfire} razed=${st.razed || 0} improvementsDestroyed=${st.impLost || 0} buildingLossEvents=${st.bldLost || 0} rebellions=${st.rebellions || 0} rebelCities=${g.cities.filter(c => g.players[c.owner].rebel).length}`);
+  console.log(`  revolts=${st.revolts} insurgents=${st.insurg} festivals=${st.fest} backfired=${st.backfire} razed=${st.razed || 0}(chosen ${st.chosen || 0}) improvementsDestroyed=${st.impLost || 0} buildingLossEvents=${st.bldLost || 0} rebellions=${st.rebellions || 0} rebelCities=${g.cities.filter(c => g.players[c.owner].rebel).length}`);
   console.log(`  coalition joins: ${st.joins.join(', ') || 'none'}`);
   console.log(`  share of attacks on leader while dominant, by temperament: ` + Object.entries(st.byTemper).map(([k, v]) => `${k} ${Math.round(100 * v.leader / Math.max(1, v.leader + v.other))}% (${v.leader + v.other})`).join(', '));
+  const subs = [0, 0, 0, 0]; for (const c of g.cities) subs[c.subsidy || 0]++;
+  console.log(`  subsidy tiers at end (none/relief/dole/patronage): ${subs.join('/')}`);
   for (const p of g.players) {
     const cs = g.cities.filter(c => c.owner === p.id);
     if (p.rebel && !cs.length) continue;

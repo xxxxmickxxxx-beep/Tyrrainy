@@ -4,7 +4,7 @@ import { runAI, field, bestStep } from './ai.js';
 import { Renderer } from './render.js';
 import { MAP_SIZES, MAP_TYPES } from './mapgen.js';
 import {
-  TERRAIN, SPECIALTY, SPECIALTY_KEYS, KIN_DIST, AFFINITY, UNITS, IMPROVEMENTS, BUILDINGS, WONDERS, TECHS, RESOURCES, TEMPERAMENTS,
+  TERRAIN, SPECIALTY, SPECIALTY_KEYS, KIN_DIST, AFFINITY, UNITS, IMPROVEMENTS, BUILDINGS, WONDERS, TECHS, RESOURCES, TEMPERAMENTS, SUBSIDIES, SENSITIVITY,
 } from './data.js';
 
 const $ = (id) => document.getElementById(id);
@@ -95,6 +95,8 @@ function onEvent(type, d) {
     if (d.owner === viewer) R.addAnim({ type: 'text', idx: d.idx, text: 'Level ' + d.level + '!', color: '#9f9', dur: 1500 });
   } else if (type === 'win') {
     setTimeout(showWin, 400);
+  } else if (type === 'razeChoice') {
+    if (game.players[d.pid].human && d.pid === R.viewer) setTimeout(() => showRazeChoice(d.city), 250);
   } else if (type === 'revolt') {
     if (d.old === viewer) toast(`${d.city.name} has revolted and joined the ${game.players[d.city.owner].name}!`);
   } else if (type === 'rebellion') {
@@ -304,7 +306,7 @@ const LEGENDS = {
   political: () => 'Tribe colours. Grey: unclaimed land.',
   culture: () => '<b>Solid</b>: a tribe\'s own people. <b>Thick stripes</b>: a people (base colour) ruled by another tribe (stripe colour). <b>Thin dark lines</b>: own people on foreign or alien land.',
   specialty: () => Object.values(SPECIALTY).map(s => `<span class="sw" style="background:${s.color}"></span>${s.name}`).join('') + '<br><span class="dim">Unclaimed land is shown dimmed in the type a city founded there would get.</span>',
-  unrest: () => [['#4caf50', 'Content'], ['#c8c840', 'Calming'], ['#f09030', 'Restless'], ['#e04030', 'Rioting'], ['#901818', 'Insurrection']].map(([c, n]) => `<span class="sw" style="background:${c}"></span>${n}`).join('') + '<br><span class="dim">Blue lines: tax relief. Only your own cities are shown.</span>',
+  unrest: () => [['#4caf50', 'Content'], ['#c8c840', 'Calming'], ['#f09030', 'Restless'], ['#e04030', 'Rioting'], ['#901818', 'Insurrection']].map(([c, n]) => `<span class="sw" style="background:${c}"></span>${n}`).join('') + '<br><span class="dim">Blue lines: subsidies (denser = higher tier). Only your own cities are shown.</span>',
 };
 function setMapMode(m) {
   R.mapMode = m;
@@ -430,7 +432,8 @@ function updateTopbar() {
   $('tribeHome').style.color = '#111';
   $('gold').textContent = pl.gold;
   const up = game.upkeep(pl.id);
-  $('income').textContent = `(+${game.income(pl.id)}${up ? `, upkeep ${up}` : ''})`;
+  const sub = game.subsidyCost(pl.id), inc = game.income(pl.id);
+  $('income').textContent = `(${inc >= 0 ? '+' : ''}${inc}${up ? `, upkeep ${up}` : ''}${sub ? `, subsidies ${sub}` : ''})`;
   $('turn').textContent = game.turn;
   $('turnLimit').textContent = game.settings.turnLimit ? ` / ${game.settings.turnLimit}` : '';
   $('score').textContent = game.score(pl.id);
@@ -567,18 +570,23 @@ function moodBlock(c, canAct) {
   const state = STATES[game.moodState(c)];
   let h = `<h4>Mood</h4><div class="row"><span><span class="aff" style="background:${state[1]}">${state[0]}</span></span><span>unrest ${cur}/${REVOLT_AT} ${un.net > 0 ? `<b style="color:#ff8060">+${un.net}/turn</b>` : un.net < 0 || cur ? `<span class="dim">−${Math.max(1, -un.net)}/turn</span>` : ''}</span></div>`;
   h += `<div style="height:6px;background:#2a3646;border-radius:3px;margin:4px 0"><div style="height:6px;width:${Math.min(100, cur / REVOLT_AT * 100)}%;background:${state[1]};border-radius:3px"></div></div>`;
-  const fmt = (arr, sign) => arr.map(([n, v]) => `${esc(n)} ${sign}${v}`).join(', ');
+  const fmt = (arr, sign) => arr.map(([n, v]) => `${esc(n)} ${v < 0 ? (sign === '+' ? '−' : '+') : sign}${Math.abs(v)}`).join(', ');
   if (un.pressure.length) h += `<div class="desc">Pressure: ${fmt(un.pressure, '+')}</div>`;
   if (un.calm.length) h += `<div class="desc">Compliance: ${fmt(un.calm, '−')}</div>`;
   if (state[2]) h += `<div class="desc"><b>${state[0]}:</b> ${state[2]}</div>`;
   if (un.net > 0) h += `<div class="desc">Restless: withholds ${un.net} gold per turn. Riots at ${RIOT_AT}, insurrection at ${INSURRECTION_AT}, revolt at ${REVOLT_AT}${c.capital ? ' (capitals never revolt)' : ''}.</div>`;
-  if (canAct && (un.net > 0 || cur > 0 || c.taxRelief)) {
+  if (canAct && (un.net > 0 || cur > 0 || c.subsidy)) {
     const chk = game.canPlacate(c);
     const risk = Math.round(game.festivalRisk(c) * 100);
     h += `<div class="opts" style="margin-top:6px"><button data-act="placate" ${chk.ok ? '' : 'disabled'} title="${esc(chk.why || '')}">Hold festival ◉${game.placateCost(c)}<small>Resets unrest, −2 for 5 turns. <b style="color:${risk >= 30 ? '#ff8060' : '#e0d060'}">${risk}% riot risk</b></small></button>`;
-    h += `<button data-act="relief">${c.taxRelief ? 'End tax relief' : 'Grant tax relief'}<small>${c.taxRelief ? 'City pays no gold while active' : 'City pays no gold, −2 pressure'}</small></button></div>`;
+    h += `</div><h4>Subsidy</h4><div class="opts">`;
+    SUBSIDIES.forEach((S, k) => {
+      const cur = (c.subsidy || 0) === k;
+      h += `<button data-act="subsidy" data-k="${k}" style="${cur ? 'border-color:#f0c060;background:#3a3420' : ''}">${S.name}${cur ? ' ✓' : ''}<small>${k ? `−${S.calm} pressure` : 'No calm bought'}${S.cost ? `, ${S.cost} gold/turn` : ''}${k ? ', no taxes' : ''}</small></button>`;
+    });
     if (c.festivals) h += `<div class="desc">${c.festivals} recent festival${c.festivals > 1 ? 's' : ''} without lasting peace: each makes the next likelier to backfire (+3 unrest and +2 pressure for 4 turns). Trust returns after 6 content turns, and each compliance building restores 2 festivals' worth.</div>`;
-  } else if (c.taxRelief) h += `<div class="desc">Tax relief in effect.</div>`;
+    h += `</div>`;
+  } else if (c.subsidy) h += `<div class="desc">${SUBSIDIES[c.subsidy].name} in effect.</div>`;
   return h;
 }
 
@@ -640,9 +648,8 @@ function panelAction(d) {
     if (res.ok) toast(res.backfired ? 'The festival turned into a riot!' : 'Festival held: unrest quelled');
   } else if (d.act === 'repair') {
     res = game.repair(R.viewer, sel.idx);
-  } else if (d.act === 'relief') {
-    const c = game.cityById(sel.id);
-    res = game.setTaxRelief(c, !c.taxRelief);
+  } else if (d.act === 'subsidy') {
+    res = game.setSubsidy(game.cityById(sel.id), +d.k);
   } else if (d.act === 'wonder') {
     res = game.buildWonder(game.cityById(sel.id), d.k);
   } else if (d.act === 'improve') {
@@ -841,6 +848,20 @@ function showHistomap(fromWin) {
   $('btnHistoBack').onclick = () => (fromWin ? showWin() : showTribes());
 }
 
+function showRazeChoice(c) {
+  if (!game.cities.includes(c)) return;
+  const adv = game.razeAdvice(c, c.owner);
+  const people = c.culture != null && game.players[c.culture] ? game.players[c.culture] : null;
+  let h = `<h2>${esc(c.name)} has fallen to you</h2>`;
+  h += `<p>Level ${c.level} ${SPECIALTY[c.specialty].name} city${people ? `, home to the <b style="color:${people.color}">${esc(people.name)}</b> people` : ''}. ${c.buildings.length ? 'Surviving buildings: ' + c.buildings.map(b => BUILDINGS[b].name).join(', ') + '.' : 'Nothing of note survived the sack.'}</p>`;
+  h += `<p class="dim">Advisors: ${adv.reasons.map(esc).join(' · ')}.</p>`;
+  h += `<p><b>${adv.raze ? 'Your advisors favour razing it.' : 'Your advisors favour keeping it.'}</b> Razing frees the land and spares you its unrest, but its people${people && people.alive ? ` and the ${esc(people.name)}` : ''} will not forget.</p>`;
+  h += `<p><button id="btnKeep" class="${adv.raze ? '' : 'primary'}">Keep the city</button> <button id="btnRaze" class="${adv.raze ? 'primary' : ''}" style="${adv.raze ? '' : 'background:#5a2020'}">Raze it</button></p>`;
+  openModal(h);
+  $('btnKeep').onclick = () => { game.keepCity(c); closeModal(); };
+  $('btnRaze').onclick = () => { const r = game.razeByChoice(c); if (!r.ok) toast(r.why); closeModal(); deselect(); refreshAll(); };
+}
+
 function showLeave() {
   if (!game) { $('menu').classList.remove('hidden'); return; }
   openModal(`<h2>Leave this game?</h2><p class="dim">The game is saved. You can continue it from the main menu.</p>${histomapHTML()}<p><button class="primary" id="btnLeave">Main menu</button> <button id="btnStay">Back to game</button></p>`);
@@ -872,7 +893,8 @@ function showHelp() {
   <li>recent conquest;</li>
   <li>crowding (level 4+);</li>
   <li>riots in nearby cities of yours.</li></ul>
-  <p><b>Compliance</b> pushes back: capital, homeland, a garrison unit, Courthouse (−1), Amphitheater (−2), Shrine (−2), tax relief (−2, but the city pays no gold), or a festival (−2 for 5 turns).</p>
+  <p>Generic pressures (sprawl, crowding, conquest, enemies, nearby riots) are scaled by <b>cultural sensitivity</b>: ×0.6 in homeland cities, ×0.85 in kin cities, ×1.2 in foreign ones, ×1.5 in alien ones, and +0.25 more when the city's people are another tribe's.</p>
+  <p><b>Compliance</b> pushes back: capital, homeland, a garrison unit, Courthouse (−1), Amphitheater (−2), Shrine (−2), a festival (−2 for 5 turns), or a subsidy. Every subsidy tier stops the city's taxes: Tax relief (−2), Grain dole (−4, 2 gold/turn), Patronage (−6, 5 gold/turn). If the treasury runs dry, costly subsidies lapse.</p>
   <p>Festivals are a gamble. Each one held without fixing the cause raises the chance the next turns into a riot. Contentment and compliance buildings restore trust.</p>
   <p>When pressure wins, unrest builds:</p>
   <ul><li><b>Restless</b>: the city withholds gold.</li>
@@ -902,6 +924,7 @@ function showHelp() {
   <h3>War damage</h3>
   <p>Enemy units standing on a city's tiles cut it off: each occupied or damaged worked tile costs that city 1 gold, and enemies on its land raise unrest. A unit that spends a turn on an enemy improvement may <b>damage</b> it, then <b>destroy</b> it. Destroying it removes the pop it gave, so cities can shrink. Repair damaged improvements from the tile panel. Attacks on a city's garrison may wreck buildings, and a captured city loses each building with 35% chance. A city stripped of all its buildings in the sack may be <b>razed</b>, leaving ruins.</p>
   <h3>Building limits</h3><p>Each city can complete one building or wonder per turn, and none while a hostile unit stands next to it. When a city is captured, it may be razed:</p>
+  <p>If the city survives the sack, you choose whether to keep it or raze it. Advisors weigh its expected unrest and its worth. Razing a city angers its people and its former rulers. The AI razes cities likely to be restless and unproductive, but never its own people's.</p>
   <ul><li>holding a wonder: 5%;</li>
   <li>buildings that survive the sack: never;</li>
   <li>stripped of every building it had: 50% at level 1, down to 10% for large cities;</li>

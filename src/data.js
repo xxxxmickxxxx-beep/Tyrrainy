@@ -166,6 +166,21 @@ export const BUILDINGS = {
   deepmine:     { name: 'Deep Mine', cost: 8, special: 'mountain', desc: '+3 gold per turn.', gold: 3 },
 };
 
+// ---------------- Subsidies ----------------
+// Escalating ways to buy calm in a city. Every tier stops the city paying taxes;
+// higher tiers also draw on the treasury each turn.
+export const SUBSIDIES = [
+  { name: 'None', calm: 0, cost: 0, desc: 'The city pays its taxes.' },
+  { name: 'Tax relief', calm: 2, cost: 0, desc: 'No taxes collected.' },
+  { name: 'Grain dole', calm: 4, cost: 2, desc: 'No taxes, plus 2 gold per turn in free bread.' },
+  { name: 'Patronage', calm: 6, cost: 5, desc: 'No taxes, plus 5 gold per turn in games, gifts and offices.' },
+];
+
+// Cultural sensitivity: how strongly a city feels generic pressure (sprawl, crowding,
+// war, conquest, nearby riots), by its affinity to the ruler (home, kin, foreign, alien).
+export const SENSITIVITY = [0.6, 0.85, 1.2, 1.5];
+export const FOREIGN_PEOPLE_SENSITIVITY = 0.25; // extra when the city's people are another tribe's culture
+
 // ---------------- Wonders ----------------
 // One per specialty, unique in the world, need a level 5+ city of that specialty.
 export const WONDERS = {

@@ -295,6 +295,21 @@ const BUILDINGS = {
   deepmine:     { name: 'Deep Mine', cost: 8, special: 'mountain', desc: '+3 gold per turn.', gold: 3 },
 };
 
+// ---------------- Subsidies ----------------
+// Escalating ways to buy calm in a city. Every tier stops the city paying taxes;
+// higher tiers also draw on the treasury each turn.
+const SUBSIDIES = [
+  { name: 'None', calm: 0, cost: 0, desc: 'The city pays its taxes.' },
+  { name: 'Tax relief', calm: 2, cost: 0, desc: 'No taxes collected.' },
+  { name: 'Grain dole', calm: 4, cost: 2, desc: 'No taxes, plus 2 gold per turn in free bread.' },
+  { name: 'Patronage', calm: 6, cost: 5, desc: 'No taxes, plus 5 gold per turn in games, gifts and offices.' },
+];
+
+// Cultural sensitivity: how strongly a city feels generic pressure (sprawl, crowding,
+// war, conquest, nearby riots), by its affinity to the ruler (home, kin, foreign, alien).
+const SENSITIVITY = [0.6, 0.85, 1.2, 1.5];
+const FOREIGN_PEOPLE_SENSITIVITY = 0.25; // extra when the city's people are another tribe's culture
+
 // ---------------- Wonders ----------------
 // One per specialty, unique in the world, need a level 5+ city of that specialty.
 const WONDERS = {
@@ -881,7 +896,7 @@ class Game {
     const pl = this.players[city.owner];
     const aff = this.affinity(city);
     let g = 1 + Math.ceil(city.level * 0.6) + (city.capital ? 1 : 0) + AFFINITY[aff].gold;
-    if (city.taxRelief) return 0;
+    if (city.subsidy) return 0;
     const riot = this.unrest(city).net;
     if (riot > 0) g -= riot; // restless cities withhold taxes
     if (city.specialty === 'riverside' || city.specialty === 'desert') g += 1;
@@ -915,7 +930,13 @@ class Game {
     const free = this.cities.filter(c => c.owner === pid).length * 2;
     return Math.max(0, n - free);
   }
-  income(pid) { return Math.max(0, this.grossIncome(pid) - this.upkeep(pid)); }
+  subsidyCost(pid) {
+    let s = 0;
+    for (const c of this.cities) if (c.owner === pid && c.subsidy) s += SUBSIDIES[c.subsidy].cost;
+    return s;
+  }
+  // Net income; can go negative when subsidies outrun revenue.
+  income(pid) { return Math.max(0, this.grossIncome(pid) - this.upkeep(pid)) - this.subsidyCost(pid); }
 
   unitCap(pid) {
     let s = 0;
@@ -1040,33 +1061,44 @@ class Game {
     const pid = city.owner;
     const pl = this.players[pid];
     const pressure = [], calm = [];
+    // generic pressures are felt more keenly the more foreign the ruler is to the city
+    const generic = [];
     const n = this.cities.filter(c => c.owner === pid).length;
     const size = Math.floor(Math.max(0, n - 4) / 2);
-    if (size) pressure.push(['Sprawling realm (' + n + ' cities)', size]);
+    if (size) generic.push(['Sprawling realm (' + n + ' cities)', size]);
     const aff = this.affinity(city);
-    if (aff >= 2) pressure.push([AFFINITY[aff].name, aff - 1]);
-    if (city.capturedTurn != null && this.turn - city.capturedTurn < 15) pressure.push(['Recently conquered', 2]);
-    if (this.occupation(city).occupied > 0) pressure.push(['Enemies in our lands', 1]);
+    if (city.capturedTurn != null && this.turn - city.capturedTurn < 15) generic.push(['Recently conquered', 2]);
+    if (this.occupation(city).occupied > 0) generic.push(['Enemies in our lands', 1]);
     const big = Math.floor(city.level / 4);
-    if (big) pressure.push(['Crowded city', big]);
-    if (this.cities.some(o => o !== city && o.owner === pid && (o.unrest || 0) >= RIOT_AT && this.dist(o.idx, city.idx) <= 3)) pressure.push(['Riots nearby', 1]);
+    if (big) generic.push(['Crowded city', big]);
+    if (this.cities.some(o => o !== city && o.owner === pid && (o.unrest || 0) >= RIOT_AT && this.dist(o.idx, city.idx) <= 3)) generic.push(['Riots nearby', 1]);
+    pressure.push(...generic);
+    const foreignPeople = city.culture != null && city.culture !== pid && !!this.players[city.culture];
+    const sens = SENSITIVITY[aff] + (foreignPeople ? FOREIGN_PEOPLE_SENSITIVITY : 0);
+    const raw = generic.reduce((a, x) => a + x[1], 0);
+    const adj = Math.round(raw * sens) - raw;
+    if (raw && adj) pressure.push([`Cultural sensitivity ×${sens.toFixed(2).replace(/0$/, '')}`, adj]);
+    if (aff >= 2) pressure.push([AFFINITY[aff].name, aff - 1]);
     if (city.riotUntil != null && this.turn <= city.riotUntil) pressure.push(['Festival riot', 2]);
     if (city.capital) calm.push(['Capital', 3]);
     if (aff === 0) calm.push(['Homeland', 1]);
     const gar = this.unitAt(city.idx);
     if (gar && gar.owner === pid && gar.type !== 'settler') calm.push(['Garrison', 1]);
     for (const b of city.buildings) if (BUILDINGS[b].calm) calm.push([BUILDINGS[b].name, BUILDINGS[b].calm]);
-    if (city.taxRelief) calm.push(['Tax relief', 2]);
+    if (city.subsidy) calm.push([SUBSIDIES[city.subsidy].name, SUBSIDIES[city.subsidy].calm]);
     const fest = city.festivalUntil != null && this.turn <= city.festivalUntil;
     if (fest) calm.push(['Festival', 2]);
     const P = pressure.reduce((a, x) => a + x[1], 0), C = calm.reduce((a, x) => a + x[1], 0);
     // underlying: the mood without any festival propping it up
-    return { pressure, calm, net: P - C, total: P, underlying: P - C + (fest ? 2 : 0) };
+    return { pressure, calm, net: P - C, total: P, underlying: P - C + (fest ? 2 : 0), sensitivity: sens };
   }
-  // Tax relief: the city pays nothing but grumbles less. A reliable, unlimited, costly valve.
-  setTaxRelief(city, on) {
+  // Subsidies: tiers of bought calm (see SUBSIDIES). Reliable, unlimited, costly.
+  setSubsidy(city, tier) {
     if (city.owner !== this.current) return { ok: false, why: 'Not your turn' };
-    city.taxRelief = !!on;
+    tier = Math.max(0, Math.min(SUBSIDIES.length - 1, tier | 0));
+    const extra = SUBSIDIES[tier].cost - SUBSIDIES[city.subsidy || 0].cost;
+    if (extra > 0 && this.players[city.owner].gold < extra) return { ok: false, why: `Need ${extra} gold in the treasury` };
+    city.subsidy = tier;
     return { ok: true };
   }
   rioting(city) { return (city.unrest || 0) >= RIOT_AT; }
@@ -1154,7 +1186,7 @@ class Game {
     city.owner = rid;
     city.culture = rid; // the rebels are this city's own people
     city.unrest = 0;
-    city.taxRelief = false;
+    city.subsidy = 0;
     city.capital = false;
     city.held = 0; city.adapt = 0;
     for (const t of this.within(city.idx, 2)) if (this.tiles[t].ownerCity === city.id) this.tiles[t].owner = rid;
@@ -1420,7 +1452,61 @@ class Game {
     if (c.everBuilt) return Math.max(0.1, 0.6 - 0.1 * c.level);
     return Math.max(0.18, 0.36 - 0.03 * c.level);
   }
-  razeCity(c, by) {
+  // Should the conqueror raze this freshly captured city? Favours razing cities that will
+  // be restless and unproductive; never one of the conqueror's own people.
+  razeAdvice(c, pid) {
+    const reasons = [];
+    const un = this.unrest(c);
+    const aff = this.affinity(c, pid);
+    // judge the long run: conquest shock fades after 15 turns
+    const shock = c.capturedTurn === this.turn ? Math.round(2 * un.sensitivity) : 0;
+    const longRun = un.net - shock;
+    // calm we could still add without subsidies: compliance buildings we can build, and a garrison
+    let calmB = 0;
+    for (const [k, B] of Object.entries(BUILDINGS)) if (B.calm && !c.buildings.includes(k) && (!B.tech || this.has(pid, B.tech))) calmB += B.calm;
+    const gar = this.unitAt(c.idx);
+    if (!gar || gar.owner !== pid) calmB += 1;
+    const rest = longRun - calmB;
+    const yieldNow = Math.max(0, 1 + Math.ceil(c.level * 0.6) + AFFINITY[aff].gold);
+    let value;
+    if (rest <= 0) {
+      value = yieldNow;
+      reasons.push(`Governable: long-run unrest ${longRun > 0 ? '+' + longRun : longRun}, offset by buildings and a garrison`);
+      reasons.push(`worth about ${yieldNow} gold/turn`);
+    } else {
+      const tier = SUBSIDIES.findIndex(S => S.calm >= rest);
+      if (tier > 0) {
+        value = -SUBSIDIES[tier].cost - 0.5;
+        reasons.push(`Long-run unrest +${longRun}: needs ${SUBSIDIES[tier].name} (${SUBSIDIES[tier].cost ? SUBSIDIES[tier].cost + ' gold/turn, ' : ''}no taxes) on top of buildings`);
+      } else {
+        value = -10;
+        reasons.push(`Long-run unrest +${longRun}: ungovernable, it will revolt`);
+      }
+    }
+    // gold matters less to a full treasury; a city is also worth unit capacity, score and power
+    const rich = this.players[pid].gold > 150 ? 0.5 : 1;
+    let score = -value * (value < 0 ? rich : 1) - (1 + c.level * 0.6);
+    if (aff === 3) { score += 1; reasons.push('Alien land'); }
+    if (c.wonders?.length) { score -= 6; reasons.push('Holds a wonder'); }
+    if (c.culture === pid) { score -= 20; reasons.push('Our own people'); }
+    const T = this.players[pid].temper;
+    if (T && c.culture != null && T.grudges[c.culture]) { const gb = Math.min(1.5, T.grudges[c.culture] / 30 * (T.vengeance ?? 1)); score += gb; if (gb > 0.5) reasons.push('Old grudge'); }
+    return { raze: score > 2, score, reasons };
+  }
+  // Deliberate razing by a human conqueror, allowed on the turn of capture.
+  razeByChoice(c) {
+    if (c.razeDecision !== this.turn || c.owner !== this.current) return { ok: false, why: 'Too late to raze' };
+    const old = c.culture;
+    this.razeCity(c, c.owner, true);
+    return { ok: true, old };
+  }
+  keepCity(c) { c.razeDecision = undefined; return { ok: true }; }
+  razeCity(c, by, deliberate = false) {
+    if (deliberate) {
+      // atrocities are remembered by the city's people and its former rulers
+      if (c.culture != null && c.culture !== by) this.addGrudge(c.culture, by, 40);
+      if (c.capturedFrom != null && c.capturedFrom !== c.culture) this.addGrudge(c.capturedFrom, by, 20);
+    }
     const old = c.owner;
     for (const t of this.within(c.idx, 2)) {
       const tl = this.tiles[t];
@@ -1430,7 +1516,7 @@ class Game {
     this.tiles[c.idx].ruin = true;
     this.cities = this.cities.filter(x => x !== c);
     for (const o of this.cities) if (o.owner >= 0) this.claimTerritory(o); // neighbours reclaim free land
-    this.addLog(`${c.name} was razed to the ground by ${this.players[by].name}!`, by, c.idx);
+    this.addLog(`${c.name} was ${deliberate ? 'put to the torch' : 'razed to the ground'} by ${this.players[by].name}!`, by, c.idx);
     this.emit('razed', { c, by, old });
   }
   bumpPeak(pid) {
@@ -1717,8 +1803,9 @@ class Game {
     c.adapt = 0;
     c.capital = false;
     c.unrest = 0;
-    c.taxRelief = false;
+    c.subsidy = 0;
     c.capturedTurn = this.turn;
+    c.capturedFrom = old;
     for (const t of this.within(c.idx, 2)) {
       if (this.tiles[t].ownerCity === c.id) this.tiles[t].owner = pid;
     }
@@ -1733,8 +1820,17 @@ class Game {
       this.checkElimination(old);
       return;
     }
+    // the conqueror decides: keep it, or put it to the torch
+    if (this.players[pid].human) {
+      c.razeDecision = this.turn;
+    } else if (this.razeAdvice(c, pid).raze) {
+      this.razeCity(c, pid, true);
+      this.checkElimination(old);
+      return;
+    }
     this.bumpPeak(pid);
     this.emit('capture', { c, old, pid });
+    if (c.razeDecision === this.turn) this.emit('razeChoice', { city: c, pid });
     this.checkElimination(old);
   }
 
@@ -1949,6 +2045,11 @@ class Game {
     // income
     const inc = this.income(pl.id);
     pl.gold += inc;
+    if (pl.gold < 0) { // the treasury cannot cover subsidies: the most expensive lapse first
+      const subs = this.cities.filter(c => c.owner === pl.id && c.subsidy >= 2).sort((a, b) => b.subsidy - a.subsidy);
+      for (const c of subs) { if (pl.gold >= 0) break; pl.gold += SUBSIDIES[c.subsidy].cost; c.subsidy = 1; this.addLog(`The treasury is empty: subsidies in ${c.name} lapse`, pl.id, c.idx); }
+      pl.gold = Math.max(0, pl.gold);
+    }
     // cities: integration
     for (const c of this.cities) {
       if (c.owner !== pl.id) continue;
@@ -2075,7 +2176,7 @@ class Game {
     if (g.coalition == null) g.coalition = -1;
     g.history = g.history || [];
     for (const p of g.players) if (!p.color2) { const keep = p.alive; p.alive = false; [p.color, p.color2] = pickTribeColors(g.players.filter(q => q.color2)); p.alive = keep; }
-    for (const c of g.cities) { if (c.culture == null) c.culture = c.owner; if (c.everBuilt == null) c.everBuilt = !!(c.buildings.length || c.wonders?.length); }
+    for (const c of g.cities) { if (c.taxRelief) { c.subsidy = 1; delete c.taxRelief; } if (c.culture == null) c.culture = c.owner; if (c.everBuilt == null) c.everBuilt = !!(c.buildings.length || c.wonders?.length); }
     for (const p of g.players) { if (p.founded == null) p.founded = p.born ?? 1; if (p.peak == null) p.peak = g.cities.filter(c => c.owner === p.id).length; }
     for (const p of g.players) {
       if (p.rebel && !p.home) { // older saves: a single homeless Rebels faction
@@ -2098,6 +2199,7 @@ class Game {
 
 // ---- src/ai.js ----
 // Computer opponents. Greedy heuristics, fast enough for 8 tribes on huge maps.
+
 
 
 
@@ -2445,7 +2547,9 @@ function spend(g, pid, prof) {
     //    tax relief as the reliable fallback; lift relief once the city would be fine without it
     for (const c of cities) {
       const un = g.unrest(c);
-      if (c.taxRelief && un.net + 2 <= -1 && (c.unrest || 0) === 0) c.taxRelief = false;
+      // step subsidies down once the city would stay calm without the current tier
+      const t = c.subsidy || 0;
+      if (t && (c.unrest || 0) === 0 && un.net + SUBSIDIES[t].calm - SUBSIDIES[t - 1].calm <= -1) c.subsidy = t - 1;
     }
     for (const c of cities) {
       const un = g.unrest(c);
@@ -2457,7 +2561,11 @@ function spend(g, pid, prof) {
       const pc = g.canPlacate(c);
       const urgent = cur + Math.max(0, un.net) >= REVOLT_AT - 1;
       if (pc.ok && cur + Math.max(0, un.net) >= REVOLT_AT - 3 && (pc.risk < 0.35 || urgent && pc.risk < 0.5)) { g.placate(c); acted = true; break; }
-      if (!c.taxRelief && un.net > 0 && (cur >= 4 || urgent)) { c.taxRelief = true; acted = true; break; }
+      const t = c.subsidy || 0;
+      if (t < SUBSIDIES.length - 1 && un.net > 0 && (cur >= 4 || urgent)) {
+        const extra = SUBSIDIES[t + 1].cost - SUBSIDIES[t].cost;
+        if (g.income(pid) - extra >= 0 || pl.gold > extra * 12) { g.setSubsidy(c, t + 1); acted = true; break; }
+      }
     }
     if (acted) continue;
 
@@ -2856,7 +2964,7 @@ class Renderer {
         if (!city || owner < 0) return { fill: NEUTRAL };
         if (owner !== this.viewer && !this.revealAll) return { fill: shade(g.players[owner].color, 0.4) };
         const MOOD = { content: '#4caf50', calming: '#c8c840', restless: '#f09030', rioting: '#e04030', insurrection: '#901818' };
-        return { fill: MOOD[g.moodState(city)], hatch: city.taxRelief ? 'rgba(80,160,255,0.8)' : null, thin: true };
+        return { fill: MOOD[g.moodState(city)], hatch: city.subsidy ? ['', 'rgba(80,160,255,0.6)', 'rgba(80,160,255,0.85)', 'rgba(150,200,255,1)'][city.subsidy] : null, thin: city.subsidy < 3 };
       }
     }
     return { fill: NEUTRAL };
@@ -3053,7 +3161,7 @@ class Renderer {
       // unrest marker
       if (c.owner === this.viewer || this.revealAll) {
         const un = g.unrest(c).net;
-        if (un > 0 || (c.unrest || 0) >= 6 || c.taxRelief) {
+        if (un > 0 || (c.unrest || 0) >= 6 || c.subsidy) {
           const mx = x + tw / 2 + 7, my = ly - fs * 0.25;
           ctx.fillStyle = (c.unrest || 0) >= 6 ? '#ff4030' : un > 0 ? '#ffa030' : '#70b0e0';
           ctx.beginPath(); ctx.arc(mx, my, 7, 0, Math.PI * 2); ctx.fill();
@@ -3247,6 +3355,8 @@ function onEvent(type, d) {
     if (d.owner === viewer) R.addAnim({ type: 'text', idx: d.idx, text: 'Level ' + d.level + '!', color: '#9f9', dur: 1500 });
   } else if (type === 'win') {
     setTimeout(showWin, 400);
+  } else if (type === 'razeChoice') {
+    if (game.players[d.pid].human && d.pid === R.viewer) setTimeout(() => showRazeChoice(d.city), 250);
   } else if (type === 'revolt') {
     if (d.old === viewer) toast(`${d.city.name} has revolted and joined the ${game.players[d.city.owner].name}!`);
   } else if (type === 'rebellion') {
@@ -3456,7 +3566,7 @@ const LEGENDS = {
   political: () => 'Tribe colours. Grey: unclaimed land.',
   culture: () => '<b>Solid</b>: a tribe\'s own people. <b>Thick stripes</b>: a people (base colour) ruled by another tribe (stripe colour). <b>Thin dark lines</b>: own people on foreign or alien land.',
   specialty: () => Object.values(SPECIALTY).map(s => `<span class="sw" style="background:${s.color}"></span>${s.name}`).join('') + '<br><span class="dim">Unclaimed land is shown dimmed in the type a city founded there would get.</span>',
-  unrest: () => [['#4caf50', 'Content'], ['#c8c840', 'Calming'], ['#f09030', 'Restless'], ['#e04030', 'Rioting'], ['#901818', 'Insurrection']].map(([c, n]) => `<span class="sw" style="background:${c}"></span>${n}`).join('') + '<br><span class="dim">Blue lines: tax relief. Only your own cities are shown.</span>',
+  unrest: () => [['#4caf50', 'Content'], ['#c8c840', 'Calming'], ['#f09030', 'Restless'], ['#e04030', 'Rioting'], ['#901818', 'Insurrection']].map(([c, n]) => `<span class="sw" style="background:${c}"></span>${n}`).join('') + '<br><span class="dim">Blue lines: subsidies (denser = higher tier). Only your own cities are shown.</span>',
 };
 function setMapMode(m) {
   R.mapMode = m;
@@ -3582,7 +3692,8 @@ function updateTopbar() {
   $('tribeHome').style.color = '#111';
   $('gold').textContent = pl.gold;
   const up = game.upkeep(pl.id);
-  $('income').textContent = `(+${game.income(pl.id)}${up ? `, upkeep ${up}` : ''})`;
+  const sub = game.subsidyCost(pl.id), inc = game.income(pl.id);
+  $('income').textContent = `(${inc >= 0 ? '+' : ''}${inc}${up ? `, upkeep ${up}` : ''}${sub ? `, subsidies ${sub}` : ''})`;
   $('turn').textContent = game.turn;
   $('turnLimit').textContent = game.settings.turnLimit ? ` / ${game.settings.turnLimit}` : '';
   $('score').textContent = game.score(pl.id);
@@ -3719,18 +3830,23 @@ function moodBlock(c, canAct) {
   const state = STATES[game.moodState(c)];
   let h = `<h4>Mood</h4><div class="row"><span><span class="aff" style="background:${state[1]}">${state[0]}</span></span><span>unrest ${cur}/${REVOLT_AT} ${un.net > 0 ? `<b style="color:#ff8060">+${un.net}/turn</b>` : un.net < 0 || cur ? `<span class="dim">−${Math.max(1, -un.net)}/turn</span>` : ''}</span></div>`;
   h += `<div style="height:6px;background:#2a3646;border-radius:3px;margin:4px 0"><div style="height:6px;width:${Math.min(100, cur / REVOLT_AT * 100)}%;background:${state[1]};border-radius:3px"></div></div>`;
-  const fmt = (arr, sign) => arr.map(([n, v]) => `${esc(n)} ${sign}${v}`).join(', ');
+  const fmt = (arr, sign) => arr.map(([n, v]) => `${esc(n)} ${v < 0 ? (sign === '+' ? '−' : '+') : sign}${Math.abs(v)}`).join(', ');
   if (un.pressure.length) h += `<div class="desc">Pressure: ${fmt(un.pressure, '+')}</div>`;
   if (un.calm.length) h += `<div class="desc">Compliance: ${fmt(un.calm, '−')}</div>`;
   if (state[2]) h += `<div class="desc"><b>${state[0]}:</b> ${state[2]}</div>`;
   if (un.net > 0) h += `<div class="desc">Restless: withholds ${un.net} gold per turn. Riots at ${RIOT_AT}, insurrection at ${INSURRECTION_AT}, revolt at ${REVOLT_AT}${c.capital ? ' (capitals never revolt)' : ''}.</div>`;
-  if (canAct && (un.net > 0 || cur > 0 || c.taxRelief)) {
+  if (canAct && (un.net > 0 || cur > 0 || c.subsidy)) {
     const chk = game.canPlacate(c);
     const risk = Math.round(game.festivalRisk(c) * 100);
     h += `<div class="opts" style="margin-top:6px"><button data-act="placate" ${chk.ok ? '' : 'disabled'} title="${esc(chk.why || '')}">Hold festival ◉${game.placateCost(c)}<small>Resets unrest, −2 for 5 turns. <b style="color:${risk >= 30 ? '#ff8060' : '#e0d060'}">${risk}% riot risk</b></small></button>`;
-    h += `<button data-act="relief">${c.taxRelief ? 'End tax relief' : 'Grant tax relief'}<small>${c.taxRelief ? 'City pays no gold while active' : 'City pays no gold, −2 pressure'}</small></button></div>`;
+    h += `</div><h4>Subsidy</h4><div class="opts">`;
+    SUBSIDIES.forEach((S, k) => {
+      const cur = (c.subsidy || 0) === k;
+      h += `<button data-act="subsidy" data-k="${k}" style="${cur ? 'border-color:#f0c060;background:#3a3420' : ''}">${S.name}${cur ? ' ✓' : ''}<small>${k ? `−${S.calm} pressure` : 'No calm bought'}${S.cost ? `, ${S.cost} gold/turn` : ''}${k ? ', no taxes' : ''}</small></button>`;
+    });
     if (c.festivals) h += `<div class="desc">${c.festivals} recent festival${c.festivals > 1 ? 's' : ''} without lasting peace: each makes the next likelier to backfire (+3 unrest and +2 pressure for 4 turns). Trust returns after 6 content turns, and each compliance building restores 2 festivals' worth.</div>`;
-  } else if (c.taxRelief) h += `<div class="desc">Tax relief in effect.</div>`;
+    h += `</div>`;
+  } else if (c.subsidy) h += `<div class="desc">${SUBSIDIES[c.subsidy].name} in effect.</div>`;
   return h;
 }
 
@@ -3792,9 +3908,8 @@ function panelAction(d) {
     if (res.ok) toast(res.backfired ? 'The festival turned into a riot!' : 'Festival held: unrest quelled');
   } else if (d.act === 'repair') {
     res = game.repair(R.viewer, sel.idx);
-  } else if (d.act === 'relief') {
-    const c = game.cityById(sel.id);
-    res = game.setTaxRelief(c, !c.taxRelief);
+  } else if (d.act === 'subsidy') {
+    res = game.setSubsidy(game.cityById(sel.id), +d.k);
   } else if (d.act === 'wonder') {
     res = game.buildWonder(game.cityById(sel.id), d.k);
   } else if (d.act === 'improve') {
@@ -3993,6 +4108,20 @@ function showHistomap(fromWin) {
   $('btnHistoBack').onclick = () => (fromWin ? showWin() : showTribes());
 }
 
+function showRazeChoice(c) {
+  if (!game.cities.includes(c)) return;
+  const adv = game.razeAdvice(c, c.owner);
+  const people = c.culture != null && game.players[c.culture] ? game.players[c.culture] : null;
+  let h = `<h2>${esc(c.name)} has fallen to you</h2>`;
+  h += `<p>Level ${c.level} ${SPECIALTY[c.specialty].name} city${people ? `, home to the <b style="color:${people.color}">${esc(people.name)}</b> people` : ''}. ${c.buildings.length ? 'Surviving buildings: ' + c.buildings.map(b => BUILDINGS[b].name).join(', ') + '.' : 'Nothing of note survived the sack.'}</p>`;
+  h += `<p class="dim">Advisors: ${adv.reasons.map(esc).join(' · ')}.</p>`;
+  h += `<p><b>${adv.raze ? 'Your advisors favour razing it.' : 'Your advisors favour keeping it.'}</b> Razing frees the land and spares you its unrest, but its people${people && people.alive ? ` and the ${esc(people.name)}` : ''} will not forget.</p>`;
+  h += `<p><button id="btnKeep" class="${adv.raze ? '' : 'primary'}">Keep the city</button> <button id="btnRaze" class="${adv.raze ? 'primary' : ''}" style="${adv.raze ? '' : 'background:#5a2020'}">Raze it</button></p>`;
+  openModal(h);
+  $('btnKeep').onclick = () => { game.keepCity(c); closeModal(); };
+  $('btnRaze').onclick = () => { const r = game.razeByChoice(c); if (!r.ok) toast(r.why); closeModal(); deselect(); refreshAll(); };
+}
+
 function showLeave() {
   if (!game) { $('menu').classList.remove('hidden'); return; }
   openModal(`<h2>Leave this game?</h2><p class="dim">The game is saved. You can continue it from the main menu.</p>${histomapHTML()}<p><button class="primary" id="btnLeave">Main menu</button> <button id="btnStay">Back to game</button></p>`);
@@ -4024,7 +4153,8 @@ function showHelp() {
   <li>recent conquest;</li>
   <li>crowding (level 4+);</li>
   <li>riots in nearby cities of yours.</li></ul>
-  <p><b>Compliance</b> pushes back: capital, homeland, a garrison unit, Courthouse (−1), Amphitheater (−2), Shrine (−2), tax relief (−2, but the city pays no gold), or a festival (−2 for 5 turns).</p>
+  <p>Generic pressures (sprawl, crowding, conquest, enemies, nearby riots) are scaled by <b>cultural sensitivity</b>: ×0.6 in homeland cities, ×0.85 in kin cities, ×1.2 in foreign ones, ×1.5 in alien ones, and +0.25 more when the city's people are another tribe's.</p>
+  <p><b>Compliance</b> pushes back: capital, homeland, a garrison unit, Courthouse (−1), Amphitheater (−2), Shrine (−2), a festival (−2 for 5 turns), or a subsidy. Every subsidy tier stops the city's taxes: Tax relief (−2), Grain dole (−4, 2 gold/turn), Patronage (−6, 5 gold/turn). If the treasury runs dry, costly subsidies lapse.</p>
   <p>Festivals are a gamble. Each one held without fixing the cause raises the chance the next turns into a riot. Contentment and compliance buildings restore trust.</p>
   <p>When pressure wins, unrest builds:</p>
   <ul><li><b>Restless</b>: the city withholds gold.</li>
@@ -4054,6 +4184,7 @@ function showHelp() {
   <h3>War damage</h3>
   <p>Enemy units standing on a city's tiles cut it off: each occupied or damaged worked tile costs that city 1 gold, and enemies on its land raise unrest. A unit that spends a turn on an enemy improvement may <b>damage</b> it, then <b>destroy</b> it. Destroying it removes the pop it gave, so cities can shrink. Repair damaged improvements from the tile panel. Attacks on a city's garrison may wreck buildings, and a captured city loses each building with 35% chance. A city stripped of all its buildings in the sack may be <b>razed</b>, leaving ruins.</p>
   <h3>Building limits</h3><p>Each city can complete one building or wonder per turn, and none while a hostile unit stands next to it. When a city is captured, it may be razed:</p>
+  <p>If the city survives the sack, you choose whether to keep it or raze it. Advisors weigh its expected unrest and its worth. Razing a city angers its people and its former rulers. The AI razes cities likely to be restless and unproductive, but never its own people's.</p>
   <ul><li>holding a wonder: 5%;</li>
   <li>buildings that survive the sack: never;</li>
   <li>stripped of every building it had: 50% at level 1, down to 10% for large cities;</li>

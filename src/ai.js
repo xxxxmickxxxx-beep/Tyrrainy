@@ -1,6 +1,7 @@
 // Computer opponents. Greedy heuristics, fast enough for 8 tribes on huge maps.
 import { UNITS, TECHS, IMPROVEMENTS, BUILDINGS, WONDERS, KIN_DIST, TERRAIN, SPECIALTY } from './data.js';
 import { REVOLT_AT } from './game.js';
+import { SUBSIDIES } from './data.js';
 
 const HOME_TECH_BIAS = {
   plains: { agriculture: 4, husbandry: 2, riding: 3 },
@@ -346,7 +347,9 @@ function spend(g, pid, prof) {
     //    tax relief as the reliable fallback; lift relief once the city would be fine without it
     for (const c of cities) {
       const un = g.unrest(c);
-      if (c.taxRelief && un.net + 2 <= -1 && (c.unrest || 0) === 0) c.taxRelief = false;
+      // step subsidies down once the city would stay calm without the current tier
+      const t = c.subsidy || 0;
+      if (t && (c.unrest || 0) === 0 && un.net + SUBSIDIES[t].calm - SUBSIDIES[t - 1].calm <= -1) c.subsidy = t - 1;
     }
     for (const c of cities) {
       const un = g.unrest(c);
@@ -358,7 +361,11 @@ function spend(g, pid, prof) {
       const pc = g.canPlacate(c);
       const urgent = cur + Math.max(0, un.net) >= REVOLT_AT - 1;
       if (pc.ok && cur + Math.max(0, un.net) >= REVOLT_AT - 3 && (pc.risk < 0.35 || urgent && pc.risk < 0.5)) { g.placate(c); acted = true; break; }
-      if (!c.taxRelief && un.net > 0 && (cur >= 4 || urgent)) { c.taxRelief = true; acted = true; break; }
+      const t = c.subsidy || 0;
+      if (t < SUBSIDIES.length - 1 && un.net > 0 && (cur >= 4 || urgent)) {
+        const extra = SUBSIDIES[t + 1].cost - SUBSIDIES[t].cost;
+        if (g.income(pid) - extra >= 0 || pl.gold > extra * 12) { g.setSubsidy(c, t + 1); acted = true; break; }
+      }
     }
     if (acted) continue;
 
