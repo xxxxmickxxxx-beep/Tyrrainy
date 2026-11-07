@@ -26,6 +26,7 @@ export class Renderer {
     this.dirty = true;
     this.revealAll = false;
     this.mapMode = 'terrain'; // terrain | political | culture | specialty | unrest
+    this.showLabels = true;
     this.patterns = new Map();
     this.dpr = window.devicePixelRatio || 1;
     this.resize();
@@ -261,6 +262,7 @@ export class Renderer {
       ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.setLineDash([3, 3]);
       ctx.beginPath(); ctx.arc(x, y, S * 0.3, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
     }
+    if (this.showLabels && !terrainMode) this.drawRegionLabels(explored);
     // floating anims
     this.anims = this.anims.filter(a => now - a.t0 < a.dur);
     for (const a of this.anims) {
@@ -300,10 +302,12 @@ export class Renderer {
         return { fill: owner >= 0 ? g.players[owner].color : NEUTRAL };
       case 'culture': {
         if (owner < 0 || !city) return { fill: NEUTRAL };
-        const culture = city.culture ?? owner;
-        if (culture !== owner && g.players[culture]) return { fill: g.players[culture].color, hatch: g.players[owner].color };
+        const cul = g.cultures?.[city.culture];
+        if (!cul) return { fill: g.players[owner].color };
+        // a people under a foreign regime: their colour, striped with the ruler's
+        if (!g.related(cul.id, g.players[owner].culture)) return { fill: cul.color, hatch: g.players[owner].color };
         const foreign = g.affinity(city) >= 2;
-        return { fill: g.players[owner].color, hatch: foreign ? 'rgba(0,0,0,0.45)' : null, thin: true };
+        return { fill: cul.color, hatch: foreign ? 'rgba(0,0,0,0.45)' : null, thin: true };
       }
       case 'specialty': {
         if (city && owner >= 0) return { fill: SPECIALTY[city.specialty].color };
@@ -317,6 +321,72 @@ export class Renderer {
       }
     }
     return { fill: NEUTRAL };
+  }
+
+  // Region key for labels in the current map mode.
+  regionKey(i) {
+    const g = this.game, tl = g.tiles[i];
+    if (TERRAIN[tl.t].water) return null;
+    const city = tl.ownerCity != null ? g.cityById(tl.ownerCity) : null;
+    if (!city || tl.owner < 0) return null;
+    switch (this.mapMode) {
+      case 'political': return 'p' + tl.owner;
+      case 'culture': return 'c' + city.culture + ':' + (g.related(city.culture, g.players[tl.owner].culture) ? '' : tl.owner);
+      case 'specialty': return 's' + city.specialty;
+      case 'unrest': return (tl.owner === this.viewer || this.revealAll) ? 'u' + g.moodState(city) : null;
+    }
+    return null;
+  }
+  regionText(key, i) {
+    const g = this.game, tl = g.tiles[i];
+    const city = g.cityById(tl.ownerCity);
+    switch (key[0]) {
+      case 'p': return g.players[tl.owner].name;
+      case 'c': return g.peopleLabel(city);
+      case 's': return SPECIALTY[city.specialty].name;
+      case 'u': return { content: 'Content', calming: 'Calming', restless: 'Restless', rioting: 'Rioting', insurrection: 'Insurrection' }[g.moodState(city)];
+    }
+    return '';
+  }
+  // Connected regions sharing a key, labelled at their centroid. Cached per game state.
+  drawRegionLabels(explored) {
+    const g = this.game, ctx = this.ctx, S = this.size;
+    const sig = [this.mapMode, g.turn, g.current, g.cities.length, g.cultures?.length, this.viewer, this.revealAll].join('|');
+    if (this._labelSig !== sig) {
+      const N = g.tiles.length, seen = new Uint8Array(N), regions = [];
+      for (let i = 0; i < N; i++) {
+        if (seen[i] || (explored && !explored[i])) continue;
+        const key = this.regionKey(i);
+        if (!key) continue;
+        const tiles = [i]; seen[i] = 1;
+        for (let k = 0; k < tiles.length; k++) for (const n of g.neighbors(tiles[k])) {
+          if (seen[n] || (explored && !explored[n]) || this.regionKey(n) !== key) continue;
+          seen[n] = 1; tiles.push(n);
+        }
+        if (tiles.length < 4) continue;
+        let sx = 0, sy = 0;
+        for (const t of tiles) { const [c, r] = g.cr(t); sx += c + 0.5 * (r & 1); sy += r; }
+        sx /= tiles.length; sy /= tiles.length;
+        // anchor on the member tile nearest the centroid so concave regions stay labelled inside
+        let best = tiles[0], bd = Infinity;
+        for (const t of tiles) { const [c, r] = g.cr(t); const d = (c + 0.5 * (r & 1) - sx) ** 2 + (r - sy) ** 2; if (d < bd) { bd = d; best = t; } }
+        regions.push({ anchor: best, size: tiles.length, text: this.regionText(key, best) });
+      }
+      this._labels = regions;
+      this._labelSig = sig;
+    }
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    for (const r of this._labels) {
+      const [x, y] = this.tileCenter(r.anchor);
+      if (x < -200 || y < -50 || x > this.vw + 200 || y > this.vh + 50) continue;
+      const fs = Math.max(10, Math.min(30, S * (0.35 + Math.sqrt(r.size) * 0.09)));
+      ctx.font = `bold ${fs}px sans-serif`;
+      ctx.lineWidth = Math.max(3, fs * 0.22); ctx.strokeStyle = 'rgba(0,0,0,0.75)';
+      ctx.strokeText(r.text.toUpperCase(), x, y);
+      ctx.fillStyle = '#fff';
+      ctx.fillText(r.text.toUpperCase(), x, y);
+    }
+    ctx.textBaseline = 'alphabetic';
   }
 
   // Diagonal hatch pattern anchored to the world so it doesn't slide when panning.

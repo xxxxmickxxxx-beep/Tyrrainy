@@ -131,11 +131,29 @@ If the city survives that roll, the **conqueror chooses** whether to keep it or 
 - **Construction limits:** a city can complete one building or wonder per turn, and none while a hostile unit is adjacent to it.
 - **Colours:** each tribe has a two-tone identity, a fill plus an accent used for borders, roofs and unit rims, taken from `TRIBE_PALETTE`. Newcomers (rebellions) get the pair farthest in CIELAB from all living tribes, and colours of fallen tribes become available again.
 
-### Culture & records
-- Cities remember their **culture**: the people who founded them, or the rebellion that freed them. A conquered city adopts its ruler's culture after 25 turns, or 15 with a Shrine.
-- **Map modes** (M): Terrain, Political, Culture (thick stripes show a people under foreign rule; thin lines show own people on foreign land), Specialty (unclaimed land shows what it would become), and Unrest.
-- **Tribes screen:** sortable, with Peak cities, Founded and Fell columns.
-- **Histomap:** each turn's power share is recorded and drawn as a classic Histomap, with rebellions placed beside their parent. It's reachable from the Tribes screen, the leave dialog and the victory screen.
+### Peoples (cultures) & records
+Peoples are separate from polities (`src/culture.js`), as in CK3, and names never exceed two parts.
+
+| Situation | Pattern | Example |
+|---|---|---|
+| founding people | capital + own word for "people" | Mardu + *jana* → **Mardujana** |
+| regional offshoot | major local city (level 4+) or land word, plus the parent's root | **Eskjana**, **Hilljana**; **Esk Hilljana** on a name clash |
+| subjects of a foreign realm (label) | core combining form + ruler's name | **Esko-Mardujana** |
+| independent after ≥15 turns of foreign rule | ruler's combining form + core name | **Mardu-Eskjana** (only the latest influence is kept) |
+
+- **Roots:** each founding people gets a distinct word for "people" from 16 languages (*folk, volk, laos, narod, gens, jana, tauta, halk, ulus, kansa, tuath, mardom, bangsa, qaum, hito, dene*). Offshoots inherit it, so families read as families.
+- **Divergence:** a tribe's own-culture city held 20+ turns and 8+ tiles from the capital has a 4% chance per turn to found a regional people. Neighbouring cities of the same region (within 3) join it. At most one new people per tribe per turn.
+- **Effects:** same-family peoples are kin. A subject people gets +0.25 unrest sensitivity, a regional offshoot +0.1. Integration (25 turns, 15 with a Shrine) converts only peoples outside the ruler's family.
+- **Revolts follow peoples:**
+  - a regional city rises as its regional people;
+  - a city of the ruler's own people founds a new offshoot named for the city;
+  - a subject people rises under its own name, marked by its rulers if they held it 15+ turns.
+
+  A people that rises again keeps its old identity, and rebellions merge only with related peoples.
+- **Colours:** founding peoples take palette pairs. Offshoots get a 15–40° hue shift of the parent's fill, kept as far as possible from every other living people, plus their own border colour. Tribes wear their people's colours.
+- **Map modes** (M): Terrain, Political, Culture (each people's colour; thick stripes show a people under foreign rule; thin lines show own people on foreign land), Specialty (unclaimed land shows what it would become), and Unrest. **Labels** (L, or the checkbox) name connected regions on every non-terrain mode.
+- **Tribes screen:** sortable, with Peak cities, Founded and Fell columns, plus a **Peoples** table (word for "people", origin, cities, rulers).
+- **Histomap:** each turn's power share, drawn as a classic Histomap with rebellions beside their parent. It's reachable from the Tribes screen, the leave dialog and the victory screen.
 
 ### Combat
 Attack and defense forces are scaled by HP and terrain or city defense, and the formula is deterministic. Defenders that survive and are in range retaliate.

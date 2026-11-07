@@ -88,3 +88,5 @@ table.tribes th.sortable:hover { color: #f0c060; }
 table.tribes th.sorted { color: #f0c060; }
 #histo { display: block; margin: 8px 0; }
 @media (max-width: 760px) { #legend { bottom: 60px; left: 8px; right: 8px; max-width: none; } }
+
+.tog { display: flex; align-items: center; gap: 4px; font-size: 13px; cursor: pointer; }

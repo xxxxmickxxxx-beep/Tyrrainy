@@ -6,6 +6,7 @@ import {
   BUILDINGS, WONDERS, TECHS, TEMPERAMENTS, TRIBE_PALETTE, SUBSIDIES, SENSITIVITY, FOREIGN_PEOPLE_SENSITIVITY, techCost, TERRAIN_TO_SPECIALTY, TRIBE_NAMES, CITY_NAMES, PLAYER_COLORS,
 } from './data.js';
 import { generateMap, pickStarts, MAP_SIZES } from './mapgen.js';
+import { ROOTS, LAND_BASE, joinName, combining, cleanBase, pickColors, offshootColors } from './culture.js';
 
 const INTEGRATION_TURNS = 10;
 export const REVOLT_AT = 12;
@@ -23,44 +24,6 @@ export function rollTemper(rng, key) {
 }
 
 const MAX_TRIBES = 20;
-// ---- colour identity
-function hexRgb(h) { const n = parseInt(h.slice(1), 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255]; }
-function toLab(h) {
-  const [r, g, b] = hexRgb(h).map(v => { v /= 255; return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; });
-  let x = (r * 0.4124 + g * 0.3576 + b * 0.1805) / 0.95047, y = r * 0.2126 + g * 0.7152 + b * 0.0722, z = (r * 0.0193 + g * 0.1192 + b * 0.9505) / 1.08883;
-  const f = (t) => t > 0.008856 ? Math.cbrt(t) : 7.787 * t + 16 / 116;
-  x = f(x); y = f(y); z = f(z);
-  return [116 * y - 16, 500 * (x - y), 200 * (y - z)];
-}
-export function colorDist(a, b) { const A = toLab(a), B = toLab(b); return Math.hypot(A[0] - B[0], A[1] - B[1], A[2] - B[2]); }
-function hslHex(h, s, l) {
-  const k = (n) => (n + h / 30) % 12, a = s * Math.min(l, 1 - l);
-  const f = (n) => Math.round(255 * (l - a * Math.max(-1, Math.min(k(n) - 3, 9 - k(n), 1)))).toString(16).padStart(2, '0');
-  return '#' + f(0) + f(8) + f(4);
-}
-// Pick the [fill, border] pair most distinct from every tribe still in play.
-export function pickTribeColors(players) {
-  const live = players.filter(p => p.alive !== false && p.color);
-  const score = ([f, c]) => live.length ? Math.min(...live.map(p => colorDist(f, p.color) + 0.4 * colorDist(c, p.color2 || p.color))) : 1e9;
-  const taken = new Set(live.map(p => p.color + p.color2));
-  let best = null, bestS = -1;
-  for (const pair of TRIBE_PALETTE) {
-    if (taken.has(pair[0] + pair[1])) continue;
-    const sc = score(pair);
-    if (sc > bestS) { bestS = sc; best = pair; }
-  }
-  if (best && bestS >= 25) return best;
-  // palette exhausted or too close: generate
-  const accents = ['#111111', '#f4f4f4', '#ffd23f', '#13294b', '#c0392b', '#2a9d3c'];
-  for (let hue = 0; hue < 360; hue += 12) for (const l of [0.32, 0.5, 0.68]) {
-    const f = hslHex(hue, 0.65, l);
-    const c = accents.reduce((a, b) => colorDist(b, f) > colorDist(a, f) ? b : a);
-    const sc = score([f, c]);
-    if (sc > bestS) { bestS = sc; best = [f, c]; }
-  }
-  return best;
-}
-
 export class Game {
   constructor() {
     this.listeners = [];
@@ -91,8 +54,7 @@ export class Game {
     for (let p = 0; p < starts.length; p++) {
       const idx = starts[p];
       const home = g.specialtyAt(idx);
-      let nm = TRIBE_NAMES[home].find(n => !usedNames.has(n)) || (TRIBE_NAMES[home][0] + ' ' + (p + 1));
-      usedNames.add(nm);
+      const nm = '';
       const human = p < (opts.humans ?? 1);
       g.players.push({
         id: p, name: nm, color: null, color2: null, home,
@@ -100,7 +62,6 @@ export class Game {
         kills: 0, losses: 0, cityNameIdx: 0,
       });
       if (!human) g.players[p].temper = rollTemper(g.rng);
-      [g.players[p].color, g.players[p].color2] = pickTribeColors(g.players);
       const city = g.foundCityAt(p, idx, true);
       city.pop = 1;
       // starting units
@@ -112,6 +73,15 @@ export class Game {
     for (const c of g.cities) {
       c.name = g.takeCityName();
       for (const t of g.within(c.idx, 3)) g.players[c.owner].explored[t] = 1;
+    }
+    // each founding people is named for its capital, with its own word for "people"
+    g.cultures = [];
+    const roots = g.rng.shuffle(ROOTS.map(r => r[0]));
+    for (const pl of g.players) {
+      const cap = g.cities.find(c => c.owner === pl.id);
+      const cul = g.newCulture({ base: cap.name, root: roots[pl.id % roots.length], home: pl.home });
+      pl.culture = cul.id; pl.name = cul.name; pl.color = cul.color; pl.color2 = cul.color2;
+      cap.culture = cul.id;
     }
     g.coalition = -1;
     g.history = [];
@@ -209,7 +179,7 @@ export class Game {
     const city = {
       id: this.nextId++, name: capital ? 'Capital' : this.takeCityName(), owner: pid, idx: i,
       level: 1, pop: 0, specialty: this.specialtyAt(i), founded: this.turn, held: 0, adapt: 0,
-      buildings: [], capital, trainedTurn: -1, hp: 0, culture: pid,
+      buildings: [], capital, trainedTurn: -1, hp: 0, culture: pl.culture,
     };
     this.cities.push(city);
     const tl = this.tiles[i];
@@ -434,8 +404,10 @@ export class Game {
     if (big) generic.push(['Crowded city', big]);
     if (this.cities.some(o => o !== city && o.owner === pid && (o.unrest || 0) >= RIOT_AT && this.dist(o.idx, city.idx) <= 3)) generic.push(['Riots nearby', 1]);
     pressure.push(...generic);
-    const foreignPeople = city.culture != null && city.culture !== pid && !!this.players[city.culture];
-    const sens = SENSITIVITY[aff] + (foreignPeople ? FOREIGN_PEOPLE_SENSITIVITY : 0);
+    const R = pl.culture;
+    const foreignPeople = city.culture != null && R != null && !this.related(city.culture, R);
+    const regional = !foreignPeople && city.culture != null && city.culture !== R;
+    const sens = SENSITIVITY[aff] + (foreignPeople ? FOREIGN_PEOPLE_SENSITIVITY : regional ? 0.1 : 0);
     const raw = generic.reduce((a, x) => a + x[1], 0);
     const adj = Math.round(raw * sens) - raw;
     if (raw && adj) pressure.push([`Cultural sensitivity ×${sens.toFixed(2).replace(/0$/, '')}`, adj]);
@@ -502,12 +474,77 @@ export class Game {
     return { ok: true, backfired: false };
   }
   uniqueTribeName(base) {
-    const taken = new Set(this.players.map(p => p.name));
+    const taken = new Set(this.players.filter(p => p.alive).map(p => p.name)); // a people may rise again under its old name
     if (!taken.has(base)) return base;
     const R = ['II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X'];
     for (const r of R) if (!taken.has(base + ' ' + r)) return base + ' ' + r;
     return base + ' ' + this.players.length;
   }
+  // ------------------------------------------------------------ peoples
+  liveCultures() {
+    const used = new Set();
+    for (const p of this.players) if (p.alive && p.culture != null) used.add(p.culture);
+    for (const c of this.cities) if (c.culture != null) used.add(c.culture);
+    return [...used].map(id => this.cultures[id]).filter(Boolean);
+  }
+  newCulture({ base, root, parent = null, influence = null, core = null, home = null, city = null, reuse = false }) {
+    this.cultures = this.cultures || [];
+    // a people that rises again is the same people, not a new one
+    if (reuse) {
+      const same = this.cultures.find(c => cleanBase(c.base) === cleanBase(base) && c.root === root && (c.influence ?? null) === influence && (influence == null || c.core === core) && !this.polityOf(c.id));
+      if (same) return same;
+    }
+    const id = this.cultures.length;
+    let name = influence != null
+      ? `${combining(this.cultures[influence].base)}-${this.cultures[core].name}`
+      : joinName(base, root);
+    const taken = new Set(this.liveCultures().map(c => c.name));
+    if (taken.has(name) && city && !name.startsWith(cleanBase(city.name))) name = `${cleanBase(city.name)} ${name}`;
+    if (taken.has(name)) for (const r of ['II', 'III', 'IV', 'V', 'VI', 'VII']) if (!taken.has(name + ' ' + r)) { name += ' ' + r; break; }
+    const cul = { id, base, root, parent, influence, core: core ?? id, home, name, born: this.turn };
+    const live = this.liveCultures();
+    [cul.color, cul.color2] = parent != null ? offshootColors(this.cultures[parent], live) : pickColors(live);
+    this.cultures.push(cul);
+    return cul;
+  }
+  cultureFamily(id) {
+    let c = this.cultures?.[id];
+    let guard = 0;
+    while (c && c.parent != null && guard++ < 50) c = this.cultures[c.parent];
+    return c ? c.id : id;
+  }
+  // Same family = kin peoples: founding people, its regional offshoots and influenced variants.
+  related(a, b) { return a != null && b != null && this.cultureFamily(a) === this.cultureFamily(b); }
+  polityOf(cid) {
+    if (cid == null) return null;
+    return this.players.find(p => p.alive && p.culture === cid) || null;
+  }
+  // How a city's people are called right now: "Eskjana", or "Esko-Mardujana" under foreign rule.
+  peopleLabel(city) {
+    const cul = this.cultures?.[city.culture];
+    const R = this.cultures?.[this.players[city.owner].culture];
+    if (!cul) return '';
+    if (!R || this.related(cul.id, R.id)) return cul.name;
+    return `${combining(this.cultures[cul.core].base)}-${R.name}`;
+  }
+  // Distant, long-held cities of a tribe's own people grow their own regional identity.
+  maybeDiverge(pl) {
+    const cap = this.cities.find(c => c.owner === pl.id && c.capital);
+    if (!cap || (this.cultures?.length || 0) > 80) return;
+    for (const c of this.cities) {
+      if (c.owner !== pl.id || c.culture !== pl.culture || c.capital || (c.held || 0) < 20) continue;
+      if (this.dist(c.idx, cap.idx) < 8 || this.rng() > 0.04) continue;
+      const parent = this.cultures[pl.culture];
+      const base = c.level >= 4 ? c.name : LAND_BASE[c.specialty];
+      const cul = this.newCulture({ base, root: parent.root, parent: parent.id, home: c.specialty, city: c });
+      const region = this.cities.filter(o => o.owner === pl.id && o.culture === pl.culture && !o.capital && this.dist(o.idx, c.idx) <= 3 && this.dist(o.idx, cap.idx) >= 6);
+      for (const o of region) o.culture = cul.id;
+      this.addLog(`The people around ${c.name} have come to call themselves the ${cul.name}.`, pl.id, c.idx);
+      this.emit('diverge', { cul, city: c });
+      return; // at most one new identity per tribe per turn
+    }
+  }
+
   // A rebellion takes the homeland of the city it rises in. Kindred rebellions close by merge.
   rebellionFor(city) {
     const owner = city.owner;
@@ -516,6 +553,7 @@ export class Game {
     for (const p of this.players) {
       if (!p.rebel || !p.alive || p.id === owner) continue;
       if (this.kinDist(p.id, city.specialty) > 1) continue;
+      if (!this.related(p.culture, city.culture)) continue;
       if (this.cities.some(c => c.owner === p.id && this.dist(c.idx, city.idx) <= 5)) { city.rebellion = p.id; return p.id; }
     }
     const nearest = () => this.players.filter(p => p.rebel && p.alive && p.id !== owner)
@@ -524,17 +562,28 @@ export class Game {
     const old = this.players[owner];
     const id = this.players.length;
     const human = this.settings.rebelControl === 'human' && this.players.some(p => p.human);
+    // who are the rebels? their own people, possibly marked by their former rulers
+    const R = old.culture;
+    let cul, cid = city.culture;
+    if (cid == null || this.related(cid, R)) {
+      if (cid != null && cid !== R && !this.polityOf(cid)) cul = this.cultures[cid]; // an existing regional identity
+      else cul = this.newCulture({ base: city.name, root: this.cultures[R]?.root || '', parent: cid ?? R, home: city.specialty, city, reuse: true });
+    } else {
+      const X = this.cultures[this.cultures[cid].core];
+      if ((city.held || 0) >= 15 && R != null) cul = this.newCulture({ base: X.base, root: X.root, parent: X.id, influence: R, core: X.id, home: city.specialty, city, reuse: true });
+      else if (!this.polityOf(X.id)) cul = X;
+      else cul = this.newCulture({ base: city.name, root: X.root, parent: X.id, home: city.specialty, city, reuse: true });
+    }
     const pl = {
-      id, name: this.uniqueTribeName('Free ' + city.name), color: null, color2: null, home: city.specialty, human, rebel: true, rebelFrom: owner,
+      id, name: this.uniqueTribeName(cul.name), color: cul.color, color2: cul.color2, culture: cul.id, home: city.specialty, human, rebel: true, rebelFrom: owner,
       gold: 4, techs: [...old.techs], explored: new Array(this.W * this.H).fill(0), alive: true, kills: 0, losses: 0, born: this.turn,
     };
     if (!human) { pl.temper = rollTemper(this.rng); pl.temper.grudges[owner] = 40; }
     pl.founded = this.turn; pl.peak = 0;
-    [pl.color, pl.color2] = pickTribeColors(this.players);
     this.players.push(pl);
     for (const t of this.within(city.idx, 4)) pl.explored[t] = 1;
     city.rebellion = id;
-    this.addLog(`A rebellion rises in ${city.name}: the ${pl.name}, a ${SPECIALTY[pl.home].name} people, defy ${old.name}!`, owner, city.idx);
+    this.addLog(`A rebellion rises in ${city.name}: the ${pl.name} defy ${old.name}!`, owner, city.idx);
     this.emit('rebellion', { pid: id, city, from: owner });
     return id;
   }
@@ -545,7 +594,7 @@ export class Game {
     const gar = this.unitAt(city.idx);
     if (gar && gar.owner === old) { gar.owner = rid; gar.goto = null; } // the garrison defects
     city.owner = rid;
-    city.culture = rid; // the rebels are this city's own people
+    city.culture = this.players[rid].culture; // the rebels are this city's own people
     city.unrest = 0;
     city.subsidy = 0;
     city.capital = false;
@@ -849,9 +898,10 @@ export class Game {
     let score = -value * (value < 0 ? rich : 1) - (1 + c.level * 0.6);
     if (aff === 3) { score += 1; reasons.push('Alien land'); }
     if (c.wonders?.length) { score -= 6; reasons.push('Holds a wonder'); }
-    if (c.culture === pid) { score -= 20; reasons.push('Our own people'); }
+    if (this.related(c.culture, this.players[pid].culture)) { score -= 20; reasons.push('Our own people'); }
     const T = this.players[pid].temper;
-    if (T && c.culture != null && T.grudges[c.culture]) { const gb = Math.min(1.5, T.grudges[c.culture] / 30 * (T.vengeance ?? 1)); score += gb; if (gb > 0.5) reasons.push('Old grudge'); }
+    const pol = this.polityOf(c.culture) || this.polityOf(this.cultures?.[c.culture]?.core);
+    if (T && pol && T.grudges[pol.id]) { const gb = Math.min(1.5, T.grudges[pol.id] / 30 * (T.vengeance ?? 1)); score += gb; if (gb > 0.5) reasons.push('Old grudge'); }
     return { raze: score > 2, score, reasons };
   }
   // Deliberate razing by a human conqueror, allowed on the turn of capture.
@@ -865,7 +915,8 @@ export class Game {
   razeCity(c, by, deliberate = false) {
     if (deliberate) {
       // atrocities are remembered by the city's people and its former rulers
-      if (c.culture != null && c.culture !== by) this.addGrudge(c.culture, by, 40);
+      const pol = this.polityOf(c.culture) || this.polityOf(this.cultures?.[c.culture]?.core);
+      if (pol && pol.id !== by) this.addGrudge(pol.id, by, 40);
       if (c.capturedFrom != null && c.capturedFrom !== c.culture) this.addGrudge(c.capturedFrom, by, 20);
     }
     const old = c.owner;
@@ -1422,9 +1473,9 @@ export class Game {
         c.adapt++;
         this.addLog(`${c.name} is integrating into ${pl.name} culture (${AFFINITY[this.affinity(c)].name})`, pl.id, c.idx);
       }
-      if (c.culture != null && c.culture !== pl.id && c.held >= (c.buildings.includes('temple') ? 15 : 25)) {
-        const was = this.players[c.culture]?.name;
-        c.culture = pl.id;
+      if (c.culture != null && !this.related(c.culture, pl.culture) && c.held >= (c.buildings.includes('temple') ? 15 : 25)) {
+        const was = this.cultures[c.culture]?.name;
+        c.culture = pl.culture;
         this.addLog(`The people of ${c.name} now count themselves ${pl.name}${was ? ' rather than ' + was : ''}`, pl.id, c.idx);
       }
     }
@@ -1460,6 +1511,7 @@ export class Game {
         return;
       }
     }
+    this.maybeDiverge(pl);
     // occupying units ravage the improvements under them
     for (const u of this.units.slice()) if (u.owner === pl.id) this.pillage(u);
     // units: heal + reset
@@ -1524,7 +1576,7 @@ export class Game {
     return JSON.stringify({
       v: 1, W: this.W, H: this.H, seed: this.seed, settings: this.settings, tiles: this.tiles,
       elev: this.elev, turn: this.turn, current: this.current, nextId: this.nextId,
-      cities: this.cities, units: this.units, log: this.log, winner: this.winner, coalition: this.coalition, history: this.history,
+      cities: this.cities, units: this.units, log: this.log, winner: this.winner, coalition: this.coalition, history: this.history, cultures: this.cultures,
       players: this.players.map(p => ({ ...p, _vis: undefined })), rng: this.rng.state(),
       cityNamePool: this.cityNamePool,
     });
@@ -1536,7 +1588,11 @@ export class Game {
     g.rng = makeRng(1); g.rng.setState(o.rng);
     if (g.coalition == null) g.coalition = -1;
     g.history = g.history || [];
-    for (const p of g.players) if (!p.color2) { const keep = p.alive; p.alive = false; [p.color, p.color2] = pickTribeColors(g.players.filter(q => q.color2)); p.alive = keep; }
+    for (const p of g.players) if (!p.color2) [p.color, p.color2] = pickColors(g.players.filter(q => q.color2 && q.alive));
+    if (!g.cultures) { // older saves: one people per tribe, ids shared with tribes
+      g.cultures = g.players.map(p => ({ id: p.id, base: p.name, root: '', parent: null, influence: null, core: p.id, home: p.home, name: p.name, color: p.color, color2: p.color2, born: p.founded ?? 1 }));
+      for (const p of g.players) p.culture = p.id;
+    }
     for (const c of g.cities) { if (c.taxRelief) { c.subsidy = 1; delete c.taxRelief; } if (c.culture == null) c.culture = c.owner; if (c.everBuilt == null) c.everBuilt = !!(c.buildings.length || c.wonders?.length); }
     for (const p of g.players) { if (p.founded == null) p.founded = p.born ?? 1; if (p.peak == null) p.peak = g.cities.filter(c => c.owner === p.id).length; }
     for (const p of g.players) {

@@ -3,6 +3,7 @@ import { Game, REVOLT_AT, RIOT_AT, INSURRECTION_AT } from './game.js';
 import { runAI, field, bestStep } from './ai.js';
 import { Renderer } from './render.js';
 import { MAP_SIZES, MAP_TYPES } from './mapgen.js';
+import { ROOTS } from './culture.js';
 import {
   TERRAIN, SPECIALTY, SPECIALTY_KEYS, KIN_DIST, AFFINITY, UNITS, IMPROVEMENTS, BUILDINGS, WONDERS, TECHS, RESOURCES, TEMPERAMENTS, SUBSIDIES, SENSITIVITY,
 } from './data.js';
@@ -123,6 +124,18 @@ function addLog(msg, pid, idx) {
   log.style.visibility = 'visible';
   while (log.children.length > 80) log.firstChild.remove();
   log.scrollTop = log.scrollHeight;
+}
+
+function cultureChip(cul) { return `<span class="chip" style="background:${cul.color};border-color:${cul.color2 || '#111'}"></span>`; }
+function peopleLine(c) {
+  const cul = game.cultures?.[c.culture];
+  if (!cul) return '';
+  const R = game.players[c.owner].culture;
+  const label = game.peopleLabel(c);
+  let note = '';
+  if (!game.related(cul.id, R)) note = ` — a subject people, ${game.players[c.owner].name} rule. Unrest bites harder until they integrate.`;
+  else if (cul.id !== R) note = ` — a regional offshoot of ${esc(game.cultures[game.cultureFamily(cul.id)].name)}. Slightly more sensitive to unrest.`;
+  return `<div class="row"><span>People</span><span>${cultureChip(cul)}<b>${esc(label)}</b></span></div>${note ? `<div class="desc">${note}</div>` : ''}`;
 }
 
 function chip(p) { return `<span class="chip" style="background:${p.color};border-color:${p.color2 || '#111'}"></span>`; }
@@ -269,6 +282,7 @@ function initInput() {
     else if (e.key === ' ') { e.preventDefault(); nextUnit(); }
     else if (e.key === 'Escape') deselect();
     else if (e.key === 't' || e.key === 'T') showTech();
+    else if (e.key === 'l' || e.key === 'L') { $('mapLabels').checked = !$('mapLabels').checked; R.showLabels = $('mapLabels').checked; R.dirty = true; }
     else if (e.key === 'm' || e.key === 'M') { const o = [...$('mapMode').options].map(x => x.value); setMapMode(o[(o.indexOf(R.mapMode) + 1) % o.length]); }
     else if (e.key === 's' || e.key === 'S') { const u = selUnit(); if (u && u.type === 'settler') doSettle(u); }
     else if (e.key === 'ArrowLeft') { R.camX -= pan; R.dirty = true; }
@@ -282,6 +296,7 @@ function initInput() {
   $('btnNext').onclick = nextUnit;
   $('btnTech').onclick = showTech;
   $('mapMode').onchange = () => setMapMode($('mapMode').value);
+  $('mapLabels').onchange = () => { R.showLabels = $('mapLabels').checked; R.dirty = true; };
   $('btnTribes').onclick = showTribes;
   $('btnHelp').onclick = showHelp;
   $('btnMenu').onclick = showLeave;
@@ -304,7 +319,7 @@ function hoverLabel(t) {
 
 const LEGENDS = {
   political: () => 'Tribe colours. Grey: unclaimed land.',
-  culture: () => '<b>Solid</b>: a tribe\'s own people. <b>Thick stripes</b>: a people (base colour) ruled by another tribe (stripe colour). <b>Thin dark lines</b>: own people on foreign or alien land.',
+  culture: () => 'Each colour is a people. Offshoots share a hue family with the people they split from. <b>Solid</b>: a tribe\'s own people or a regional offshoot. <b>Thick stripes</b>: a people (base colour) ruled by another tribe (stripe colour). <b>Thin dark lines</b>: own people on foreign or alien land.',
   specialty: () => Object.values(SPECIALTY).map(s => `<span class="sw" style="background:${s.color}"></span>${s.name}`).join('') + '<br><span class="dim">Unclaimed land is shown dimmed in the type a city founded there would get.</span>',
   unrest: () => [['#4caf50', 'Content'], ['#c8c840', 'Calming'], ['#f09030', 'Restless'], ['#e04030', 'Rioting'], ['#901818', 'Insurrection']].map(([c, n]) => `<span class="sw" style="background:${c}"></span>${n}`).join('') + '<br><span class="dim">Blue lines: subsidies (denser = higher tier). Only your own cities are shown.</span>',
 };
@@ -519,7 +534,7 @@ function cityPanel(c) {
     h += `<div class="row"><span>Income</span><b>+${game.cityIncome(c)} gold</b></div>`;
     const occ = game.occupation(c);
     if (occ.lost) h += `<div class="desc" style="color:#ff8a70">${occ.lost} worked tile${occ.lost > 1 ? 's are' : ' is'} occupied or damaged: −${occ.lost} gold.${occ.occupied ? ' Enemies on your land also raise unrest and may pillage.' : ''}</div>`;
-    if (c.culture != null && c.culture !== c.owner && game.players[c.culture]) h += `<div class="desc">Its people are still <b style="color:${game.players[c.culture].color}">${esc(game.players[c.culture].name)}</b> at heart.</div>`;
+    h += peopleLine(c);
     h += moodBlock(c, mine && myTurn());
   }
   if (mine && myTurn()) {
@@ -744,6 +759,19 @@ function showTribes() {
     const near = Object.entries(thr.by).filter(([id]) => watchMode || game.cities.some(c => c.owner === +id && viewer.explored[c.idx])).sort((a, b) => b[1].threat - a[1].threat).slice(0, 3);
     if (near.length) h += `<p class="dim">Biggest threats to you: ${near.map(([id, x]) => `${esc(game.players[id].name)} (border ${x.border}, ${x.dmin < 99 ? x.dmin + ' tiles' : 'far'}, ${x.rp.toFixed(1)}× your power)`).join('; ')}.</p>`;
   }
+  // peoples of the known world
+  const known = game.liveCultures().filter(cul => watchMode || game.cities.some(c => c.culture === cul.id && viewer.explored[c.idx]) || cul.id === viewer.culture);
+  if (known.length) {
+    h += `<h3>Peoples</h3><p class="dim">Peoples are separate from realms. Offshoots keep their parent's word for "people".</p><table class="tribes"><tr><th></th><th>People</th><th>Word for "people"</th><th>Descended from</th><th>Cities</th><th>Ruled by</th></tr>`;
+    const rows = known.map(cul => ({ cul, n: game.cities.filter(c => c.culture === cul.id).length })).sort((a, b) => b.n - a.n);
+    for (const { cul, n } of rows) {
+      const lang = (ROOTS.find(r => r[0] === cul.root) || [])[1];
+      const rulers = [...new Set(game.cities.filter(c => c.culture === cul.id).map(c => game.players[c.owner].name))];
+      const parent = cul.parent != null ? game.cultures[cul.parent] : null;
+      h += `<tr><td>${cultureChip(cul)}</td><td>${esc(cul.name)}</td><td>${cul.root ? `<i>${cul.root}</i> <span class="dim">(${lang || '?'})</span>` : '—'}</td><td>${parent ? esc(parent.name) : '<span class="dim">founding people</span>'}</td><td>${n}</td><td>${rulers.map(esc).join(', ') || '—'}</td></tr>`;
+    }
+    h += `</table>`;
+  }
   const trad = game.traditions(viewer.id);
   h += `<h3>Traditions</h3><p class="dim">Own 3+ Homeland/Kin cities of one land type and every one of your cities can train its unique unit (+1 cost).</p><p>${trad.length ? trad.map(s => `<b>${SPECIALTY[s].name}</b> → ${UNITS[SPECIALTY[s].unit].name}`).join(', ') : 'None yet.'}</p>`;
   h += `<h3>Cultural kinship</h3><p class="dim">How easily a ${SPECIALTY[viewer.home].name} people runs cities on each land type:</p><table class="spectable">`;
@@ -851,9 +879,9 @@ function showHistomap(fromWin) {
 function showRazeChoice(c) {
   if (!game.cities.includes(c)) return;
   const adv = game.razeAdvice(c, c.owner);
-  const people = c.culture != null && game.players[c.culture] ? game.players[c.culture] : null;
+  const people = game.cultures?.[c.culture] || null;
   let h = `<h2>${esc(c.name)} has fallen to you</h2>`;
-  h += `<p>Level ${c.level} ${SPECIALTY[c.specialty].name} city${people ? `, home to the <b style="color:${people.color}">${esc(people.name)}</b> people` : ''}. ${c.buildings.length ? 'Surviving buildings: ' + c.buildings.map(b => BUILDINGS[b].name).join(', ') + '.' : 'Nothing of note survived the sack.'}</p>`;
+  h += `<p>Level ${c.level} ${SPECIALTY[c.specialty].name} city${people ? `, home to the <b style="color:${people.color}">${esc(people.name)}</b>` : ''}. ${c.buildings.length ? 'Surviving buildings: ' + c.buildings.map(b => BUILDINGS[b].name).join(', ') + '.' : 'Nothing of note survived the sack.'}</p>`;
   h += `<p class="dim">Advisors: ${adv.reasons.map(esc).join(' · ')}.</p>`;
   h += `<p><b>${adv.raze ? 'Your advisors favour razing it.' : 'Your advisors favour keeping it.'}</b> Razing frees the land and spares you its unrest, but its people${people && people.alive ? ` and the ${esc(people.name)}` : ''} will not forget.</p>`;
   h += `<p><button id="btnKeep" class="${adv.raze ? '' : 'primary'}">Keep the city</button> <button id="btnRaze" class="${adv.raze ? 'primary' : ''}" style="${adv.raze ? '' : 'background:#5a2020'}">Raze it</button></p>`;
@@ -929,6 +957,9 @@ function showHelp() {
   <li>buildings that survive the sack: never;</li>
   <li>stripped of every building it had: 50% at level 1, down to 10% for large cities;</li>
   <li>never built anything: 33% at level 1, down to 18% for large cities.</li></ul><p></p>
+  <h3>Peoples</h3>
+  <p>Every realm is built on a <b>people</b>. A founding people is named after its capital and its own word for "people", e.g. <i>Mardu</i> + <i>jana</i> gives <b>Mardujana</b>. Distant cities held for a long time may grow a regional identity, named after a major local city (<b>Eskjana</b>) or their land (<b>Hilljana</b>). Offshoots keep the family's word and a related colour, and count as kin.</p>
+  <p>A conquered people goes by its own name joined to its ruler's, e.g. <b>Esko-Mardujana</b>. If it breaks free after long rule, it keeps the mark (<b>Mardu-Eskjana</b>). Names never stack beyond two parts, and only the latest influence is kept. Subject peoples feel unrest more strongly (+0.25 sensitivity) and regional offshoots slightly (+0.1). Revolts follow these lines: a rebellion takes its city's identity. Labels (<b>L</b>) name regions on every map mode except terrain.</p>
   <h3>Map modes</h3><p>Press <b>M</b> or use the Map menu: Terrain, Political (tribe colours only), Culture (stripes mark peoples under foreign rule), Specialty (and what unclaimed land would become), and Unrest.</p>
   <h3>War</h3>
   <ul><li>Select a unit: white hexes = move, red = attack, gold = capture an undefended enemy city.</li>

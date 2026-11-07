@@ -46,6 +46,7 @@ Every city projects **influence** onto foreign cities within about 4 tiles. Infl
 Ruins and unclaimed land slowly regrow.
 - After about 15 turns, a razed site may spawn a **free town**: a minor neutral city of the local specialty that doesn't expand.
 - Free towns can be traded with, vassalized, absorbed by cultural pull or conquered.
+- Naming is already in place: a free town would be a new people named for its land or ruin site (`newCulture({ base: LAND_BASE[spec], root })`). Its root would come from the nearest people, as an offshoot that went its own way, or be a fresh root if it's far from everyone.
 - Rebellions that lose momentum can settle into the same role.
 
 ## Suggested order and scope
