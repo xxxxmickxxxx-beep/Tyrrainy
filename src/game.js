@@ -6,6 +6,7 @@ import {
   BUILDINGS, WONDERS, TECHS, TEMPERAMENTS, TRIBE_PALETTE, SUBSIDIES, SENSITIVITY, FOREIGN_PEOPLE_SENSITIVITY, techCost, TERRAIN_TO_SPECIALTY, TRIBE_NAMES, CITY_NAMES, PLAYER_COLORS,
 } from './data.js';
 import { generateMap, pickStarts, MAP_SIZES } from './mapgen.js';
+import { diplomacyMethods } from './diplomacy.js';
 import { ROOTS, LAND_BASE, joinName, combining, cleanBase, pickColors, offshootColors } from './culture.js';
 
 const INTEGRATION_TURNS = 10;
@@ -187,6 +188,7 @@ export class Game {
     tl.res = tl.res === 'oasis' ? 'oasis' : null;
     tl.imp = null; tl.ruin = false;
     if (this.affinity(city) === 0) city.pop += 1;
+    if (!capital && this.hasGood(pid, 'grain')) city.pop += 1;
     this.claimTerritory(city);
     this.updateVision(pid);
     this.bumpPeak(pid);
@@ -233,6 +235,7 @@ export class Game {
     if (city.specialty === 'riverside' || city.specialty === 'desert') g += 1;
     if (this.has(pl.id, 'trade') && city.level >= 3) g += 1;
     if (this.hasWonder(pl.id, 'grandbazaar')) g += 1;
+    if (city.level >= 4 && this.hasGood(pl.id, 'cloth')) g += 1;
     if (city.wonders?.includes('eaglethrone')) g += 4;
     for (const b of city.buildings) {
       const B = BUILDINGS[b];
@@ -263,11 +266,12 @@ export class Game {
   }
   subsidyCost(pid) {
     let s = 0;
-    for (const c of this.cities) if (c.owner === pid && c.subsidy) s += SUBSIDIES[c.subsidy].cost;
+    const reeds = this.hasGood(pid, 'reeds') ? 1 : 0;
+    for (const c of this.cities) if (c.owner === pid && c.subsidy) s += Math.max(0, SUBSIDIES[c.subsidy].cost - (c.subsidy >= 2 ? reeds : 0));
     return s;
   }
   // Net income; can go negative when subsidies outrun revenue.
-  income(pid) { return Math.max(0, this.grossIncome(pid) - this.upkeep(pid)) - this.subsidyCost(pid); }
+  income(pid) { return Math.max(0, this.grossIncome(pid) - this.upkeep(pid)) + this.tradeIncome(pid) - this.subsidyCost(pid); }
 
   unitCap(pid) {
     let s = 0;
@@ -287,6 +291,10 @@ export class Game {
     if (U.unique && U.unique === city.specialty) cost += AFFINITY[this.affinity(city)].unitCost;
     else if (U.unique) cost += 1; // trained through an adopted tradition
     if (city.buildings.includes('stables') && U.traits?.includes('mounted')) cost -= 1;
+    const pid = city.owner;
+    if (type === 'settler' && this.hasGood(pid, 'grain')) cost -= 2;
+    if (U.traits?.includes('mounted') && this.hasGood(pid, 'horses')) cost -= 1;
+    if (type !== 'settler' && !U.traits?.includes('mounted') && !U.traits?.includes('naval') && U.atk > 0 && this.hasGood(pid, 'ore')) cost -= 1;
     return Math.max(1, cost);
   }
 
@@ -353,13 +361,16 @@ export class Game {
     if (B.special && B.special !== city.specialty) return { ok: false, why: 'Wrong specialty' };
     if (B.tech && !this.has(city.owner, B.tech)) return { ok: false, why: 'Requires ' + TECHS[B.tech].name };
     if (B.special && this.affinity(city) >= 3) return { ok: false, why: 'Alien culture — integrate first' };
-    if (this.players[city.owner].gold < B.cost) return { ok: false, why: `Need ${B.cost} gold` };
+    const cost = this.buildingCost(city, b);
+    if (this.players[city.owner].gold < cost) return { ok: false, why: `Need ${cost} gold` };
     return { ok: true };
   }
+  buildingCost(city, b) { return Math.max(1, BUILDINGS[b].cost - (this.hasGood(city.owner, 'stone') ? 1 : 0)); }
+  improveCost(pid, k) { return Math.max(1, IMPROVEMENTS[k].cost - (this.hasGood(pid, 'timber') ? 1 : 0)); }
   // One construction per city per turn, and none while hostile troops stand next to it.
   buildBlock(city) {
     if (city.builtTurn === this.turn) return 'Already built this turn';
-    if (this.neighbors(city.idx).some(n => { const u = this.unitAt(n); return u && u.owner !== city.owner; })) return 'Enemies at the gates';
+    if (this.neighbors(city.idx).some(n => { const u = this.unitAt(n); return u && u.owner !== city.owner && this.atWar(u.owner, city.owner); })) return 'Enemies at the gates';
     return null;
   }
   buildable(city) {
@@ -372,7 +383,7 @@ export class Game {
     const chk = this.canBuild(city, b);
     if (!chk.ok) return chk;
     const B = BUILDINGS[b];
-    this.players[city.owner].gold -= B.cost;
+    this.players[city.owner].gold -= this.buildingCost(city, b);
     city.buildings.push(b);
     city.builtTurn = this.turn;
     city.everBuilt = true;
@@ -444,8 +455,8 @@ export class Game {
   }
   // Festivals get less reliable each time one is held without fixing the underlying
   // problem. Building compliance or staying content on its own restores trust.
-  festivalRisk(city) { return Math.min(0.7, 0.05 + 0.12 * (city.festivals || 0)); }
-  placateCost(city) { return 4 + city.level * 2 + Math.floor((city.unrest || 0) / 2); }
+  festivalRisk(city) { return Math.max(0.02, Math.min(0.7, 0.05 + 0.12 * (city.festivals || 0)) - (this.hasGood(city.owner, 'spice') ? 0.1 : 0)); }
+  placateCost(city) { const c = 4 + city.level * 2 + Math.floor((city.unrest || 0) / 2); return this.hasGood(city.owner, 'spice') ? Math.ceil(c / 2) : c; }
   canPlacate(city) {
     if ((city.unrest || 0) <= 0 && this.unrest(city).net <= 0) return { ok: false, why: 'City is content' };
     if (city.festivalUntil != null && this.turn <= city.festivalUntil) return { ok: false, why: 'Festival under way' };
@@ -790,7 +801,7 @@ export class Game {
       if (t === city.idx) continue;
       const tl = this.tiles[t];
       const u = this.unitAt(t);
-      const hostile = u && u.owner !== city.owner;
+      const hostile = u && u.owner !== city.owner && this.atWar(u.owner, city.owner);
       if (hostile) occupied++;
       if (tl.imp && (hostile || tl.damaged)) { if (tl.damaged) damaged++; }
     }
@@ -799,7 +810,7 @@ export class Game {
       if (t === city.idx) continue;
       const tl = this.tiles[t];
       const u = this.unitAt(t);
-      if ((tl.imp || tl.res) && ((u && u.owner !== city.owner) || tl.damaged)) lost++;
+      if ((tl.imp || tl.res) && ((u && u.owner !== city.owner && this.atWar(u.owner, city.owner)) || tl.damaged)) lost++;
     }
     return { occupied, damaged, lost };
   }
@@ -813,7 +824,7 @@ export class Game {
   // Called at the start of the occupier's turn for each unit sitting on enemy improvements.
   pillage(u) {
     const tl = this.tiles[u.idx];
-    if (!tl.imp || tl.owner < 0 || tl.owner === u.owner || tl.city >= 0) return;
+    if (!tl.imp || tl.owner < 0 || tl.owner === u.owner || tl.city >= 0 || !this.atWar(u.owner, tl.owner)) return;
     if (this.rng() >= 0.35) return;
     const city = this.cityById(tl.ownerCity);
     const I = IMPROVEMENTS[tl.imp];
@@ -833,7 +844,7 @@ export class Game {
     const tl = this.tiles[i];
     if (!tl.damaged || tl.owner !== pid) return { ok: false, why: 'Nothing to repair' };
     const u = this.unitAt(i);
-    if (u && u.owner !== pid) return { ok: false, why: 'Enemy on the tile' };
+    if (u && u.owner !== pid && this.atWar(u.owner, pid)) return { ok: false, why: 'Enemy on the tile' };
     if (this.players[pid].gold < this.repairCost(i)) return { ok: false, why: `Need ${this.repairCost(i)} gold` };
     return { ok: true };
   }
@@ -969,7 +980,7 @@ export class Game {
     const I = IMPROVEMENTS[k];
     if (!this.improvementsFor(pid, i).includes(k)) return { ok: false, why: 'Not possible here' };
     if (I.tech && !this.has(pid, I.tech)) return { ok: false, why: 'Requires ' + TECHS[I.tech].name };
-    if (this.players[pid].gold < I.cost) return { ok: false, why: `Need ${I.cost} gold` };
+    if (this.players[pid].gold < this.improveCost(pid, k)) return { ok: false, why: `Need ${this.improveCost(pid, k)} gold` };
     return { ok: true };
   }
   improvePop(i, k) {
@@ -994,7 +1005,7 @@ export class Game {
     const I = IMPROVEMENTS[k];
     const tl = this.tiles[i];
     const pop = this.improvePop(i, k);
-    this.players[pid].gold -= I.cost;
+    this.players[pid].gold -= this.improveCost(pid, k);
     if (I.consume) { tl.res = null; if (k === 'fishery' || k === 'whaling') tl.imp = k; } else { tl.imp = k; }
     tl.impPop = pop;
     const city = this.cityById(tl.ownerCity);
@@ -1094,7 +1105,7 @@ export class Game {
   zocSet(pid) {
     const s = new Set();
     for (const e of this.units) {
-      if (e.owner === pid) continue;
+      if (e.owner === pid || !this.atWar(pid, e.owner)) continue;
       if (this.isHiddenFrom(e, pid)) continue;
       for (const n of this.neighbors(e.idx)) s.add(n);
     }
@@ -1127,7 +1138,9 @@ export class Game {
       for (const n of this.neighbors(cur)) {
         const occ = this.unitAt(n);
         if (occ && occ.owner !== u.owner) continue;
-        const ec = this.cityAt(n);
+        // borders of tribes we are not at war with are closed (allies may pass, not into cities)
+        const to = this.tiles[n].owner;
+        if (to >= 0 && to !== u.owner && !this.atWar(u.owner, to) && (!this.allied(u.owner, to) || this.tiles[n].city >= 0)) continue;
         const cost = this.moveCost(u, cur, n);
         if (cost === Infinity) continue;
         // embarking/disembarking from a city is free-ish: treat normally
@@ -1175,7 +1188,7 @@ export class Game {
   afterEnter(u, from) {
     const tl = this.tiles[u.idx];
     const c = this.cityAt(u.idx);
-    if (c && c.owner !== u.owner) this.captureCity(c, u.owner);
+    if (c && c.owner !== u.owner && this.atWar(u.owner, c.owner)) this.captureCity(c, u.owner);
     if (tl.ruin) { tl.ruin = false; this.openRuin(u); }
   }
 
@@ -1255,6 +1268,8 @@ export class Game {
     if (!hasCity) {
       pl.alive = false;
       pl.fell = this.turn;
+      this.trades = (this.trades || []).filter(t => t.a !== pid && t.b !== pid);
+      this.offers = (this.offers || []).filter(o => o.from !== pid && o.to !== pid);
       this.units = this.units.filter(u => u.owner !== pid);
       this.rebuildUnitMap();
       for (const t of this.tiles) if (t.owner === pid) { t.owner = -1; }
@@ -1301,7 +1316,7 @@ export class Game {
     const out = [];
     for (const t of this.within(u.idx, S.rng)) {
       const e = this.unitAt(t);
-      if (!e || e.owner === u.owner) continue;
+      if (!e || e.owner === u.owner || !this.atWar(u.owner, e.owner)) continue;
       if (this.isHiddenFrom(e, u.owner)) continue;
       // naval units can only hit things on water or coast; land melee can't hit naval at sea unless embarked
       if (S.rng === 1 && this.has_(u, 'naval') && !this.isWater(t) && !this.neighbors(t).some(n => this.isWater(n))) continue;
@@ -1420,8 +1435,9 @@ export class Game {
   // ------------------------------------------------------------ vision
   vision(pid) {
     const vis = new Uint8Array(this.W * this.H);
+    const sees = (o) => o === pid || this.allied(pid, o);
     for (const u of this.units) {
-      if (u.owner !== pid) continue;
+      if (!sees(u.owner)) continue;
       let r = 1;
       const t = this.tiles[u.idx].t;
       if (t === 'hills' || t === 'mountain') r = 2;
@@ -1429,7 +1445,7 @@ export class Game {
       for (const x of this.within(u.idx, r)) vis[x] = 1;
     }
     for (const c of this.cities) {
-      if (c.owner !== pid) continue;
+      if (!sees(c.owner)) continue;
       let r = this.cityRadius(c) + 1;
       if (c.specialty === 'hilltop' || c.specialty === 'mountain') r += 1;
       if (c.buildings.includes('watchtower')) r += 2;
@@ -1444,6 +1460,16 @@ export class Game {
     const v = this.vision(pid);
     for (let i = 0; i < v.length; i++) if (v[i]) pl.explored[i] = 1;
     pl._vis = v;
+    // contact: seeing another tribe's units, cities or borders means we have met
+    const meet = (o) => {
+      if (o < 0 || o === pid || !this.players[o]) return;
+      if (!pl.met) pl.met = {};
+      if (pl.met[o]) return;
+      pl.met[o] = this.turn; (this.players[o].met ||= {})[pid] = this.turn;
+      this.emit('contact', { a: pid, b: o });
+    };
+    for (const u of this.units) if (v[u.idx]) meet(u.owner);
+    for (const c of this.cities) if (v[c.idx]) meet(c.owner);
   }
   visibleTo(pid, i) {
     const pl = this.players[pid];
@@ -1524,6 +1550,7 @@ export class Game {
         const c = this.cityAt(u.idx);
         if (c && c.owner === pl.id) { h = 5; if (c.specialty === 'marsh') h += 2; }
         if (this.hasWonder(pl.id, 'worldtree')) h += 3;
+        if (this.hasGood(pl.id, 'saltfish')) h += 1;
         u.hp = Math.min(this.maxHp(u), u.hp + h);
       }
       u.mvLeft = this.maxMv(u);
@@ -1576,7 +1603,7 @@ export class Game {
     return JSON.stringify({
       v: 1, W: this.W, H: this.H, seed: this.seed, settings: this.settings, tiles: this.tiles,
       elev: this.elev, turn: this.turn, current: this.current, nextId: this.nextId,
-      cities: this.cities, units: this.units, log: this.log, winner: this.winner, coalition: this.coalition, history: this.history, cultures: this.cultures,
+      cities: this.cities, units: this.units, log: this.log, winner: this.winner, coalition: this.coalition, history: this.history, cultures: this.cultures, relations: this.relations, trades: this.trades, offers: this.offers,
       players: this.players.map(p => ({ ...p, _vis: undefined })), rng: this.rng.state(),
       cityNamePool: this.cityNamePool,
     });
@@ -1613,3 +1640,5 @@ export class Game {
     return g;
   }
 }
+
+Object.assign(Game.prototype, diplomacyMethods);

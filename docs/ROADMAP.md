@@ -9,7 +9,7 @@ Below, the proposals are ordered by how much they open the game up per unit of w
 
 ---
 
-## 1. Diplomatic states (the foundation, small)
+## 1. Diplomatic states — DONE (see README › Diplomacy)
 Each pair of tribes is in one of four states: **War**, **Truce** (a fixed number of turns), **Peace** or **Alliance**.
 - Units can't attack or enter the territory of tribes at peace. Zones of control don't apply between them.
 - **AI:** it already computes `hostility()`. It offers peace when hostility toward a neighbour stays low for a few turns, and declares war when hostility passes a threshold. That threshold is per temperament: opportunists are trigger-happy, appeasers are slow.
@@ -28,7 +28,7 @@ When a tribe is badly beaten (it has lost most of its power, or its capital is u
 
 This makes alien land valuable without owning it, and turns a war's end into a political choice instead of raze-or-garrison. It also makes the Histomap far more interesting: vassal streams can be drawn hatched inside their overlord's.
 
-## 3. Trade goods (medium-small; peaceful interdependence)
+## 3. Trade goods — DONE (see README › Trade goods)
 Each specialty produces a good once its specialty building exists: grain (plains), stone (hilltop), salt fish (coastal), cloth (riverside), timber (forest), spice (desert), horses (steppe), peat or reeds (marsh), and ore (mountain).
 - **Owning or trading for a good** gives an empire-wide bonus. For example, horses make mounted units −1 cost, grain gives +1 pop on founding, and spice gives +1 gold in every level 3+ city.
 - **Trade agreements** need Peace. Each side sends a good, and both earn gold scaled by distance and cultural difference. Trading with very different peoples pays most.

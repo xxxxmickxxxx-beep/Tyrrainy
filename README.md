@@ -131,6 +131,37 @@ If the city survives that roll, the **conqueror chooses** whether to keep it or 
 - **Construction limits:** a city can complete one building or wonder per turn, and none while a hostile unit is adjacent to it.
 - **Colours:** each tribe has a two-tone identity, a fill plus an accent used for borders, roofs and unit rims, taken from `TRIBE_PALETTE`. Newcomers (rebellions) get the pair farthest in CIELAB from all living tribes, and colours of fallen tribes become available again.
 
+### Diplomacy (`src/diplomacy.js`)
+- **States per pair:**
+  - **War** is the default.
+  - **Truce:** 10 turns after peace is made; war can't be declared during it.
+  - **Peace.**
+  - **Alliance:** shared vision, passage through each other's land, and a defensive pact.
+- **Closed borders:** units can't attack, pillage, capture or enter the land of tribes they aren't at war with. Allies may pass but can't enter each other's cities. Making peace moves each side's units out of the other's land.
+- **Treachery:** declaring war on a tribe at peace gives that tribe a +40 grudge (+60 if it was an ally), and +8 (+15) from everyone who knows the aggressor. The victim's allies join the war automatically.
+- **Contact** happens on first sight of a unit or city. Diplomacy news reaches tribes that know either party.
+- **AI:** it uses the same hostility weights that drive its wars.
+  - **Offering peace:** it offers peace when hostility is low, when it's losing, when it's overstretched or when it's war-weary.
+  - **Accepting peace:** a tribe that's clearly winning refuses.
+  - **Declaring war:** it declares war when hostility passes its temperament's threshold (opportunist 1.9 … appeaser 2.7) and it isn't weaker, with a lower threshold against a coalition target. It may also prey on a much weaker neighbour, or put a rich treasury to use.
+  - **Alliances and trade:** it proposes alliances with coalition partners or co-belligerents, and trade wherever it pays.
+- **Humans** act in the Diplomacy screen (D). Offers to a human wait for the start of that human's turn. A human refusal makes the AI wait 15 turns before asking again.
+
+### Trade goods
+- **Production:** each specialty yields a good (`GOODS` in `src/data.js`) once a city of that kind has its specialty building or reaches level 5.
+- **Bonuses:** having a good, by producing it or importing it, grants an empire-wide bonus:
+  - grain: settlers −2, new cities +1 pop;
+  - stone: buildings −1;
+  - salt fish: +1 healing;
+  - cloth: +1 gold in level 4+ cities;
+  - timber: improvements −1;
+  - spice: festivals half price and −10% riot risk;
+  - horses: mounted units −1;
+  - reeds: Grain dole and Patronage −1 gold;
+  - ore: foot soldiers −1.
+- **Trade agreements** need peace or an alliance. They share all of each side's own production (no re-export) and pay each side 1 gold per turn, +1 per new good gained (max 3), +1 between unrelated peoples.
+- **Limits:** a tribe can have 1 + 1 per 4 cities trade partners. War ends any agreement.
+
 ### Peoples (cultures) & records
 Peoples are separate from polities (`src/culture.js`), as in CK3, and names never exceed two parts.
 
@@ -180,5 +211,5 @@ See [`docs/ROADMAP.md`](docs/ROADMAP.md) for proposed next systems: diplomacy, t
 2. **Late-game gold still piles up.** Nine world wonders (one per land type, level 5+ city) now soak some of it, but all techs are usually researched by about turn 80–100. Unit upgrades or repeatable techs are the next candidates.
 3. **Rebellions inherit the full tech tree** of their parent. With homeland bias applied they now stay small (1–5 cities in sims), but a late-game rebellion is still technologically mature on day one.
 4. **Coastal threshold.** With 2 water neighbours, coastal cities dominated, so the threshold is now 3. Mixed tiles (a forest on the coast) still get only one identity. A primary/secondary specialty system is the obvious next step.
-5. **No diplomacy.** Everyone is at war with everyone. Peace and alliances matter more on big multi-faction maps.
+5. **Late-game AI treasuries balloon**, often to thousands of gold, now that peace and trade let economies run. More sinks are needed (wonders scaled to treasury, unit upgrades), or the AI should declare more wars of opportunity.
 6. **AI cheats slightly.** It knows enemy unit positions near its units without fog checks.

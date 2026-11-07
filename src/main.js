@@ -6,6 +6,7 @@ import { MAP_SIZES, MAP_TYPES } from './mapgen.js';
 import { ROOTS } from './culture.js';
 import {
   TERRAIN, SPECIALTY, SPECIALTY_KEYS, KIN_DIST, AFFINITY, UNITS, IMPROVEMENTS, BUILDINGS, WONDERS, TECHS, RESOURCES, TEMPERAMENTS, SUBSIDIES, SENSITIVITY,
+  GOODS, GOOD_BY_KEY,
 } from './data.js';
 
 const $ = (id) => document.getElementById(id);
@@ -82,7 +83,7 @@ function onEvent(type, d) {
   const viewer = R.viewer;
   const visible = (i) => watchMode || (i != null && game.players[viewer]._vis?.[i]);
   if (type === 'log') {
-    if (d.pid === viewer || visible(d.idx) || d.idx == null && /learned|fallen|wins|rally|coalition/.test(d.msg) && (d.pid === viewer || /fallen|wins|rally|coalition/.test(d.msg))) addLog(d.msg, d.pid, d.idx);
+    if (d.pid === viewer || visible(d.idx) || (d.idx == null && d.pid != null && game.hasMet(viewer, d.pid)) || d.idx == null && /learned|fallen|wins|rally|coalition/.test(d.msg) && (d.pid === viewer || /fallen|wins|rally|coalition/.test(d.msg))) addLog(d.msg, d.pid, d.idx);
   } else if (type === 'attack') {
     if (visible(d.to) || visible(d.from)) {
       R.addAnim({ type: 'shot', from: d.from, to: d.to, dur: 300 });
@@ -96,6 +97,10 @@ function onEvent(type, d) {
     if (d.owner === viewer) R.addAnim({ type: 'text', idx: d.idx, text: 'Level ' + d.level + '!', color: '#9f9', dur: 1500 });
   } else if (type === 'win') {
     setTimeout(showWin, 400);
+  } else if (type === 'diplo') {
+    if (d.b === viewer && d.type === 'war') toast(`${game.players[d.a].name} has declared war on you!`);
+  } else if (type === 'contact') {
+    if (d.a === viewer && game.players[viewer].human) toast(`You have met the ${game.players[d.b].name}. Open Diplomacy (D) to deal with them.`);
   } else if (type === 'razeChoice') {
     if (game.players[d.pid].human && d.pid === R.viewer) setTimeout(() => showRazeChoice(d.city), 250);
   } else if (type === 'revolt') {
@@ -182,8 +187,25 @@ function stepGoto(u) {
   if (u.idx === u.goto) u.goto = null;
 }
 
+function showOffers(pl) {
+  const o = (game.offers || []).find(x => x.to === pl.id);
+  if (!o) return;
+  const from = game.players[o.from];
+  const what = { peace: 'peace', alliance: 'an alliance', trade: 'a trade agreement' }[o.type];
+  let extra = '';
+  if (o.type === 'trade') {
+    const gain = game.tradeGain(pl.id, o.from).map(k => GOOD_BY_KEY[k].name);
+    extra = `<p>You would gain ${gain.length ? gain.join(', ') : 'no new goods'} and earn ${game.tradeIncomeFor(pl.id, o.from)} gold per turn.</p>`;
+  }
+  openModal(`<h2>${chip(from)} ${esc(from.name)} offer ${what}</h2>${extra}<p><button class="primary" id="btnAcc">Accept</button> <button id="btnDec">Decline</button></p>`);
+  const done = (yes) => { $('btnAcc').onclick = $('btnDec').onclick = null; const r = game.answerOffer(o, yes); if (!r.ok) toast(r.why); closeModal(); refreshAll(); setTimeout(() => showOffers(pl), 50); };
+  $('btnAcc').onclick = () => done(true);
+  $('btnDec').onclick = () => done(false);
+}
+
 function focusTurn(pl) {
   sel = null;
+  setTimeout(() => showOffers(pl), 300);
   for (const u of game.units.filter(u => u.owner === pl.id && u.goto != null)) stepGoto(u);
   const cap = game.cities.find(c => c.owner === pl.id && c.capital) || game.cities.find(c => c.owner === pl.id);
   if (game.turn === 1 || !R._centered?.[pl.id]) {
@@ -282,6 +304,7 @@ function initInput() {
     else if (e.key === ' ') { e.preventDefault(); nextUnit(); }
     else if (e.key === 'Escape') deselect();
     else if (e.key === 't' || e.key === 'T') showTech();
+    else if (e.key === 'd' || e.key === 'D') showDiplomacy();
     else if (e.key === 'l' || e.key === 'L') { $('mapLabels').checked = !$('mapLabels').checked; R.showLabels = $('mapLabels').checked; R.dirty = true; }
     else if (e.key === 'm' || e.key === 'M') { const o = [...$('mapMode').options].map(x => x.value); setMapMode(o[(o.indexOf(R.mapMode) + 1) % o.length]); }
     else if (e.key === 's' || e.key === 'S') { const u = selUnit(); if (u && u.type === 'settler') doSettle(u); }
@@ -298,6 +321,7 @@ function initInput() {
   $('mapMode').onchange = () => setMapMode($('mapMode').value);
   $('mapLabels').onchange = () => { R.showLabels = $('mapLabels').checked; R.dirty = true; };
   $('btnTribes').onclick = showTribes;
+  $('btnDiplo').onclick = showDiplomacy;
   $('btnHelp').onclick = showHelp;
   $('btnMenu').onclick = showLeave;
   $('modalClose').onclick = closeModal;
@@ -792,6 +816,70 @@ function showTribes() {
   $('btnHisto').onclick = () => showHistomap(false);
 }
 
+// ------------------------------------------------------------ diplomacy
+function relBadge(st, r) {
+  const C = { war: ['War', '#e04030'], truce: ['Truce', '#e0a050'], peace: ['Peace', '#7ddc6a'], alliance: ['Alliance', '#5fa8e8'] }[st];
+  return `<span class="aff" style="background:${C[1]}">${C[0]}${st === 'truce' ? ' ' + (r.until - game.turn) : ''}</span>`;
+}
+function showDiplomacy() {
+  if (!game) return;
+  const me = game.players[R.viewer];
+  const mine = myTurn();
+  let h = `<h2>Diplomacy</h2><p class="dim">Units cannot attack or enter the land of tribes you are not at war with (allies may pass). Peace starts with a ${10}-turn truce. Breaking peace angers the victim and everyone who knows you; allies of the victim join the war.</p>`;
+  const others = game.contenders().filter(p => p.id !== me.id && game.hasMet(me.id, p.id));
+  if (!others.length) h += `<p>You have not met any other tribe yet.</p>`;
+  else {
+    h += `<table class="tribes"><tr><th></th><th>Tribe</th><th>Relation</th><th>Attitude</th><th>Trade</th><th>Actions</th></tr>`;
+    for (const p of others) {
+      const r = game.relation(me.id, p.id);
+      const hz = p.temper ? game.hostility(p.id, me.id) : null;
+      const att = hz == null ? '—' : hz < 1.3 ? '<span style="color:#7ddc6a">Friendly</span>' : hz < 1.9 ? '<span style="color:#e0d060">Wary</span>' : '<span style="color:#ff7060">Hostile</span>';
+      let trade;
+      if (game.trading(me.id, p.id)) trade = `<b>+${game.tradeIncomeFor(me.id, p.id)}</b>/turn${game.tradeGain(me.id, p.id).length ? ' · ' + game.tradeGain(me.id, p.id).map(k => GOOD_BY_KEY[k].name).join(', ') : ''}`;
+      else { const g2 = game.tradeGain(me.id, p.id); trade = `<span class="dim">${g2.length ? 'could give: ' + g2.map(k => GOOD_BY_KEY[k].name).join(', ') : 'nothing you lack'}</span>`; }
+      const acts = [];
+      if (mine) {
+        if (r.state === 'war') acts.push(['peace', 'Offer peace']);
+        else {
+          acts.push(['war', 'Declare war', !game.canDeclareWar(me.id, p.id).ok]);
+          if (game.trading(me.id, p.id)) acts.push(['endtrade', 'End trade']);
+          else acts.push(['trade', 'Propose trade', !game.canTrade(me.id, p.id).ok]);
+          if (r.state === 'alliance') acts.push(['endally', 'End alliance']);
+          else acts.push(['alliance', 'Propose alliance']);
+        }
+      }
+      h += `<tr><td>${chip(p)}</td><td>${esc(p.name)}${p.human ? ' (human)' : ''}</td><td>${relBadge(r.state, r)}</td><td>${att}</td><td>${trade}</td><td>${acts.map(([k, l, dis]) => `<button data-dip="${k}" data-pid="${p.id}" ${dis ? 'disabled' : ''} style="padding:3px 7px;font-size:12px">${l}</button>`).join(' ')}</td></tr>`;
+    }
+    h += `</table>`;
+  }
+  h += `<p class="dim">Trade partners: ${game.tradePartners(me.id).length}/${game.tradeLimit(me.id)} (1 + 1 per 4 cities). Each agreement shares all goods both ways and pays each side 1 gold, +1 per new good gained (max 3), +1 between unrelated peoples. War ends trade.</p>`;
+  // goods
+  const prod = game.goodsProduced(me.id), access = game.goodsAccess(me.id);
+  h += `<h3>Goods</h3><p class="dim">A city produces its land's good once it has its specialty building or reaches level 5.</p><table class="spectable">`;
+  for (const [spec, G] of Object.entries(GOODS)) {
+    let st;
+    if (prod.has(G.key)) st = '<b style="color:#7ddc6a">Producing</b>';
+    else if (access.has(G.key)) st = `<b style="color:#5fa8e8">Imported</b> <span class="dim">from ${game.tradePartners(me.id).filter(o => game.goodsProduced(o).has(G.key)).map(o => esc(game.players[o].name)).join(', ')}</span>`;
+    else st = '<span class="dim">—</span>';
+    h += `<tr><td><b>${G.name}</b> <span class="dim">(${SPECIALTY[spec].name})</span></td><td>${st}</td><td>${G.desc}</td></tr>`;
+  }
+  h += `</table>`;
+  openModal(h);
+  $('modalBody').querySelectorAll('[data-dip]').forEach(b => b.onclick = () => {
+    const k = b.dataset.dip, o = +b.dataset.pid;
+    let res;
+    if (k === 'war') { if (!confirm(`Declare war on the ${game.players[o].name}?`)) return; res = game.declareWar(me.id, o); }
+    else if (k === 'endtrade') { game.endTrade(me.id, o); res = { ok: true }; }
+    else if (k === 'endally') res = game.breakAlliance(me.id, o);
+    else {
+      res = game.offer(me.id, o, k);
+      if (res.ok) toast(res.pending ? 'Offer sent; they will answer on their turn.' : res.accepted ? `The ${game.players[o].name} accept!` : `The ${game.players[o].name} decline.`);
+    }
+    if (res && !res.ok) toast(res.why);
+    refreshAll(); showDiplomacy();
+  });
+}
+
 // ------------------------------------------------------------ histomap
 // Streams of relative power through time, stacked side by side like the classic
 // "Histomap": time runs downward, width is each tribe's share of world power.
@@ -960,6 +1048,9 @@ function showHelp() {
   <h3>Peoples</h3>
   <p>Every realm is built on a <b>people</b>. A founding people is named after its capital and its own word for "people", e.g. <i>Mardu</i> + <i>jana</i> gives <b>Mardujana</b>. Distant cities held for a long time may grow a regional identity, named after a major local city (<b>Eskjana</b>) or their land (<b>Hilljana</b>). Offshoots keep the family's word and a related colour, and count as kin.</p>
   <p>A conquered people goes by its own name joined to its ruler's, e.g. <b>Esko-Mardujana</b>. If it breaks free after long rule, it keeps the mark (<b>Mardu-Eskjana</b>). Names never stack beyond two parts, and only the latest influence is kept. Subject peoples feel unrest more strongly (+0.25 sensitivity) and regional offshoots slightly (+0.1). Revolts follow these lines: a rebellion takes its city's identity. Labels (<b>L</b>) name regions on every map mode except terrain.</p>
+  <h3>Diplomacy & trade</h3>
+  <p>Tribes are at <b>war</b> until they make peace. Peace begins with a 10-turn <b>truce</b>. Units can't attack or enter the land of tribes they aren't at war with; allies share vision, may pass through each other's land, and defend each other when attacked. Declaring war on a partner earns grudges from the victim and from everyone who knows you. AI tribes use their temperament and their view of you to decide on war, peace, trade and alliances. Open <b>Diplomacy (D)</b> to deal with tribes you have met. Offers between humans wait for the other player's turn.</p>
+  <p>Each land type yields a <b>good</b> (grain, stone, salt fish, cloth, timber, spice, horses, reeds, ore) once a city of that kind has its specialty building or reaches level 5. Each good gives an empire-wide bonus. <b>Trade agreements</b> share all goods both ways and pay both sides gold every turn, more when the peoples are unrelated.</p>
   <h3>Map modes</h3><p>Press <b>M</b> or use the Map menu: Terrain, Political (tribe colours only), Culture (stripes mark peoples under foreign rule), Specialty (and what unclaimed land would become), and Unrest.</p>
   <h3>War</h3>
   <ul><li>Select a unit: white hexes = move, red = attack, gold = capture an undefended enemy city.</li>

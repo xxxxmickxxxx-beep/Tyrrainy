@@ -1,0 +1,210 @@
+// Diplomatic states and trade agreements, mixed into Game.prototype (see game.js).
+//
+// States per pair: war (default between tribes), truce (10 turns after a peace deal; war
+// cannot be declared), peace, alliance (shared vision, defensive pact). Units can't attack
+// or enter the territory of tribes they are not at war with; allies may pass.
+// Trade agreements (peace or alliance only) share all goods both ways and pay both sides.
+import { GOODS, GOOD_BY_KEY, SPECIALTY } from './data.js';
+
+export const TRUCE_TURNS = 10;
+
+export const diplomacyMethods = {
+  relKey(a, b) { return a < b ? a + '|' + b : b + '|' + a; },
+  relation(a, b) {
+    this.relations = this.relations || {};
+    const r = this.relations[this.relKey(a, b)];
+    if (!r) return { state: 'war', since: 0 };
+    if (r.state === 'truce' && this.turn >= r.until) { r.state = 'peace'; }
+    return r;
+  },
+  atWar(a, b) { return a !== b && a >= 0 && b >= 0 && this.relation(a, b).state === 'war'; },
+  allied(a, b) { return a !== b && this.relation(a, b).state === 'alliance'; },
+  setRelation(a, b, state, extra = {}) {
+    this.relations = this.relations || {};
+    this.relations[this.relKey(a, b)] = { state, since: this.turn, ...extra };
+    this._thr = null;
+  },
+  hasMet(a, b) { return a === b || !!this.players[a]?.met?.[b]; },
+  warsOf(pid) { return this.contenders().filter(p => p.id !== pid && this.hasMet(pid, p.id) && this.atWar(pid, p.id)).map(p => p.id); },
+
+  // move each side's units out of the other's land when the fighting stops
+  evict(a, b) {
+    for (const u of this.units.slice()) {
+      const other = u.owner === a ? b : u.owner === b ? a : -1;
+      if (other < 0 || this.tiles[u.idx].owner !== other) continue;
+      const seen = new Set([u.idx]), q = [u.idx];
+      let dest = null;
+      while (q.length && dest === null && seen.size < 400) {
+        const cur = q.shift();
+        for (const n of this.neighbors(cur)) {
+          if (seen.has(n)) continue;
+          seen.add(n);
+          if (this.moveCost(u, n, n) === Infinity) continue;
+          const o = this.tiles[n].owner;
+          if (!this.unitAt(n) && (o < 0 || o === u.owner || this.atWar(u.owner, o) || this.allied(u.owner, o))) { dest = n; break; }
+          q.push(n);
+        }
+      }
+      if (dest === null) this.disband(u); else { u.idx = dest; this.rebuildUnitMap(); }
+    }
+  },
+
+  makePeace(a, b) {
+    this.setRelation(a, b, 'truce', { until: this.turn + TRUCE_TURNS });
+    this.evict(a, b);
+    this.addLog(`${this.players[a].name} and ${this.players[b].name} make peace.`, a);
+    this.emit('diplo', { type: 'peace', a, b });
+  },
+  canDeclareWar(a, b) {
+    const r = this.relation(a, b);
+    if (r.state === 'war') return { ok: false, why: 'Already at war' };
+    if (r.state === 'truce') return { ok: false, why: `Truce holds for ${r.until - this.turn} more turns` };
+    return { ok: true };
+  },
+  declareWar(a, b, quiet = false) {
+    const chk = this.canDeclareWar(a, b);
+    if (!chk.ok) return chk;
+    const was = this.relation(a, b).state;
+    this.setRelation(a, b, 'war');
+    this.endTrade(a, b, true);
+    // treachery is remembered: the victim, and everyone who knows the aggressor
+    this.addGrudge(b, a, was === 'alliance' ? 60 : 40);
+    for (const p of this.players) if (p.alive && p.id !== a && p.id !== b && this.hasMet(p.id, a)) this.addGrudge(p.id, a, was === 'alliance' ? 15 : 8);
+    if (!quiet) this.addLog(`${this.players[a].name} declares war on ${this.players[b].name}!`, a);
+    this.emit('diplo', { type: 'war', a, b });
+    // defensive pacts
+    for (const p of this.players) {
+      if (!p.alive || p.id === a || p.id === b || !this.allied(p.id, b) || this.allied(p.id, a)) continue;
+      if (this.relation(p.id, a).state === 'war') continue;
+      this.setRelation(p.id, a, 'war');
+      this.endTrade(p.id, a, true);
+      this.addLog(`${p.name} honours its alliance and joins the war against ${this.players[a].name}.`, p.id);
+    }
+    return { ok: true };
+  },
+  formAlliance(a, b) {
+    this.setRelation(a, b, 'alliance');
+    this.addLog(`${this.players[a].name} and ${this.players[b].name} form an alliance.`, a);
+    this.emit('diplo', { type: 'alliance', a, b });
+    this.updateVision(a); this.updateVision(b);
+  },
+  breakAlliance(a, b) {
+    if (!this.allied(a, b)) return { ok: false, why: 'Not allied' };
+    this.setRelation(a, b, 'peace');
+    this.addGrudge(b, a, 10);
+    this.addLog(`${this.players[a].name} ends its alliance with ${this.players[b].name}.`, a);
+    return { ok: true };
+  },
+
+  // ---- goods & trade
+  produces(city) { return city.buildings.includes(SPECIALTY[city.specialty].building) || city.level >= 5; },
+  goodsProduced(pid) {
+    const s = new Set();
+    for (const c of this.cities) if (c.owner === pid && this.produces(c)) s.add(GOODS[c.specialty].key);
+    return s;
+  },
+  tradePartners(pid) {
+    return (this.trades || []).filter(t => t.a === pid || t.b === pid).map(t => t.a === pid ? t.b : t.a).filter(o => this.players[o]?.alive);
+  },
+  goodsAccess(pid) {
+    if (this._goods?.key === this.turn + ':' + this.cities.length + ':' + (this.trades || []).length && this._goods.map[pid]) return this._goods.map[pid];
+    if (this._goods?.key !== this.turn + ':' + this.cities.length + ':' + (this.trades || []).length) this._goods = { key: this.turn + ':' + this.cities.length + ':' + (this.trades || []).length, map: {} };
+    const s = this.goodsProduced(pid);
+    for (const o of this.tradePartners(pid)) for (const k of this.goodsProduced(o)) s.add(k);
+    this._goods.map[pid] = s;
+    return s;
+  },
+  hasGood(pid, key) { return pid >= 0 && this.goodsAccess(pid).has(key); },
+  tradeGain(pid, partner) {
+    const mine = this.goodsProduced(pid);
+    return [...this.goodsProduced(partner)].filter(k => !mine.has(k));
+  },
+  tradeLimit(pid) { return 1 + Math.floor(this.cities.filter(c => c.owner === pid).length / 4); },
+  // gold each side earns per turn: base 1, +1 per new good gained (max 3), +1 between unrelated peoples
+  tradeIncomeFor(pid, partner) {
+    return 1 + Math.min(3, this.tradeGain(pid, partner).length) + (this.related(this.players[pid].culture, this.players[partner].culture) ? 0 : 1);
+  },
+  tradeIncome(pid) { let s = 0; for (const o of this.tradePartners(pid)) s += this.tradeIncomeFor(pid, o); return s; },
+  trading(a, b) { return (this.trades || []).some(t => (t.a === a && t.b === b) || (t.a === b && t.b === a)); },
+  canTrade(a, b) {
+    if (a === b || !this.players[b]?.alive) return { ok: false, why: 'No such tribe' };
+    if (!this.hasMet(a, b)) return { ok: false, why: 'Not met' };
+    if (this.atWar(a, b)) return { ok: false, why: 'At war' };
+    if (this.trading(a, b)) return { ok: false, why: 'Already trading' };
+    if (this.tradePartners(a).length >= this.tradeLimit(a)) return { ok: false, why: `Your trade limit is ${this.tradeLimit(a)} (1 + 1 per 4 cities)` };
+    if (this.tradePartners(b).length >= this.tradeLimit(b)) return { ok: false, why: 'They have no room for more partners' };
+    return { ok: true };
+  },
+  startTrade(a, b) {
+    this.trades = this.trades || [];
+    this.trades.push({ a, b, since: this.turn });
+    this._goods = null;
+    this.addLog(`${this.players[a].name} and ${this.players[b].name} open trade.`, a);
+    this.emit('diplo', { type: 'trade', a, b });
+  },
+  endTrade(a, b, quiet = false) {
+    const before = (this.trades || []).length;
+    this.trades = (this.trades || []).filter(t => !((t.a === a && t.b === b) || (t.a === b && t.b === a)));
+    this._goods = null;
+    if (!quiet && this.trades.length < before) this.addLog(`Trade between ${this.players[a].name} and ${this.players[b].name} ends.`, a);
+  },
+
+  // ---- offers
+  // AI answers at once; a human answers at the start of their next turn.
+  offer(from, to, type) {
+    const pre = this.offerCheck(from, to, type);
+    if (!pre.ok) return pre;
+    if (this.players[to].human) {
+      this.offers = (this.offers || []).filter(o => !(o.from === from && o.to === to && o.type === type));
+      this.offers.push({ from, to, type, turn: this.turn });
+      return { ok: true, pending: true };
+    }
+    const yes = this.aiAccepts(to, from, type);
+    if (yes) this.applyOffer(from, to, type);
+    return { ok: true, accepted: yes };
+  },
+  offerCheck(from, to, type) {
+    if (!this.hasMet(from, to)) return { ok: false, why: 'You have not met them' };
+    const st = this.relation(from, to).state;
+    if (type === 'peace' && st !== 'war') return { ok: false, why: 'Not at war' };
+    if (type === 'alliance' && (st === 'war' || st === 'alliance')) return { ok: false, why: st === 'war' ? 'Make peace first' : 'Already allied' };
+    if (type === 'trade') return this.canTrade(from, to);
+    return { ok: true };
+  },
+  applyOffer(from, to, type) {
+    if (type === 'peace') this.makePeace(from, to);
+    else if (type === 'alliance') this.formAlliance(from, to);
+    else if (type === 'trade') this.startTrade(from, to);
+  },
+  answerOffer(o, accept) {
+    if (!(this.offers || []).includes(o)) return { ok: false, why: 'Offer no longer stands' };
+    this.offers = this.offers.filter(x => x !== o);
+    if (accept && this.offerCheck(o.from, o.to, o.type).ok) { this.applyOffer(o.from, o.to, o.type); return { ok: true }; }
+    if (accept) { this.addLog(`The ${o.type} offer from ${this.players[o.from].name} has lapsed.`, o.to); return { ok: false, why: 'The offer has lapsed' }; }
+    this.addLog(`${this.players[o.to].name} declines ${this.players[o.from].name}'s ${o.type} offer.`, o.to);
+    // a refusal makes the AI wait longer before asking again
+    const f = this.players[o.from];
+    if (f.lastOffer) f.lastOffer[o.to + o.type] = this.turn + 10;
+    return { ok: true };
+  },
+  // How an AI judges an offer, using the same hostility weights that drive its wars.
+  aiAccepts(pid, from, type) {
+    if (!this.players[pid].alive) return false;
+    const h = this.hostility(pid, from);
+    const myP = this.power(pid), theirP = this.power(from);
+    if (type === 'peace') {
+      const age = this.turn - (this.relation(pid, from).since || 0);
+      if (this.players[pid].temper?.joined === from) return myP < theirP * 0.5; // coalition members don't fold easily
+      if (myP >= theirP * 1.5 && age < 25 && h >= 1.1) return false; // winning: press on
+      return h < 1.6 || myP < theirP * 0.7 || (age >= 20 && h < 2.2);
+    }
+    if (type === 'trade') return h < 1.9 && (this.tradeGain(pid, from).length > 0 || this.tradeIncomeFor(pid, from) >= 2);
+    if (type === 'alliance') {
+      const T = this.players[pid].temper, F = this.players[from].temper;
+      const sameCoalition = T && T.joined >= 0 && (F ? F.joined === T.joined : this.atWar(from, T.joined));
+      const sharedEnemy = this.warsOf(pid).some(e => this.atWar(from, e) && this.hostility(pid, e) > 1.5);
+      return h < 1.3 && (sameCoalition || sharedEnemy);
+    }
+    return false;
+  },
+};

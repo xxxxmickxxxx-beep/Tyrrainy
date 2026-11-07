@@ -166,6 +166,24 @@ export const BUILDINGS = {
   deepmine:     { name: 'Deep Mine', cost: 8, special: 'mountain', desc: '+3 gold per turn.', gold: 3 },
 };
 
+// ---------------- Trade goods ----------------
+// Each specialty yields a good once a city of that kind has its specialty building or reaches
+// level 5. Having a good (producing it, or importing it through a trade agreement) grants an
+// empire-wide bonus. Homeland bias makes some goods hard to make yourself; trade fills the gap.
+export const GOODS = {
+  plains:    { key: 'grain',   name: 'Grain',     desc: 'Settlers cost 2 less; new cities start with +1 pop.' },
+  hilltop:   { key: 'stone',   name: 'Stone',     desc: 'Buildings cost 1 less.' },
+  coastal:   { key: 'saltfish', name: 'Salt fish', desc: 'Units heal 1 more per turn.' },
+  riverside: { key: 'cloth',   name: 'Cloth',     desc: '+1 gold in every city of level 4+.' },
+  forest:    { key: 'timber',  name: 'Timber',    desc: 'Tile improvements cost 1 less.' },
+  desert:    { key: 'spice',   name: 'Spice',     desc: 'Festivals cost half and their riot risk is 10% lower.' },
+  steppe:    { key: 'horses',  name: 'Horses',    desc: 'Mounted units cost 1 less.' },
+  marsh:     { key: 'reeds',   name: 'Reeds',     desc: 'Grain dole and Patronage cost 1 gold less per turn.' },
+  mountain:  { key: 'ore',     name: 'Ore',       desc: 'Foot soldiers cost 1 less.' },
+};
+export const GOOD_KEYS = Object.values(GOODS).map(g => g.key);
+export const GOOD_BY_KEY = Object.fromEntries(Object.values(GOODS).map(g => [g.key, g]));
+
 // ---------------- Subsidies ----------------
 // Escalating ways to buy calm in a city. Every tier stops the city paying taxes;
 // higher tiers also draw on the treasury each turn.

@@ -66,7 +66,7 @@ export function field(g, target, u, cache) {
 
 function enemiesNear(g, pid, i, rad) {
   let n = 0;
-  for (const u of g.units) if (u.owner !== pid && g.dist(u.idx, i) <= rad && UNITS[u.type].atk > 0) n++;
+  for (const u of g.units) if (u.owner !== pid && g.atWar(pid, u.owner) && g.dist(u.idx, i) <= rad && UNITS[u.type].atk > 0) n++;
   return n;
 }
 
@@ -78,6 +78,7 @@ export function runAI(g, pid) {
   const prof = profile(g, pid);
   const cache = new Map();
   g.rebuildUnitMap();
+  diplomacyAct(g, pid);
 
   const myCities = () => g.cities.filter(c => c.owner === pid);
   const military = () => g.units.filter(u => u.owner === pid && u.type !== 'settler');
@@ -97,10 +98,58 @@ export function runAI(g, pid) {
   spend(g, pid, prof);
 }
 
+// ---------------- diplomacy
+// War thresholds by temperament: the hostility at which a tribe at peace reaches for the sword.
+const WAR_AT = { opportunist: 1.9, vengeful: 2.0, balancer: 2.2, steadfast: 2.4, appeaser: 2.7 };
+
+function diplomacyAct(g, pid) {
+  const pl = g.players[pid];
+  const T = pl.temper;
+  if (!T || !g.cities.some(c => c.owner === pid)) return;
+  pl.lastOffer = pl.lastOffer || {};
+  const myP = g.power(pid);
+  const others = g.contenders().filter(p => p.id !== pid && g.hasMet(pid, p.id));
+  const offerOk = (o, type) => (g.turn - (pl.lastOffer[o + type] ?? -99)) >= 5;
+  const offer = (o, type) => { pl.lastOffer[o + type] = g.turn; return g.offer(pid, o, type); };
+  for (const o of others) {
+    const r = g.relation(pid, o.id);
+    const h = g.hostility(pid, o.id);
+    const theirP = g.power(o.id);
+    const wars = g.warsOf(pid).length;
+    if (r.state === 'war') {
+      const age = g.turn - (r.since || 0);
+      const losing = myP < theirP * 0.6;
+      const containing = T.joined === o.id;
+      const weary = age >= 25;
+      if (offerOk(o.id, 'peace') && ((age >= 8 && h < 1.5 && !containing) || (losing && age >= 5) || (wars >= 3 && h < 2) || (weary && h < 2.2))) offer(o.id, 'peace');
+      continue;
+    }
+    if (r.state === 'truce') continue;
+    // peace or alliance
+    if (r.state === 'alliance') {
+      if (h > 2.1) g.breakAlliance(pid, o.id);
+      continue;
+    }
+    const thr = (WAR_AT[T.key] ?? 2.2) - (T.joined === o.id ? 0.6 : 0);
+    // 1. hostile and able
+    if (h > thr && myP >= theirP * 0.8 && wars < 2) { g.declareWar(pid, o.id); continue; }
+    // 2. tempting prey: a much weaker neighbour on our border, weighed by appetite
+    const x = g.threats(pid).by[o.id];
+    const near = x && x.dmin <= 8;
+    const appetite = (T.opportunism ?? 0.8) * 0.5 + (T.bully ?? 0) + ((T.grudges[o.id] || 0) > 20 ? 0.4 : 0);
+    if (near && wars === 0 && myP >= theirP * 1.5 && g.rng() < 0.05 * appetite) { g.declareWar(pid, o.id); continue; }
+    // 3. idle riches: a large treasury and a standing army look for a use
+    if (near && wars === 0 && pl.gold > 250 && myP >= theirP * 1.1 && g.rng() < 0.03 * (0.5 + appetite)) { g.declareWar(pid, o.id); continue; }
+    if (offerOk(o.id, 'trade') && g.canTrade(pid, o.id).ok && g.tradeIncomeFor(pid, o.id) >= 2 && h < 1.9) offer(o.id, 'trade');
+    if (offerOk(o.id, 'alliance') && g.aiAccepts(pid, o.id, 'alliance')) offer(o.id, 'alliance');
+  }
+}
+
 function opportunism(g, pid) { return g.players[pid].temper?.opportunism ?? 0.8; }
 
 // Is enemy unit e threatening one of pid's cities? Self-defence ignores diplomacy.
 function threatensUs(g, pid, e) {
+  if (!g.atWar(pid, e.owner)) return false;
   for (const c of g.cities) if (c.owner === pid && g.dist(c.idx, e.idx) <= 1) return true;
   return false;
 }
@@ -192,7 +241,7 @@ function militaryAct(g, u, cache, prof) {
     let bs = 0;
     const pl = g.players[pid];
     for (const c of g.cities) {
-      if (c.owner === pid || !pl.explored[c.idx]) continue;
+      if (c.owner === pid || !pl.explored[c.idx] || !g.atWar(pid, c.owner)) continue;
       const d = g.dist(c.idx, u.idx);
       const gar = g.unitAt(c.idx);
       const ease = !gar ? 2.5 * opportunism(g, pid) : 1.6 / (1 + g.stats(gar).def * gar.hp / g.maxHp(gar) * g.defenseBonus(gar) * 0.4);
@@ -200,7 +249,7 @@ function militaryAct(g, u, cache, prof) {
       if (sc > bs) { bs = sc; target = c.idx; }
     }
     for (const e of g.units) {
-      if (e.owner === pid || g.isHiddenFrom(e, pid)) continue;
+      if (e.owner === pid || g.isHiddenFrom(e, pid) || !g.atWar(pid, e.owner)) continue;
       const d = g.dist(e.idx, u.idx);
       if (d > 4) continue;
       const sc = targetWeight(g, pid, e, e.hp <= 4) * 1.3 / (d + 4);
@@ -210,7 +259,7 @@ function militaryAct(g, u, cache, prof) {
   if (target === null) {
     // nearby enemy units within 3 - engage
     for (const e of g.units) {
-      if (e.owner !== pid && g.dist(e.idx, u.idx) <= 3 && !g.isHiddenFrom(e, pid) && targetWeight(g, pid, e, false) >= 0.8) { target = e.idx; break; }
+      if (e.owner !== pid && g.atWar(pid, e.owner) && g.dist(e.idx, u.idx) <= 3 && !g.isHiddenFrom(e, pid) && targetWeight(g, pid, e, false) >= 0.8) { target = e.idx; break; }
     }
   }
   if (target === null) target = exploreTarget(g, u);
