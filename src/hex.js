@@ -6,11 +6,14 @@ export const SQRT3 = Math.sqrt(3);
 const EVEN_DIRS = [[+1, 0], [0, -1], [-1, -1], [-1, 0], [-1, +1], [0, +1]];
 const ODD_DIRS = [[+1, 0], [+1, -1], [0, -1], [-1, 0], [0, +1], [+1, +1]];
 
-export function neighborsOf(c, r, W, H) {
+// wrap: the map is a cylinder, east and west edges join
+export function neighborsOf(c, r, W, H, wrap = false) {
   const dirs = (r & 1) ? ODD_DIRS : EVEN_DIRS;
   const out = [];
   for (const [dc, dr] of dirs) {
-    const nc = c + dc, nr = r + dr;
+    let nc = c + dc;
+    const nr = r + dr;
+    if (wrap) nc = (nc + W) % W;
     if (nc >= 0 && nc < W && nr >= 0 && nr < H) out.push([nc, nr]);
   }
   return out;
@@ -22,10 +25,16 @@ export function toCube(c, r) {
   return [x, -x - z, z];
 }
 
-export function hexDist(c1, r1, c2, r2) {
+function cubeDist(c1, r1, c2, r2) {
   const [x1, y1, z1] = toCube(c1, r1);
   const [x2, y2, z2] = toCube(c2, r2);
   return Math.max(Math.abs(x1 - x2), Math.abs(y1 - y2), Math.abs(z1 - z2));
+}
+// wrapW: the map's width when east and west join (the shorter way round counts)
+export function hexDist(c1, r1, c2, r2, wrapW = 0) {
+  const d = cubeDist(c1, r1, c2, r2);
+  if (!wrapW) return d;
+  return Math.min(d, cubeDist(c1, r1, c2 + wrapW, r2), cubeDist(c1, r1, c2 - wrapW, r2));
 }
 
 // Pixel center of a hex of "size" (center-to-corner radius).

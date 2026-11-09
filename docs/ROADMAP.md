@@ -68,7 +68,23 @@ Ruins and unclaimed land slowly regrow.
 2. **Shared victory:** should vassals share their overlord's victory, or does a vassal still "lose"? This affects whether humans would ever accept vassalage.
 3. **Rival goods:** should two tribes producing the same good compete on price? The simple version just ignores duplicates.
 
-## Production chains: status
-- Done: bronze (copper + tin), cloth (wool), the iron age (iron ore + timber → iron; metal substitution), food and luxuries.
-- Done: tributaries, the production-chain view (P), and vassals in the Histomap. Next in the agreed order: the gold-role pass. See docs/GOLD-PROPOSAL.md (awaiting decisions).
-- Deferred: rations (salt + food) for armies fighting outside their own borders.
+## Status: economy, projects and the gold-role pass (paused here)
+**Done:**
+- Scarce goods: bronze, cloth, the iron age, food and luxuries.
+- Physical trade routes with tolls and raiding.
+- Tributaries, the production-chain view (P), and vassals in the Histomap.
+- The gold-role pass, phases 1–3 (docs/GOLD-PROPOSAL.md): knowledge, labor and hurrying, gifts.
+- Technology upkeep and dark ages.
+- Unit upgrades, roads, repeatable city projects, and grand projects (four, one per tribe; Imperial Granaries on Engineering).
+- Not done from the original list above: §4 cultural pull and §5 free towns.
+
+**Known issues, to pick up later:**
+- **Great Library:** never built in sims. Philosophy comes late, the AI runs one grand project at a time, and the 4 cloth it needs is rare. Proposed fix: the AI ranks it first once it has Philosophy, and the cloth is dropped or swapped for wool.
+- Tech pace runs slightly fast late: about 19 techs by turn 120.
+- One sim game ended with a treasury of about 3,000 gold. Hurrying should absorb this; worth watching.
+- The production-chain diagram's edges cross its middle columns.
+- The top bar wraps on wide screens.
+- Deferred: rations for armies outside their borders, sea blockades by warships, and AI route escorts.
+- **New since real continents:** the AI has had little reason to cross water before, so how well it expands overseas is unverified.
+
+**Next focus:** subjects (docs/SUBJECTS-PROPOSAL.md) and map generation. Map generation is done: plate-based continents and archipelagos, and an east–west wrap.

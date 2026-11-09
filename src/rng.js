@@ -41,16 +41,19 @@ export function makeNoise(seed) {
   for (let i = 0; i < vals.length; i++) vals[i] = rng();
   const smooth = (t) => t * t * (3 - 2 * t);
   const at = (x, y) => vals[((y & (P - 1)) * P) + (x & (P - 1))];
-  const base = (x, y) => {
+  // period (an integer, in lattice cells): the noise repeats every `period` in x
+  const base = (x, y, period) => {
     const xi = Math.floor(x), yi = Math.floor(y);
     const tx = smooth(x - xi), ty = smooth(y - yi);
-    const a = at(xi, yi), b = at(xi + 1, yi), c = at(xi, yi + 1), d = at(xi + 1, yi + 1);
+    let x0 = xi, x1 = xi + 1;
+    if (period) { x0 = ((x0 % period) + period) % period; x1 = ((x1 % period) + period) % period; }
+    const a = at(x0, yi), b = at(x1, yi), c = at(x0, yi + 1), d = at(x1, yi + 1);
     return a + (b - a) * tx + (c - a) * ty + (a - b - c + d) * tx * ty;
   };
-  return (x, y, octaves = 4) => {
+  return (x, y, octaves = 4, period = 0) => {
     let amp = 1, freq = 1, sum = 0, norm = 0;
     for (let o = 0; o < octaves; o++) {
-      sum += base(x * freq + o * 31.7, y * freq + o * 17.3) * amp;
+      sum += base(x * freq + o * 31, y * freq + o * 17.3, period * freq) * amp;
       norm += amp;
       amp *= 0.5;
       freq *= 2;

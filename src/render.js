@@ -41,9 +41,16 @@ export class Renderer {
     this.dirty = true;
   }
 
+  // on a wrapping map the world width is exactly one period: the world repeats east–west
   worldSize() {
     const g = this.game;
-    return [this.size * SQRT3 * (g.W + 0.5), this.size * 1.5 * (g.H - 1) + this.size * 2];
+    return [this.size * SQRT3 * (g.W + (g.wrap ? 0 : 0.5)), this.size * 1.5 * (g.H - 1) + this.size * 2];
+  }
+  // x2 moved by whole world widths to sit nearest x: lines across the seam stay short
+  near(x, x2) {
+    if (!this.game.wrap) return x2;
+    const P = this.size * SQRT3 * this.game.W;
+    return x2 + P * Math.round((x - x2) / P);
   }
 
   centerOn(i) {
@@ -57,7 +64,8 @@ export class Renderer {
 
   clampCam() {
     const [ww, wh] = this.worldSize();
-    this.camX = Math.max(-this.vw * 0.5, Math.min(ww - this.vw * 0.5, this.camX));
+    if (this.game?.wrap) this.camX = ((this.camX % ww) + ww) % ww;
+    else this.camX = Math.max(-this.vw * 0.5, Math.min(ww - this.vw * 0.5, this.camX));
     this.camY = Math.max(-this.vh * 0.5, Math.min(wh - this.vh * 0.5, this.camY));
   }
 
@@ -71,7 +79,8 @@ export class Renderer {
   }
 
   screenToTile(px, py) {
-    const [c, r] = pixelToHex(px + this.camX, py + this.camY, this.size);
+    let [c, r] = pixelToHex(px + this.camX, py + this.camY, this.size);
+    if (this.game.wrap) c = ((c % this.game.W) + this.game.W) % this.game.W;
     if (c < 0 || r < 0 || c >= this.game.W || r >= this.game.H) return null;
     return r * this.game.W + c;
   }
@@ -79,7 +88,7 @@ export class Renderer {
   tileCenter(i) {
     const [c, r] = this.game.cr(i);
     const [x, y] = hexToPixel(c, r, this.size);
-    return [x - this.camX, y - this.camY];
+    return [x - this.camX + (this._ox || 0), y - this.camY];
   }
 
   addAnim(a) { a.t0 = performance.now(); this.anims.push(a); this.dirty = true; }
@@ -89,6 +98,19 @@ export class Renderer {
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     ctx.fillStyle = '#0b1622';
     ctx.fillRect(0, 0, this.vw, this.vh);
+    // a wrapping world is drawn once per copy that shows on screen
+    const P = this.worldSize()[0];
+    const copies = g.wrap ? [-1, 0, 1, 2].filter(k => k * P - this.camX < this.vw + S * 2 && (k + 1) * P - this.camX > -S * 2) : [0];
+    const now = performance.now();
+    for (const k of copies) { this._ox = k * P; this.drawWorld(now); }
+    this._ox = 0;
+    this.anims = this.anims.filter(a => now - a.t0 < a.dur);
+    this.dirty = this.anims.length > 0;
+  }
+
+  drawWorld(now) {
+    const g = this.game, ctx = this.ctx, S = this.size;
+    const camX = this.camX - this._ox;
     const pl = g.players[this.viewer];
     const explored = this.revealAll ? null : pl.explored;
     const vis = this.revealAll ? null : (pl._vis || g.vision(this.viewer));
@@ -96,8 +118,8 @@ export class Renderer {
     // visible tile range
     const r0 = Math.max(0, Math.floor((this.camY - S) / (S * 1.5)));
     const r1 = Math.min(g.H - 1, Math.ceil((this.camY + this.vh + S) / (S * 1.5)));
-    const c0 = Math.max(0, Math.floor(this.camX / (S * SQRT3)) - 1);
-    const c1 = Math.min(g.W - 1, Math.ceil((this.camX + this.vw) / (S * SQRT3)) + 1);
+    const c0 = Math.max(0, Math.floor(camX / (S * SQRT3)) - 1);
+    const c1 = Math.min(g.W - 1, Math.ceil((camX + this.vw) / (S * SQRT3)) + 1);
     const list = [];
     for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) list.push(r * g.W + c);
 
@@ -128,7 +150,8 @@ export class Renderer {
       const tl = g.tiles[i];
       if (!tl.river || tl.riverTo < 0) continue;
       const [x, y] = this.tileCenter(i);
-      const [x2, y2] = this.tileCenter(tl.riverTo);
+      let [x2, y2] = this.tileCenter(tl.riverTo);
+      x2 = this.near(x, x2);
       ctx.strokeStyle = '#4aa6e0';
       ctx.lineWidth = Math.max(2, S * 0.16);
       ctx.beginPath(); ctx.moveTo(x, y);
@@ -177,7 +200,7 @@ export class Renderer {
           if (n < i || !g.isRoad(n) || !(g.tiles[i].road || g.tiles[n].road)) continue;
           if (explored && !explored[n]) continue;
           const [x2, y2] = this.tileCenter(n);
-          ctx.moveTo(x, y); ctx.lineTo(x2, y2);
+          ctx.moveTo(x, y); ctx.lineTo(this.near(x, x2), y2);
         }
       }
       ctx.stroke();
@@ -239,7 +262,6 @@ export class Renderer {
       }
     }
     // units
-    const now = performance.now();
     for (const u of g.units) {
       if (vis && !vis[u.idx]) continue;
       if (g.isHiddenFrom(u, this.viewer) && !this.revealAll) continue;
@@ -247,7 +269,8 @@ export class Renderer {
       const mv = this.anims.find(a => a.type === 'move' && a.uid === u.id);
       if (mv) {
         const t = Math.min(1, (now - mv.t0) / mv.dur);
-        const [fx, fy] = this.tileCenter(mv.from);
+        let [fx, fy] = this.tileCenter(mv.from);
+        fx = this.near(x, fx);
         const e = t * (2 - t);
         x = fx + (x - fx) * e; y = fy + (y - fy) * e;
       }
@@ -284,9 +307,8 @@ export class Renderer {
     if (this.showLabels && !terrainMode) this.drawRegionLabels(explored);
     if (this.mapMode === 'trade') this.drawTrade(explored);
     // floating anims
-    this.anims = this.anims.filter(a => now - a.t0 < a.dur);
     for (const a of this.anims) {
-      const t = (now - a.t0) / a.dur;
+      const t = Math.min(1, (now - a.t0) / a.dur);
       if (a.type === 'text') {
         const [x, y] = this.tileCenter(a.idx);
         ctx.globalAlpha = 1 - t;
@@ -298,7 +320,9 @@ export class Renderer {
         ctx.fillText(a.text, x, y - S * 0.6 - t * S);
         ctx.globalAlpha = 1;
       } else if (a.type === 'shot') {
-        const [x1, y1] = this.tileCenter(a.from), [x2, y2] = this.tileCenter(a.to);
+        const [x1, y1] = this.tileCenter(a.from);
+        let [x2, y2] = this.tileCenter(a.to);
+        x2 = this.near(x1, x2);
         const px = x1 + (x2 - x1) * t, py = y1 + (y2 - y1) * t - Math.sin(t * Math.PI) * S * 0.8;
         ctx.fillStyle = '#ffeb90';
         ctx.beginPath(); ctx.arc(px, py, S * 0.1, 0, Math.PI * 2); ctx.fill();
@@ -308,7 +332,6 @@ export class Renderer {
         ctx.fillStyle = `rgba(255,80,40,${0.5 * (1 - t)})`; ctx.fill();
       }
     }
-    this.dirty = this.anims.length > 0;
   }
 
   // Fill for non-terrain map modes (land tiles only).
@@ -365,6 +388,7 @@ export class Renderer {
       if (!r.path || r.path.length < 2) continue;
       if (explored && !this.revealAll && r.a !== this.viewer && r.b !== this.viewer && !r.path.some(t => explored[t])) continue;
       const pts = r.path.map(t => this.tileCenter(t));
+      for (let k = 1; k < pts.length; k++) pts[k][0] = this.near(pts[k - 1][0], pts[k][0]);
       const draw = (col, w, dash) => {
         ctx.strokeStyle = col; ctx.lineWidth = w; ctx.setLineDash(dash);
         ctx.beginPath(); pts.forEach(([x, y], k) => k ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.stroke();
@@ -466,7 +490,7 @@ export class Renderer {
       p = this.ctx.createPattern(c, 'repeat');
       this.patterns.set(key, p);
     }
-    if (p.setTransform) p.setTransform(new DOMMatrix().translateSelf(-this.camX, -this.camY));
+    if (p.setTransform) p.setTransform(new DOMMatrix().translateSelf(-this.camX + (this._ox || 0), -this.camY));
     return p;
   }
 
@@ -480,7 +504,9 @@ export class Renderer {
       ? [[1, -1], [1, 0], [1, 1], [0, 1], [-1, 0], [0, -1]]
       : [[0, -1], [1, 0], [0, 1], [-1, 1], [-1, 0], [-1, -1]];
     return dirs.map(([dc, dr]) => {
-      const nc = c + dc, nr = r + dr;
+      let nc = c + dc;
+      const nr = r + dr;
+      if (g.wrap) nc = (nc + g.W) % g.W;
       if (nc < 0 || nr < 0 || nc >= g.W || nr >= g.H) return null;
       return nr * g.W + nc;
     });
@@ -737,6 +763,8 @@ export class Renderer {
     // viewport
     const [ww, wh] = this.worldSize();
     ctx.strokeStyle = '#fff'; ctx.lineWidth = 1;
-    ctx.strokeRect(this.camX / ww * w, this.camY / wh * h, this.vw / ww * w, this.vh / wh * h);
+    const rx = this.camX / ww * w, ry = this.camY / wh * h, rw = this.vw / ww * w, rh = this.vh / wh * h;
+    ctx.strokeRect(rx, ry, rw, rh);
+    if (g.wrap && rx + rw > w) ctx.strokeRect(rx - w, ry, rw, rh); // the view runs over the seam
   }
 }

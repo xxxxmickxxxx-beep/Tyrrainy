@@ -44,8 +44,8 @@ export class Game {
     const size = MAP_SIZES[opts.size] || MAP_SIZES.medium;
     g.W = size.W; g.H = size.H;
     g.seed = String(opts.seed ?? Math.floor(Math.random() * 1e9));
-    g.settings = { ...opts };
-    const map = generateMap(g.W, g.H, g.seed, opts.mapType);
+    g.settings = { ...opts, wrap: opts.wrap !== false };
+    const map = generateMap(g.W, g.H, g.seed, opts.mapType, g.wrap);
     g.tiles = map.tiles;
     g.elev = Array.from(map.elev);
     g.rng = makeRng(g.seed + ':game');
@@ -58,7 +58,7 @@ export class Game {
     g.winner = null;
     g.players = [];
     const nPlayers = opts.players || 4;
-    const starts = pickStarts(map, nPlayers, g.seed, (i) => g.specialtyAt(i));
+    const starts = pickStarts(map, nPlayers, g.seed, (i) => g.specialtyAt(i), g.wrap);
     const usedNames = new Set();
     for (let p = 0; p < starts.length; p++) {
       const idx = starts[p];
@@ -115,18 +115,23 @@ export class Game {
   neighbors(i) {
     if (!this._nb) {
       this._nb = new Array(this.W * this.H);
-      for (let k = 0; k < this._nb.length; k++) { const [c, r] = this.cr(k); this._nb[k] = neighborsOf(c, r, this.W, this.H).map(([nc, nr]) => nr * this.W + nc); }
+      for (let k = 0; k < this._nb.length; k++) { const [c, r] = this.cr(k); this._nb[k] = neighborsOf(c, r, this.W, this.H, this.wrap).map(([nc, nr]) => nr * this.W + nc); }
     }
     return this._nb[i];
   }
-  dist(a, b) { const [c1, r1] = this.cr(a); const [c2, r2] = this.cr(b); return hexDist(c1, r1, c2, r2); }
+  // east and west edges join (a game setting; older saves are flat)
+  get wrap() { return !!this.settings?.wrap; }
+  dist(a, b) { const [c1, r1] = this.cr(a); const [c2, r2] = this.cr(b); return hexDist(c1, r1, c2, r2, this.wrap ? this.W : 0); }
   within(i, rad) {
     const [c, r] = this.cr(i);
     const out = [];
-    for (let rr = Math.max(0, r - rad); rr <= Math.min(this.H - 1, r + rad); rr++)
-      for (let cc = Math.max(0, c - rad - 1); cc <= Math.min(this.W - 1, c + rad + 1); cc++)
-        if (hexDist(c, r, cc, rr) <= rad) out.push(rr * this.W + cc);
-    return out;
+    const W = this.W, wrap = this.wrap;
+    for (let rr = Math.max(0, r - rad); rr <= Math.min(this.H - 1, r + rad); rr++) {
+      const lo = wrap ? c - rad - 1 : Math.max(0, c - rad - 1), hi = wrap ? c + rad + 1 : Math.min(W - 1, c + rad + 1);
+      for (let cc = lo; cc <= hi; cc++)
+        if (hexDist(c, r, cc, rr) <= rad) out.push(rr * W + (wrap ? ((cc % W) + W) % W : cc));
+    }
+    return wrap ? [...new Set(out)] : out;
   }
   isWater(i) { return !!TERRAIN[this.tiles[i].t].water; }
   unitAt(i) { return this.unitMap ? this.unitMap.get(i) : this.units.find(u => u.idx === i); }

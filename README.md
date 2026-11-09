@@ -20,7 +20,7 @@ Then open http://localhost:8080. You can also double-click `index.html`, because
 *Settings → Pages → Source: GitHub Actions*. Until you do, the workflow fails at the deploy step.
 
 Options include map size (tiny to huge, 80×52), map type (continents, pangaea, archipelago, lakeland),
-2–10 tribes, 1–4 hotseat humans, a turn limit, a seed, and a "Watch AIs" spectator mode.
+map edges (east–west wrap, the default, or flat), 2–10 tribes, 1–4 hotseat humans, a turn limit, a seed, and a "Watch AIs" spectator mode.
 Games autosave to localStorage at the start of each human turn.
 
 ## Core design
@@ -286,7 +286,7 @@ Three kills make a unit a veteran.
 | File | What |
 |---|---|
 | `src/data.js` | All tunables: terrains, specialties, kinship, units, improvements, buildings, techs |
-| `src/mapgen.js` | Noise-based elevation, moisture, temperature, rivers, resources, ruins, start placement |
+| `src/mapgen.js` | Plate-based landmasses (seeds spread east–west, plate seams forced to sea, 2–5 tiles wide), periodic noise for the east–west wrap, moisture, temperature, rivers, resources, ruins, start placement |
 | `src/game.js` | Rules engine (pure, runs in node), save/load |
 | `src/ai.js` | Heuristic AI: expansion, tech valuation, combat evaluation, distance-field pathing |
 | `src/render.js` | Canvas renderer |

@@ -42,6 +42,7 @@ function startNew(watch) {
   const opts = {
     size: $('optSize').value,
     mapType: $('optType').value,
+    wrap: $('optWrap').value !== 'flat',
     players: +$('optPlayers').value,
     humans: watch ? 0 : Math.min(+$('optHumans').value, +$('optPlayers').value),
     turnLimit: +$('optTurns').value,

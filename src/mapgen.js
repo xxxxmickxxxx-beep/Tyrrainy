@@ -22,36 +22,86 @@ function quantile(sorted, q) {
   return sorted[Math.min(sorted.length - 1, Math.max(0, Math.floor(q * sorted.length)))];
 }
 
-export function generateMap(W, H, seed, type = 'continents') {
+// Landmasses come from "plates": seeds spread east–west, each tile belongs to its nearest seed
+// (by a noise-warped distance), and the seam between two plates is forced to sea. So continents
+// are genuinely separate (the old pure-noise maps always fused into one landmass), and the
+// straits between them vary: narrow ones are shallows (Sailing), wide ones open ocean
+// (Navigation). Noise is periodic east–west so the map can wrap.
+const PLATES = {
+  continents:  (W, H) => Math.max(2, Math.min(6, Math.round(W * H / 650))),
+  archipelago: (W, H) => Math.max(6, Math.round(W * H / 110)),
+  pangaea:     () => 1,
+  lakes:       () => 0, // pure noise: one land with many lakes
+};
+
+export function generateMap(W, H, seed, type = 'continents', wrap = false) {
   const rng = makeRng(seed + ':map');
   const nElev = makeNoise(rng.int(1e9));
   const nCont = makeNoise(rng.int(1e9));
   const nMoist = makeNoise(rng.int(1e9));
   const nTemp = makeNoise(rng.int(1e9));
+  const nWarpX = makeNoise(rng.int(1e9)), nWarpY = makeNoise(rng.int(1e9)), nGap = makeNoise(rng.int(1e9));
   const N = W * H;
   const elev = new Float32Array(N);
   const moist = new Float32Array(N);
   const temp = new Float32Array(N);
   const cfg = MAP_TYPES[type] || MAP_TYPES.continents;
   const scale = 8 / Math.max(W, H);
+  // sample noise at a tile, `f` times the base frequency; periodic east–west when wrapping
+  const sample = (noise, f, c, r, oct) => {
+    const px = c + 0.5 * (r & 1);
+    if (!wrap) return noise(px * scale * 1.15 * f, r * scale * 1.3 * f, oct);
+    const period = Math.max(1, Math.round(W * scale * 1.15 * f));
+    return noise(px / W * period, r * scale * 1.3 * f, oct, period);
+  };
+  // plate seeds: evenly spread in longitude, kept off the poles
+  const nPlates = (PLATES[type] || PLATES.continents)(W, H);
+  const seeds = [];
+  for (let k = 0; k < nPlates; k++) {
+    const x = nPlates === 1 ? W / 2 : (k + 0.2 + rng() * 0.6) * W / nPlates;
+    const y = H * (0.28 + rng() * 0.44);
+    seeds.push({ x, y, w: 0.85 + rng() * 0.3 }); // w: plate weight (bigger plates win more land)
+  }
+  if (type === 'archipelago') rng.shuffle(seeds).forEach(sd => { sd.y = H * (0.12 + rng() * 0.76); });
+  const warpAmp = type === 'archipelago' ? 2.5 : 5;
+  const gapBase = type === 'archipelago' ? 2.2 : 2.6;
 
   for (let r = 0; r < H; r++) {
     for (let c = 0; c < W; c++) {
       const i = r * W + c;
-      const x = (c + 0.5 * (r & 1)) * scale * 1.15, y = r * scale * 1.3;
-      let e = nElev(x * 1.6, y * 1.6, 5);
-      const cont = nCont(x * 0.55, y * 0.55, 3);
-      if (type === 'archipelago') e = e * 0.6 + nElev(x * 3.5, y * 3.5, 3) * 0.4;
-      else if (type !== 'lakes') e = e * 0.55 + cont * 0.45;
-      // edge falloff so maps are ringed by ocean
-      const dx = Math.min(c, W - 1 - c) / (W * 0.5), dy = Math.min(r, H - 1 - r) / (H * 0.5);
+      const px = c + 0.5 * (r & 1), py = r * 0.866;
+      let e = sample(nElev, 1.6, c, r, 5);
+      if (nPlates > 0) {
+        // nearest and second-nearest plate by warped distance
+        const wx = px + (sample(nWarpX, 1.1, c, r, 3) - 0.5) * 2 * warpAmp;
+        const wy = py + (sample(nWarpY, 1.1, c, r, 3) - 0.5) * 2 * warpAmp;
+        let d1 = Infinity, d2 = Infinity, s1 = null;
+        for (const sd of seeds) {
+          let dx = Math.abs(wx - sd.x);
+          if (wrap) dx = Math.min(dx, W - dx);
+          const d = Math.hypot(dx, wy - sd.y * 0.866) / sd.w;
+          if (d < d1) { d2 = d1; d1 = d; s1 = sd; } else if (d < d2) d2 = d;
+        }
+        const reach = Math.sqrt(W * H / Math.max(1, nPlates)) * 0.55; // a plate's typical radius
+        const shape = 1 - d1 / reach;
+        if (type === 'archipelago') e = e * 0.45 + sample(nElev, 3.5, c, r, 3) * 0.2 + shape * 0.45;
+        else e = e * 0.5 + shape * 0.5;
+        // the seam between plates is sea: 2–5 tiles wide
+        const gap = gapBase + sample(nGap, 0.9, c, r, 2) * 2.6;
+        if (nPlates > 1 && (d2 - d1) * s1.w < gap) e -= 1;
+      } else {
+        e = e * 0.55 + sample(nCont, 0.55, c, r, 3) * 0.45;
+      }
+      // poles are sea; east and west edges too unless the map wraps
+      const dy = Math.min(r, H - 1 - r) / (H * 0.5);
+      const dx = wrap ? 1 : Math.min(c, W - 1 - c) / (W * 0.5);
       const edge = Math.min(dx, dy);
       const fall = type === 'lakes' ? 0.12 : 0.35;
       e -= Math.max(0, fall - edge * 1.6) * 1.1;
       elev[i] = e;
-      moist[i] = nMoist(x * 2.2, y * 2.2, 4);
+      moist[i] = sample(nMoist, 2.2, c, r, 4);
       const lat = 1 - Math.abs(r / (H - 1) - 0.5) * 2; // 1 at equator
-      temp[i] = lat * 0.65 + nTemp(x * 1.3, y * 1.3, 3) * 0.55;
+      temp[i] = lat * 0.65 + sample(nTemp, 1.3, c, r, 3) * 0.55;
     }
   }
 
@@ -89,7 +139,7 @@ export function generateMap(W, H, seed, type = 'continents') {
     const i = r * W + c;
     if (elev[i] >= sea) continue;
     let nearLand = false;
-    for (const [nc, nr] of neighborsOf(c, r, W, H)) if (elev[nr * W + nc] >= sea) nearLand = true;
+    for (const [nc, nr] of neighborsOf(c, r, W, H, wrap)) if (elev[nr * W + nc] >= sea) nearLand = true;
     if (nearLand || elev[i] > sea - 0.025) tiles[i].t = 'shallows';
   }
 
@@ -108,7 +158,7 @@ export function generateMap(W, H, seed, type = 'continents') {
     for (let step = 0; step < 60; step++) {
       const c = cur % W, r = (cur / W) | 0;
       let best = -1, bestE = Infinity;
-      for (const [nc, nr] of neighborsOf(c, r, W, H)) {
+      for (const [nc, nr] of neighborsOf(c, r, W, H, wrap)) {
         const ni = nr * W + nc;
         if (seen.has(ni)) continue;
         const ee = elev[ni] + rng() * 0.02;
@@ -137,7 +187,7 @@ export function generateMap(W, H, seed, type = 'continents') {
   for (let i = 0; i < N; i++) {
     if (tiles[i].t !== 'hills' && tiles[i].t !== 'mountain') continue;
     const c = i % W, r = (i / W) | 0;
-    metal[i] = nMetal((c + 0.5 * (r & 1)) * scale * 0.5, r * scale * 0.55, 2);
+    metal[i] = sample(nMetal, 0.45, c, r, 2);
     rocky.push(metal[i]);
   }
   rocky.sort((a, b) => a - b);
@@ -165,11 +215,11 @@ export function generateMap(W, H, seed, type = 'continents') {
     const i = rng.pick(landIdx);
     if (tiles[i].t !== 'mountain') tiles[i].ruin = true;
   }
-  return { W, H, tiles, elev };
+  return { W, H, tiles, elev, wrap };
 }
 
 // Choose spread-out start tiles with as much biome variety as possible.
-export function pickStarts(map, count, seed, specialtyOf) {
+export function pickStarts(map, count, seed, specialtyOf, wrap = false) {
   const rng = makeRng(seed + ':starts');
   const { W, H, tiles } = map;
   // land connectivity: component sizes
@@ -181,7 +231,7 @@ export function pickStarts(map, count, seed, specialtyOf) {
     const st = [i]; comp[i] = id;
     while (st.length) {
       const cur = st.pop(); size++;
-      for (const [nc, nr] of neighborsOf(cur % W, (cur / W) | 0, W, H)) {
+      for (const [nc, nr] of neighborsOf(cur % W, (cur / W) | 0, W, H, wrap)) {
         const ni = nr * W + nc;
         if (comp[ni] < 0 && !TERRAIN[tiles[ni].t].water) { comp[ni] = id; st.push(ni); }
       }
@@ -194,10 +244,10 @@ export function pickStarts(map, count, seed, specialtyOf) {
     if (TERRAIN[t].water || t === 'mountain') continue;
     if (compSize[comp[i]] < 14) continue;
     const c = i % W, r = (i / W) | 0;
-    if (c < 2 || r < 2 || c >= W - 2 || r >= H - 2) continue;
+    if (r < 2 || r >= H - 2 || (!wrap && (c < 2 || c >= W - 2))) continue;
     // count usable land around
     let land = 0;
-    for (const [nc, nr] of neighborsOf(c, r, W, H)) if (!TERRAIN[tiles[nr * W + nc].t].water) land++;
+    for (const [nc, nr] of neighborsOf(c, r, W, H, wrap)) if (!TERRAIN[tiles[nr * W + nc].t].water) land++;
     if (land < 4) continue;
     cand.push(i);
   }
@@ -211,7 +261,7 @@ export function pickStarts(map, count, seed, specialtyOf) {
       if (starts.includes(i)) continue;
       const c = i % W, r = (i / W) | 0;
       let minD = 99;
-      for (const s of starts) minD = Math.min(minD, hexDist(c, r, s % W, (s / W) | 0));
+      for (const s of starts) minD = Math.min(minD, hexDist(c, r, s % W, (s / W) | 0, wrap ? W : 0));
       if (starts.length === 0) minD = 10;
       const spec = specialtyOf(i);
       const score = Math.min(minD, 14) * 2 + (usedSpec.has(spec) ? 0 : 7) + rng() * 2;
