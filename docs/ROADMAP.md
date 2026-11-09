@@ -70,5 +70,5 @@ Ruins and unclaimed land slowly regrow.
 
 ## Production chains: status
 - Done: bronze (copper + tin), cloth (wool), the iron age (iron ore + timber → iron; metal substitution), food and luxuries.
-- Done: tributaries, the production-chain view (P), and vassals in the Histomap. Next in the agreed order: the gold-role pass.
+- Done: tributaries, the production-chain view (P), and vassals in the Histomap. Next in the agreed order: the gold-role pass. See docs/GOLD-PROPOSAL.md (awaiting decisions).
 - Deferred: rations (salt + food) for armies fighting outside their own borders.
