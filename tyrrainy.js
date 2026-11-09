@@ -1735,7 +1735,8 @@ const upkeepMethods = {
 
 const INTEGRATION_TURNS = 10;
 const REVOLT_AT = 12;
-const KNOWLEDGE_PRICE = 2.2; // tech cost multiplier, calibrated to the old gold-based pace
+const KNOWLEDGE_PRICE = 2.2;
+const HURRY_GOLD = 3; // gold per missing labor point // tech cost multiplier, calibrated to the old gold-based pace
 const RIOT_AT = 6;        // no training or construction
 const INSURRECTION_AT = 9; // rebel partisans may appear
 
@@ -2052,8 +2053,9 @@ class Game {
     if (city.trainedTurn === this.turn) return { ok: false, why: 'Already trained this turn' };
     if (this.rioting(city)) return { ok: false, why: 'City is rioting' };
     const cost = this.unitCost(city, type);
-    if (this.players[city.owner].gold < cost) return { ok: false, why: `Need ${cost} gold` };
     if (this.unitCount(city.owner) >= this.unitCap(city.owner)) return { ok: false, why: 'Unit cap reached (grow cities)' };
+    const work = this.workCheck(city, cost);
+    if (!work.ok) return work;
     const U = UNITS[type];
     const goods = this.canPay(city.owner, U.needs, city);
     if (!goods.ok) return goods;
@@ -2061,14 +2063,14 @@ class Game {
     if (U.traits?.includes('naval')) spot = this.freeNeighbor(city.idx, n => this.isWater(n));
     else if (!this.unitAt(city.idx)) spot = city.idx;
     if (spot === null) return { ok: false, why: U.traits?.includes('naval') ? 'No free water tile' : 'City tile occupied' };
-    return { ok: true, cost, spot };
+    return { ok: true, cost, spot, work };
   }
 
   train(city, type) {
     const chk = this.canTrain(city, type);
     if (!chk.ok) return chk;
     this.pay(city.owner, UNITS[type].needs);
-    this.players[city.owner].gold -= chk.cost;
+    this.payWork(city, chk.work);
     city.trainedTurn = this.turn;
     const u = this.spawnUnit(city.owner, type, chk.spot);
     u.mvLeft = 0; u.attacked = true; u.acted = true;
@@ -2086,11 +2088,32 @@ class Game {
     if (B.special && B.special !== city.specialty) return { ok: false, why: 'Wrong specialty' };
     if (B.tech && !this.has(city.owner, B.tech)) return { ok: false, why: 'Requires ' + TECHS[B.tech].name };
     if (B.special && this.affinity(city) >= 3) return { ok: false, why: 'Alien culture — integrate first' };
-    const cost = this.buildingCost(city, b);
-    if (this.players[city.owner].gold < cost) return { ok: false, why: `Need ${cost} gold` };
-    return this.canPay(city.owner, B.needs, city);
+    const goods = this.canPay(city.owner, B.needs, city);
+    if (!goods.ok) return goods;
+    return this.workCheck(city, this.buildingCost(city, b));
   }
   buildingCost(city, b) { return BUILDINGS[b].cost; }
+  // ---- labor: each city's local making power (gold-role pass, phase 2)
+  laborRate(city) {
+    let r = 2 + city.level + (city.capital ? 1 : 0);
+    if (city.buildings.includes(SPECIALTY[city.specialty].building)) r += 1;
+    if (city.hunger > 0.3) r = Math.ceil(r / 2);
+    return r;
+  }
+  laborCap(city) { return 4 * this.laborRate(city); }
+  // May this tribe top up a labor shortfall with gold? Humans: yes (the button shows the price).
+  // AI: per its current policy (see ai.js).
+  hurryAllowed(pid) { const p = this.players[pid]; return p.human ? true : !!p.allowHurry; }
+  // Can `city` pay `cost` labor now, hurrying any shortfall with gold?
+  workCheck(city, cost) {
+    const pl = this.players[city.owner];
+    const have = Math.floor(city.labor || 0);
+    if (have >= cost) return { ok: true, labor: cost, gold: 0 };
+    const gold = HURRY_GOLD * (cost - have);
+    if (this.hurryAllowed(city.owner) && pl.gold >= gold) return { ok: true, labor: have, gold, hurried: true };
+    return { ok: false, why: `Needs ${cost} labor in ${city.name} (has ${have})${pl.human ? `; hurrying costs ${gold} gold` : ''}`, short: cost - have, hurryGold: gold };
+  }
+  payWork(city, w) { const pl = this.players[city.owner]; city.labor = (city.labor || 0) - w.labor; pl.gold -= w.gold; if (w.gold) pl.hurrySpent = (pl.hurrySpent || 0) + w.gold; }
   improveCost(pid, k) { return IMPROVEMENTS[k].cost; }
   // One construction per city per turn, and none while hostile troops stand next to it.
   buildBlock(city) {
@@ -2108,7 +2131,7 @@ class Game {
     const chk = this.canBuild(city, b);
     if (!chk.ok) return chk;
     const B = BUILDINGS[b];
-    this.players[city.owner].gold -= this.buildingCost(city, b);
+    this.payWork(city, chk);
     this.pay(city.owner, B.needs);
     city.buildings.push(b);
     city.builtTurn = this.turn;
@@ -2511,15 +2534,16 @@ class Game {
     const lim = this.buildBlock(city);
     if (lim) return { ok: false, why: lim };
     if (this.rioting(city)) return { ok: false, why: 'City is rioting' };
-    if (this.players[city.owner].gold < W.cost) return { ok: false, why: `Need ${W.cost} gold` };
-    return this.canPay(city.owner, W.needs, city);
+    const goods = this.canPay(city.owner, W.needs, city);
+    if (!goods.ok) return goods;
+    return this.workCheck(city, W.cost);
   }
   buildWonder(city, w) {
     const chk = this.canBuildWonder(city, w);
     if (!chk.ok) return chk;
     const W = WONDERS[w];
     const pl = this.players[city.owner];
-    pl.gold -= W.cost;
+    this.payWork(city, chk);
     this.pay(pl.id, W.needs);
     city.wonders = city.wonders || [];
     city.wonders.push(w);
@@ -2586,13 +2610,14 @@ class Game {
     if (!tl.damaged || tl.owner !== pid) return { ok: false, why: 'Nothing to repair' };
     const u = this.unitAt(i);
     if (u && u.owner !== pid && this.atWar(u.owner, pid)) return { ok: false, why: 'Enemy on the tile' };
-    if (this.players[pid].gold < this.repairCost(i)) return { ok: false, why: `Need ${this.repairCost(i)} gold` };
-    return { ok: true };
+    const city = this.cityById(tl.ownerCity);
+    if (!city) return { ok: false, why: 'No city works this tile' };
+    return this.workCheck(city, this.repairCost(i));
   }
   repair(pid, i) {
     const chk = this.canRepair(pid, i);
     if (!chk.ok) return chk;
-    this.players[pid].gold -= this.repairCost(i);
+    this.payWork(this.cityById(this.tiles[i].ownerCity), chk);
     this.tiles[i].damaged = false;
     return { ok: true };
   }
@@ -2724,8 +2749,9 @@ class Game {
     const I = IMPROVEMENTS[k];
     if (!this.improvementsFor(pid, i).includes(k)) return { ok: false, why: 'Not possible here' };
     if (I.tech && !this.has(pid, I.tech)) return { ok: false, why: 'Requires ' + TECHS[I.tech].name };
-    if (this.players[pid].gold < this.improveCost(pid, k)) return { ok: false, why: `Need ${this.improveCost(pid, k)} gold` };
-    return { ok: true };
+    const city = this.cityById(this.tiles[i].ownerCity);
+    if (!city) return { ok: false, why: 'No city works this tile' };
+    return this.workCheck(city, this.improveCost(pid, k));
   }
   improvePop(i, k) {
     const I = IMPROVEMENTS[k];
@@ -2749,7 +2775,7 @@ class Game {
     const I = IMPROVEMENTS[k];
     const tl = this.tiles[i];
     const pop = this.improvePop(i, k);
-    this.players[pid].gold -= this.improveCost(pid, k);
+    this.payWork(this.cityById(tl.ownerCity), chk);
     if (I.consume) tl.res = null; else tl.imp = k;
     tl.impPop = pop;
     const city = this.cityById(tl.ownerCity);
@@ -3265,6 +3291,7 @@ class Game {
   startTurn() {
     const pl = this.players[this.current];
     // income
+    for (const c of this.cities) if (c.owner === pl.id) c.labor = Math.min(this.laborCap(c), (c.labor || 0) + this.laborRate(c));
     this.collectGoods(pl.id);
     pl.lastKnowledge = this.knowledgeRate(pl.id).total;
     pl.knowledge = (pl.knowledge || 0) + pl.lastKnowledge;
@@ -3888,7 +3915,7 @@ function bestMilitary(g, city, gold) {
     if (k === 'settler') continue;
     const U = UNITS[k];
     const cost = g.unitCost(city, k);
-    if (cost > gold) continue;
+    if (!g.workCheck(city, cost).ok) continue;
     if (!g.canPay(city.owner, U.needs, city).ok) continue;
     // don't field more of an army than our supply can feed
     if (U.needs && Object.keys(U.needs).some(k => supplyRate(g, city.owner, k) < (g.supplyNeed(city.owner)[k] || 0) + 0.5 && g.avail(city.owner, k) < 6)) continue;
@@ -3916,6 +3943,12 @@ function researchAct(g, pid) {
 function spend(g, pid, prof) {
   const pl = g.players[pid];
   researchAct(g, pid);
+  // hurry policy: spend gold on labor only above a reserve (upkeep, subsidies, emergencies),
+  // or when a city is threatened
+  const nC = g.cities.filter(c => c.owner === pid).length;
+  const reserve = 25 + 6 * nC + 5 * g.subsidyCost(pid);
+  const threatened = g.cities.some(c => c.owner === pid && enemiesNear(g, pid, c.idx, 3) > 0);
+  pl.allowHurry = pl.gold > reserve || (threatened && pl.gold > 15);
   for (let iter = 0; iter < 30; iter++) {
     const cities = g.cities.filter(c => c.owner === pid);
     if (!cities.length) return;
@@ -3925,6 +3958,7 @@ function spend(g, pid, prof) {
     const net = g.grossIncome(pid) - g.upkeep(pid);
     const capLeft = Math.min(g.unitCap(pid) - units.length, net >= 3 || pl.gold > 40 ? 99 : 0);
     let acted = false;
+    let saving = null; // a city putting its labor aside for a settler
 
     // 0) keep the peace: compliance buildings first, festivals when revolt is near,
     //    tax relief as the reliable fallback; lift relief once the city would be fine without it
@@ -3967,9 +4001,9 @@ function spend(g, pid, prof) {
     if (settlers < 2 && cities.length + settlers < wantCities && capLeft > 0 && mil >= Math.min(2, cities.length)) {
       const c = cities.filter(c => !g.unitAt(c.idx) && c.trainedTurn !== g.turn).sort((a, b) => b.level - a.level)[0];
       if (c) {
-        const cost = g.unitCost(c, 'settler');
-        if (pl.gold >= cost) { if (g.train(c, 'settler').ok) continue; }
-        else if (pl.gold + g.income(pid) * 1.5 >= cost && cities.length < 3) return; // save up
+        if (g.train(c, 'settler').ok) continue;
+        // not enough labor yet: this city saves for the settler instead of spending on other things
+        if (g.workCheck(c, g.unitCost(c, 'settler')).short <= g.laborRate(c) * 3) saving = c;
       }
     }
 
@@ -3985,6 +4019,7 @@ function spend(g, pid, prof) {
     let bestImp = null, bestV = 0;
     for (const c of cities) {
       for (const t of g.cityTiles(c)) {
+        if (c === saving) continue;
         for (const k of g.improvementsFor(pid, t)) {
           const chk = g.canImprove(pid, t, k);
           if (!chk.ok) continue;
@@ -4000,8 +4035,10 @@ function spend(g, pid, prof) {
     const wantMil = Math.ceil(cities.length * (1 + prof.aggression)) + 1;
 
     // e) military
-    if ((mil < wantMil + (g.turn > 30 ? cities.length : 0) || pl.gold > 25) && capLeft > 0) {
-      const c = cities.filter(c => !g.unitAt(c.idx) && c.trainedTurn !== g.turn).sort((a, b) => enemiesNear(g, pid, b.idx, 8) - enemiesNear(g, pid, a.idx, 8))[0];
+    // build armies when below target, or when a city's labor would otherwise overflow
+    const fullCity = cities.some(c => c !== saving && (c.labor || 0) >= g.laborCap(c) * 0.75 && !g.unitAt(c.idx));
+    if ((mil < wantMil + (g.turn > 30 ? cities.length : 0) || fullCity) && capLeft > 0) {
+      const c = cities.filter(c => c !== saving && !g.unitAt(c.idx) && c.trainedTurn !== g.turn).sort((a, b) => enemiesNear(g, pid, b.idx, 8) - enemiesNear(g, pid, a.idx, 8))[0];
       if (c) { const k = bestMilitary(g, c, pl.gold); if (k && g.train(c, k).ok) continue; }
     }
 
@@ -4025,7 +4062,7 @@ function spend(g, pid, prof) {
     for (const c of cities) {
       for (const b of g.buildable(c)) {
         if (Object.values(RECIPES).some(R => R.building === b)) continue; // workshops are placed deliberately above
-        if (g.canBuild(c, b).ok && pl.gold - BUILDINGS[b].cost >= 2) { g.build(c, b); built = true; break; }
+        if (g.canBuild(c, b).ok) { g.build(c, b); built = true; break; }
       }
       if (built) break;
     }
@@ -4904,6 +4941,14 @@ function peopleLine(c) {
   return `<div class="row"><span>People</span><span>${cultureChip(cul)}<b>${esc(label)}</b></span></div>${note ? `<div class="desc">${note}</div>` : ''}`;
 }
 
+// Construction costs labor (⚒) from the working city; a shortfall can be hurried with gold.
+function workLabel(cost, chk) {
+  const w = chk?.work || chk || {};
+  if (w.hurried) return `⚒${cost} <span style="color:#f0c040">(hurry ◉${w.gold})</span>`;
+  if (w.hurryGold && !w.ok) return `⚒${cost} <span class="dim">(◉${w.hurryGold})</span>`;
+  return `⚒${cost}`;
+}
+
 function chip(p) { return `<span class="chip" style="background:${p.color};border-color:${p.color2 || '#111'}"></span>`; }
 
 function esc(s) { return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
@@ -5353,6 +5398,7 @@ function cityPanel(c) {
       affNote += ` Integrates in ${need - (c.held % need)} turns.`;
     }
     h += `<div class="desc">${affNote}</div>`;
+    h += `<div class="row"><span>Labor</span><span><b>⚒ ${Math.floor(c.labor || 0)}</b>/${game.laborCap(c)} <span class="dim">+${game.laborRate(c)}/turn${c.hunger > 0.3 ? ' (halved by hunger)' : ''}</span></span></div>`;
     h += `<div class="row"><span>Income</span><b>+${game.cityIncome(c)} gold</b></div>`;
     const fd = game.foodDemand(c);
     if (fd) h += `<div class="row"><span>Food</span><span>eats ${fd}/turn${c.hunger > 0 ? ` · <b style="color:${c.hunger > 0.3 ? '#ff7050' : '#e0c050'}">${Math.round(c.hunger * 100)}% unfed${c.hunger > 0.3 ? ', not growing' : ''}</b>` : ' · fed'}</span></div>`;
@@ -5371,7 +5417,7 @@ function cityPanel(c) {
       const U = UNITS[k];
       const chk = game.canTrain(c, k);
       const cost = game.unitCost(c, k);
-      h += `<button data-act="train" data-k="${k}" class="${U.unique ? 'unique' : ''}" ${chk.ok ? '' : 'disabled'} title="${esc(chk.why || '')}">${U.name} ◉${cost}<small>${U.atk}/${U.def} hp${U.hp} mv${U.mv}${U.rng > 1 ? ' r' + U.rng : ''}${U.needs ? ` <span class="needs">· ${game.goodsText(U.needs)}</span>` : ''}</small></button>`;
+      h += `<button data-act="train" data-k="${k}" class="${U.unique ? 'unique' : ''}" ${chk.ok ? '' : 'disabled'} title="${esc(chk.why || '')}">${U.name} ${workLabel(cost, chk)}<small>${U.atk}/${U.def} hp${U.hp} mv${U.mv}${U.rng > 1 ? ' r' + U.rng : ''}${U.needs ? ` <span class="needs">· ${game.goodsText(U.needs)}</span>` : ''}</small></button>`;
     }
     h += `</div>`;
     const lockedUnique = SPECIALTY[c.specialty].unit;
@@ -5380,7 +5426,7 @@ function cityPanel(c) {
     for (const b of game.buildable(c)) {
       const B = BUILDINGS[b];
       const chk = game.canBuild(c, b);
-      h += `<button data-act="build" data-k="${b}" ${chk.ok ? '' : 'disabled'} title="${esc(chk.why || '')}">${B.name} ◉${B.cost}${B.needs ? ` <span class="needs">+ ${game.goodsText(B.needs)}</span>` : ''}<small>${B.desc}</small></button>`;
+      h += `<button data-act="build" data-k="${b}" ${chk.ok ? '' : 'disabled'} title="${esc(chk.why || '')}">${B.name} ${workLabel(B.cost, chk)}${B.needs ? ` <span class="needs">+ ${game.goodsText(B.needs)}</span>` : ''}<small>${B.desc}</small></button>`;
     }
     h += `</div>`;
     const ws = Object.keys(WONDERS).filter(w => WONDERS[w].special === c.specialty);
@@ -5388,7 +5434,7 @@ function cityPanel(c) {
       const W = WONDERS[w];
       const chk = game.canBuildWonder(c, w);
       const owner = game.wonderOwner(w);
-      h += `<h4>Wonder</h4><button data-act="wonder" data-k="${w}" ${chk.ok ? '' : 'disabled'} style="width:100%;text-align:left">${W.name} ◉${W.cost}<br><small>${W.desc}${chk.ok ? '' : ' — ' + esc(chk.why)}</small></button>`;
+      h += `<h4>Wonder</h4><button data-act="wonder" data-k="${w}" ${chk.ok ? '' : 'disabled'} style="width:100%;text-align:left">${W.name} ${workLabel(W.cost, chk)}${W.needs ? ` <span class="needs">+ ${game.goodsText(W.needs)}</span>` : ''}<br><small>${W.desc}${chk.ok ? '' : ' — ' + esc(chk.why)}</small></button>`;
     }
     if (c.buildings.length) h += `<div class="desc">Built: ${c.buildings.map(b => BUILDINGS[b].name).join(', ')}</div>`;
     if (c.wonders?.length) h += `<div class="desc">Wonders: <b>${c.wonders.map(w => WONDERS[w].name).join(', ')}</b></div>`;
@@ -5457,7 +5503,7 @@ function tilePanel(i) {
     h += `<div class="desc" style="color:#ff8a70">This ${IMPROVEMENTS[tl.imp].name} is damaged and yields nothing. Another round of pillage will destroy it, and the city will lose the pop it gave.</div>`;
     if (tl.owner === pid && myTurn()) {
       const chk = game.canRepair(pid, i);
-      h += `<button data-act="repair" ${chk.ok ? '' : 'disabled'} title="${esc(chk.why || '')}">Repair ◉${game.repairCost(i)}</button>`;
+      h += `<button data-act="repair" ${chk.ok ? '' : 'disabled'} title="${esc(chk.why || '')}">Repair ${workLabel(game.repairCost(i), chk)}</button>`;
     }
   }
   if (tl.owner === pid && myTurn()) {
@@ -5467,7 +5513,7 @@ function tilePanel(i) {
       for (const k of opts) {
         const I = IMPROVEMENTS[k];
         const chk = game.canImprove(pid, i, k);
-        h += `<button data-act="improve" data-k="${k}" ${chk.ok ? '' : 'disabled'} title="${esc(chk.why || '')}">${I.name} ◉${I.cost}<small>+${game.improvePop(i, k)} pop${impYield(k, game.tiles[i].res) ? `, +1 ${STRATEGIC[impYield(k, game.tiles[i].res)].name.toLowerCase()}/turn` : ''}${I.tech && !game.has(pid, I.tech) ? ' · needs ' + TECHS[I.tech].name : ''}</small></button>`;
+        h += `<button data-act="improve" data-k="${k}" ${chk.ok ? '' : 'disabled'} title="${esc(chk.why || '')}">${I.name} ${workLabel(I.cost, chk)}<small>+${game.improvePop(i, k)} pop${impYield(k, game.tiles[i].res) ? `, +1 ${STRATEGIC[impYield(k, game.tiles[i].res)].name.toLowerCase()}/turn` : ''}${I.tech && !game.has(pid, I.tech) ? ' · needs ' + TECHS[I.tech].name : ''}</small></button>`;
       }
       h += `</div>`;
     }
@@ -6021,6 +6067,8 @@ function showHelp() {
   <li>Click a tile inside your borders to build an improvement (farm, mine, lumber camp…). Improvements add pop; when pop fills the bar, the city levels up and earns more. Level 4 cities expand their borders.</li>
   <li>Train <b>Settlers</b> to found new cities — choose the land wisely. Settlers get pricier with every city.</li>
   <li>Your unit cap is the sum of (city level + 1). Each city feeds 2 units for free; every extra unit costs 1 gold of upkeep per turn.</li></ul>
+  <h3>Labor</h3>
+  <p>Every city has its own <b>labor</b> (⚒): 2 + its level per turn, +1 for the capital, +1 with its specialty building, halved while hungry, and it stores up to 4 turns' worth. Units, buildings and wonders cost the city's labor, tile improvements and repairs cost the labor of the city that works the tile, and nothing is built with gold any more. If a city is short, you can <b>hurry</b> the work: each missing labor point costs 3 gold, and the button shows the price. So big, developed cities build armies and wonders, frontier towns develop slowly unless you pay, and losing a core city costs you making power, not just taxes.</p>
   <h3>Knowledge</h3>
   <p>Research is paid in <b>knowledge</b> (✦), not gold. Each city gives 0.5 + 0.5 per level, the capital +1, each Shrine and Market +2, and each active trade route +1 (+2 with an unrelated people: ideas travel with goods). Philosophy adds 25%. Vassals pass a quarter of theirs to their overlord. Tech costs rise with tier and with your number of cities.</p>
   <h3>Technology upkeep & dark ages</h3>

@@ -450,7 +450,7 @@ function bestMilitary(g, city, gold) {
     if (k === 'settler') continue;
     const U = UNITS[k];
     const cost = g.unitCost(city, k);
-    if (cost > gold) continue;
+    if (!g.workCheck(city, cost).ok) continue;
     if (!g.canPay(city.owner, U.needs, city).ok) continue;
     // don't field more of an army than our supply can feed
     if (U.needs && Object.keys(U.needs).some(k => supplyRate(g, city.owner, k) < (g.supplyNeed(city.owner)[k] || 0) + 0.5 && g.avail(city.owner, k) < 6)) continue;
@@ -478,6 +478,12 @@ function researchAct(g, pid) {
 function spend(g, pid, prof) {
   const pl = g.players[pid];
   researchAct(g, pid);
+  // hurry policy: spend gold on labor only above a reserve (upkeep, subsidies, emergencies),
+  // or when a city is threatened
+  const nC = g.cities.filter(c => c.owner === pid).length;
+  const reserve = 25 + 6 * nC + 5 * g.subsidyCost(pid);
+  const threatened = g.cities.some(c => c.owner === pid && enemiesNear(g, pid, c.idx, 3) > 0);
+  pl.allowHurry = pl.gold > reserve || (threatened && pl.gold > 15);
   for (let iter = 0; iter < 30; iter++) {
     const cities = g.cities.filter(c => c.owner === pid);
     if (!cities.length) return;
@@ -487,6 +493,7 @@ function spend(g, pid, prof) {
     const net = g.grossIncome(pid) - g.upkeep(pid);
     const capLeft = Math.min(g.unitCap(pid) - units.length, net >= 3 || pl.gold > 40 ? 99 : 0);
     let acted = false;
+    let saving = null; // a city putting its labor aside for a settler
 
     // 0) keep the peace: compliance buildings first, festivals when revolt is near,
     //    tax relief as the reliable fallback; lift relief once the city would be fine without it
@@ -529,9 +536,9 @@ function spend(g, pid, prof) {
     if (settlers < 2 && cities.length + settlers < wantCities && capLeft > 0 && mil >= Math.min(2, cities.length)) {
       const c = cities.filter(c => !g.unitAt(c.idx) && c.trainedTurn !== g.turn).sort((a, b) => b.level - a.level)[0];
       if (c) {
-        const cost = g.unitCost(c, 'settler');
-        if (pl.gold >= cost) { if (g.train(c, 'settler').ok) continue; }
-        else if (pl.gold + g.income(pid) * 1.5 >= cost && cities.length < 3) return; // save up
+        if (g.train(c, 'settler').ok) continue;
+        // not enough labor yet: this city saves for the settler instead of spending on other things
+        if (g.workCheck(c, g.unitCost(c, 'settler')).short <= g.laborRate(c) * 3) saving = c;
       }
     }
 
@@ -547,6 +554,7 @@ function spend(g, pid, prof) {
     let bestImp = null, bestV = 0;
     for (const c of cities) {
       for (const t of g.cityTiles(c)) {
+        if (c === saving) continue;
         for (const k of g.improvementsFor(pid, t)) {
           const chk = g.canImprove(pid, t, k);
           if (!chk.ok) continue;
@@ -562,8 +570,10 @@ function spend(g, pid, prof) {
     const wantMil = Math.ceil(cities.length * (1 + prof.aggression)) + 1;
 
     // e) military
-    if ((mil < wantMil + (g.turn > 30 ? cities.length : 0) || pl.gold > 25) && capLeft > 0) {
-      const c = cities.filter(c => !g.unitAt(c.idx) && c.trainedTurn !== g.turn).sort((a, b) => enemiesNear(g, pid, b.idx, 8) - enemiesNear(g, pid, a.idx, 8))[0];
+    // build armies when below target, or when a city's labor would otherwise overflow
+    const fullCity = cities.some(c => c !== saving && (c.labor || 0) >= g.laborCap(c) * 0.75 && !g.unitAt(c.idx));
+    if ((mil < wantMil + (g.turn > 30 ? cities.length : 0) || fullCity) && capLeft > 0) {
+      const c = cities.filter(c => c !== saving && !g.unitAt(c.idx) && c.trainedTurn !== g.turn).sort((a, b) => enemiesNear(g, pid, b.idx, 8) - enemiesNear(g, pid, a.idx, 8))[0];
       if (c) { const k = bestMilitary(g, c, pl.gold); if (k && g.train(c, k).ok) continue; }
     }
 
@@ -587,7 +597,7 @@ function spend(g, pid, prof) {
     for (const c of cities) {
       for (const b of g.buildable(c)) {
         if (Object.values(RECIPES).some(R => R.building === b)) continue; // workshops are placed deliberately above
-        if (g.canBuild(c, b).ok && pl.gold - BUILDINGS[b].cost >= 2) { g.build(c, b); built = true; break; }
+        if (g.canBuild(c, b).ok) { g.build(c, b); built = true; break; }
       }
       if (built) break;
     }

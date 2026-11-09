@@ -147,6 +147,12 @@ If the city survives that roll, the **conqueror chooses** whether to keep it or 
   - **Alliances and trade:** it proposes alliances with coalition partners or co-belligerents, and trade wherever it pays.
 - **Humans** act in the Diplomacy screen (D). Offers to a human wait for the start of that human's turn. A human refusal makes the AI wait 15 turns before asking again.
 
+### Labor (gold-role pass, phase 2)
+- **Rate:** every city has a local **labor** pool (⚒), filled each turn by 2 + level (+1 capital, +1 with its specialty building), halved while hungry, and capped at 4 turns' worth.
+- **What it pays for:** units, buildings and wonders cost the building city's labor. Improvements and repairs cost the labor of the city that works the tile. Construction no longer costs gold.
+- **Hurrying:** a shortfall can be **hurried at 3 gold per labor point**. Humans hurry automatically (buttons show the price). The AI hurries only above a gold reserve (25 + 6 per city + 5× subsidies) or when one of its cities is threatened, and a city saving for a settler doesn't spend its labor on other things.
+- **Effect in sims:** tech and expansion pace are about where they were. Tribes spend roughly 900–2,000 gold each on hurrying over 120 turns, but treasuries still climb (phase 3 retunes taxes), and about a third of cities sit at their labor cap.
+
 ### Knowledge (research)
 Research is paid in **knowledge** (✦), not gold. This is phase 1 of the gold-role pass (`docs/GOLD-PROPOSAL.md`).
 - **Sources per turn:** each city 0.5 + 0.5×level, capital +1, each Shrine and Market +2, each active trade route +1 (+2 with an unrelated people). Philosophy multiplies the total by 1.25. Vassals pass 25% to their overlord.

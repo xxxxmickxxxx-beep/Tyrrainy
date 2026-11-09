@@ -145,6 +145,14 @@ function peopleLine(c) {
   return `<div class="row"><span>People</span><span>${cultureChip(cul)}<b>${esc(label)}</b></span></div>${note ? `<div class="desc">${note}</div>` : ''}`;
 }
 
+// Construction costs labor (⚒) from the working city; a shortfall can be hurried with gold.
+function workLabel(cost, chk) {
+  const w = chk?.work || chk || {};
+  if (w.hurried) return `⚒${cost} <span style="color:#f0c040">(hurry ◉${w.gold})</span>`;
+  if (w.hurryGold && !w.ok) return `⚒${cost} <span class="dim">(◉${w.hurryGold})</span>`;
+  return `⚒${cost}`;
+}
+
 function chip(p) { return `<span class="chip" style="background:${p.color};border-color:${p.color2 || '#111'}"></span>`; }
 
 function esc(s) { return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
@@ -594,6 +602,7 @@ function cityPanel(c) {
       affNote += ` Integrates in ${need - (c.held % need)} turns.`;
     }
     h += `<div class="desc">${affNote}</div>`;
+    h += `<div class="row"><span>Labor</span><span><b>⚒ ${Math.floor(c.labor || 0)}</b>/${game.laborCap(c)} <span class="dim">+${game.laborRate(c)}/turn${c.hunger > 0.3 ? ' (halved by hunger)' : ''}</span></span></div>`;
     h += `<div class="row"><span>Income</span><b>+${game.cityIncome(c)} gold</b></div>`;
     const fd = game.foodDemand(c);
     if (fd) h += `<div class="row"><span>Food</span><span>eats ${fd}/turn${c.hunger > 0 ? ` · <b style="color:${c.hunger > 0.3 ? '#ff7050' : '#e0c050'}">${Math.round(c.hunger * 100)}% unfed${c.hunger > 0.3 ? ', not growing' : ''}</b>` : ' · fed'}</span></div>`;
@@ -612,7 +621,7 @@ function cityPanel(c) {
       const U = UNITS[k];
       const chk = game.canTrain(c, k);
       const cost = game.unitCost(c, k);
-      h += `<button data-act="train" data-k="${k}" class="${U.unique ? 'unique' : ''}" ${chk.ok ? '' : 'disabled'} title="${esc(chk.why || '')}">${U.name} ◉${cost}<small>${U.atk}/${U.def} hp${U.hp} mv${U.mv}${U.rng > 1 ? ' r' + U.rng : ''}${U.needs ? ` <span class="needs">· ${game.goodsText(U.needs)}</span>` : ''}</small></button>`;
+      h += `<button data-act="train" data-k="${k}" class="${U.unique ? 'unique' : ''}" ${chk.ok ? '' : 'disabled'} title="${esc(chk.why || '')}">${U.name} ${workLabel(cost, chk)}<small>${U.atk}/${U.def} hp${U.hp} mv${U.mv}${U.rng > 1 ? ' r' + U.rng : ''}${U.needs ? ` <span class="needs">· ${game.goodsText(U.needs)}</span>` : ''}</small></button>`;
     }
     h += `</div>`;
     const lockedUnique = SPECIALTY[c.specialty].unit;
@@ -621,7 +630,7 @@ function cityPanel(c) {
     for (const b of game.buildable(c)) {
       const B = BUILDINGS[b];
       const chk = game.canBuild(c, b);
-      h += `<button data-act="build" data-k="${b}" ${chk.ok ? '' : 'disabled'} title="${esc(chk.why || '')}">${B.name} ◉${B.cost}${B.needs ? ` <span class="needs">+ ${game.goodsText(B.needs)}</span>` : ''}<small>${B.desc}</small></button>`;
+      h += `<button data-act="build" data-k="${b}" ${chk.ok ? '' : 'disabled'} title="${esc(chk.why || '')}">${B.name} ${workLabel(B.cost, chk)}${B.needs ? ` <span class="needs">+ ${game.goodsText(B.needs)}</span>` : ''}<small>${B.desc}</small></button>`;
     }
     h += `</div>`;
     const ws = Object.keys(WONDERS).filter(w => WONDERS[w].special === c.specialty);
@@ -629,7 +638,7 @@ function cityPanel(c) {
       const W = WONDERS[w];
       const chk = game.canBuildWonder(c, w);
       const owner = game.wonderOwner(w);
-      h += `<h4>Wonder</h4><button data-act="wonder" data-k="${w}" ${chk.ok ? '' : 'disabled'} style="width:100%;text-align:left">${W.name} ◉${W.cost}<br><small>${W.desc}${chk.ok ? '' : ' — ' + esc(chk.why)}</small></button>`;
+      h += `<h4>Wonder</h4><button data-act="wonder" data-k="${w}" ${chk.ok ? '' : 'disabled'} style="width:100%;text-align:left">${W.name} ${workLabel(W.cost, chk)}${W.needs ? ` <span class="needs">+ ${game.goodsText(W.needs)}</span>` : ''}<br><small>${W.desc}${chk.ok ? '' : ' — ' + esc(chk.why)}</small></button>`;
     }
     if (c.buildings.length) h += `<div class="desc">Built: ${c.buildings.map(b => BUILDINGS[b].name).join(', ')}</div>`;
     if (c.wonders?.length) h += `<div class="desc">Wonders: <b>${c.wonders.map(w => WONDERS[w].name).join(', ')}</b></div>`;
@@ -698,7 +707,7 @@ function tilePanel(i) {
     h += `<div class="desc" style="color:#ff8a70">This ${IMPROVEMENTS[tl.imp].name} is damaged and yields nothing. Another round of pillage will destroy it, and the city will lose the pop it gave.</div>`;
     if (tl.owner === pid && myTurn()) {
       const chk = game.canRepair(pid, i);
-      h += `<button data-act="repair" ${chk.ok ? '' : 'disabled'} title="${esc(chk.why || '')}">Repair ◉${game.repairCost(i)}</button>`;
+      h += `<button data-act="repair" ${chk.ok ? '' : 'disabled'} title="${esc(chk.why || '')}">Repair ${workLabel(game.repairCost(i), chk)}</button>`;
     }
   }
   if (tl.owner === pid && myTurn()) {
@@ -708,7 +717,7 @@ function tilePanel(i) {
       for (const k of opts) {
         const I = IMPROVEMENTS[k];
         const chk = game.canImprove(pid, i, k);
-        h += `<button data-act="improve" data-k="${k}" ${chk.ok ? '' : 'disabled'} title="${esc(chk.why || '')}">${I.name} ◉${I.cost}<small>+${game.improvePop(i, k)} pop${impYield(k, game.tiles[i].res) ? `, +1 ${STRATEGIC[impYield(k, game.tiles[i].res)].name.toLowerCase()}/turn` : ''}${I.tech && !game.has(pid, I.tech) ? ' · needs ' + TECHS[I.tech].name : ''}</small></button>`;
+        h += `<button data-act="improve" data-k="${k}" ${chk.ok ? '' : 'disabled'} title="${esc(chk.why || '')}">${I.name} ${workLabel(I.cost, chk)}<small>+${game.improvePop(i, k)} pop${impYield(k, game.tiles[i].res) ? `, +1 ${STRATEGIC[impYield(k, game.tiles[i].res)].name.toLowerCase()}/turn` : ''}${I.tech && !game.has(pid, I.tech) ? ' · needs ' + TECHS[I.tech].name : ''}</small></button>`;
       }
       h += `</div>`;
     }
@@ -1262,6 +1271,8 @@ function showHelp() {
   <li>Click a tile inside your borders to build an improvement (farm, mine, lumber camp…). Improvements add pop; when pop fills the bar, the city levels up and earns more. Level 4 cities expand their borders.</li>
   <li>Train <b>Settlers</b> to found new cities — choose the land wisely. Settlers get pricier with every city.</li>
   <li>Your unit cap is the sum of (city level + 1). Each city feeds 2 units for free; every extra unit costs 1 gold of upkeep per turn.</li></ul>
+  <h3>Labor</h3>
+  <p>Every city has its own <b>labor</b> (⚒): 2 + its level per turn, +1 for the capital, +1 with its specialty building, halved while hungry, and it stores up to 4 turns' worth. Units, buildings and wonders cost the city's labor, tile improvements and repairs cost the labor of the city that works the tile, and nothing is built with gold any more. If a city is short, you can <b>hurry</b> the work: each missing labor point costs 3 gold, and the button shows the price. So big, developed cities build armies and wonders, frontier towns develop slowly unless you pay, and losing a core city costs you making power, not just taxes.</p>
   <h3>Knowledge</h3>
   <p>Research is paid in <b>knowledge</b> (✦), not gold. Each city gives 0.5 + 0.5 per level, the capital +1, each Shrine and Market +2, and each active trade route +1 (+2 with an unrelated people: ideas travel with goods). Philosophy adds 25%. Vassals pass a quarter of theirs to their overlord. Tech costs rise with tier and with your number of cities.</p>
   <h3>Technology upkeep & dark ages</h3>

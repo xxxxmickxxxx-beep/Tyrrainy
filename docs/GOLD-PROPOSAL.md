@@ -1,6 +1,6 @@
 # Proposal: what gold is for
 
-Status: decisions taken (all recommendations accepted). **Phase 1 (knowledge) is implemented**; phases 2 (labor) and 3 (gold retune) are next.
+Status: decisions taken (all recommendations accepted). **Phases 1 (knowledge) and 2 (labor) are implemented**, plus technology upkeep. Phase 3 (gold retune) is next.
 
 ## The problem today
 Gold is a universal converter. Every system eventually turns into "how much gold per turn".
