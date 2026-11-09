@@ -164,11 +164,11 @@ export const BUILDINGS = {
   bronzeworks:  { name: 'Bronze Workshop', cost: 8, tech: 'bronze', needs: { stone: 1 }, desc: 'Smelts up to 2 copper + 2 tin into 2 bronze each turn.' },
   courthouse:   { name: 'Courthouse', cost: 5, calm: 1, desc: '-1 unrest pressure.' },
   amphitheater: { name: 'Amphitheater', cost: 9, tech: 'masonry', calm: 2, desc: '-2 unrest pressure.', needs: { stone: 2 } },
-  temple:       { name: 'Shrine', cost: 8, tech: 'philosophy', calm: 2, desc: '+1 pop, +1 gold, -2 unrest. Integration twice as fast.', needs: { stone: 1 } },
+  temple:       { name: 'Shrine', cost: 8, tech: 'philosophy', calm: 2, desc: '+1 pop, +1 gold, +2 knowledge, -2 unrest. Integration twice as fast.', needs: { stone: 1 } },
   granary:      { name: 'Granary', cost: 6, special: 'plains', desc: '+2 pop; doubles the city\'s food.' , pop: 2, needs: { timber: 1 } },
   watchtower:   { name: 'Watchtower', cost: 5, special: 'hilltop', desc: '+2 vision, city defense +50%; doubles the city\'s stone.', needs: { stone: 1 } },
   harbor:       { name: 'Harbor', cost: 7, special: 'coastal', desc: '+2 gold per turn.', gold: 2, needs: { timber: 2 } },
-  market:       { name: 'Market', cost: 8, special: 'riverside', desc: '+1 gold per 2 city levels.', needs: { stone: 1 } },
+  market:       { name: 'Market', cost: 8, special: 'riverside', desc: '+1 gold per 2 city levels, +2 knowledge.', needs: { stone: 1 } },
   sawmill:      { name: 'Sawmill', cost: 6, special: 'forest', desc: '+1 gold per lumber camp; doubles the city\'s timber.' },
   caravanserai: { name: 'Caravanserai', cost: 7, special: 'desert', desc: '+2 gold, +1 pop; doubles the city\'s spice.', gold: 2, pop: 1 },
   stables:      { name: 'Stables', cost: 6, special: 'steppe', desc: 'Mounted units cost -1, +1 pop; doubles the city\'s horses.', pop: 1, needs: { timber: 1 } },
@@ -297,7 +297,7 @@ export const TECHS = {
   engineering: { name: 'Engineering', tier: 4, req: ['bronze'], desc: 'Catapults.' },
   ironworking: { name: 'Iron Working', tier: 3, req: ['bronze', 'forestry'], desc: 'Iron ore can be mined (hills, mountains, marsh bogs); Bloomeries smelt it with timber. Iron serves wherever bronze does. Legionaries.' },
   chivalry:    { name: 'Chivalry', tier: 4, req: ['riding', 'bronze'], desc: 'Knights.' },
-  philosophy:  { name: 'Philosophy', tier: 4, req: ['trade'], desc: 'Shrines. Techs 25% cheaper.' },
+  philosophy:  { name: 'Philosophy', tier: 4, req: ['trade'], desc: 'Shrines. Knowledge +25%.' },
   assimilation:{ name: 'Assimilation', tier: 4, req: ['trade'], desc: 'Foreign & alien penalties reduced by one step.' },
 };
 

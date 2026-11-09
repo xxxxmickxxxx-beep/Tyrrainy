@@ -293,11 +293,11 @@ const BUILDINGS = {
   bronzeworks:  { name: 'Bronze Workshop', cost: 8, tech: 'bronze', needs: { stone: 1 }, desc: 'Smelts up to 2 copper + 2 tin into 2 bronze each turn.' },
   courthouse:   { name: 'Courthouse', cost: 5, calm: 1, desc: '-1 unrest pressure.' },
   amphitheater: { name: 'Amphitheater', cost: 9, tech: 'masonry', calm: 2, desc: '-2 unrest pressure.', needs: { stone: 2 } },
-  temple:       { name: 'Shrine', cost: 8, tech: 'philosophy', calm: 2, desc: '+1 pop, +1 gold, -2 unrest. Integration twice as fast.', needs: { stone: 1 } },
+  temple:       { name: 'Shrine', cost: 8, tech: 'philosophy', calm: 2, desc: '+1 pop, +1 gold, +2 knowledge, -2 unrest. Integration twice as fast.', needs: { stone: 1 } },
   granary:      { name: 'Granary', cost: 6, special: 'plains', desc: '+2 pop; doubles the city\'s food.' , pop: 2, needs: { timber: 1 } },
   watchtower:   { name: 'Watchtower', cost: 5, special: 'hilltop', desc: '+2 vision, city defense +50%; doubles the city\'s stone.', needs: { stone: 1 } },
   harbor:       { name: 'Harbor', cost: 7, special: 'coastal', desc: '+2 gold per turn.', gold: 2, needs: { timber: 2 } },
-  market:       { name: 'Market', cost: 8, special: 'riverside', desc: '+1 gold per 2 city levels.', needs: { stone: 1 } },
+  market:       { name: 'Market', cost: 8, special: 'riverside', desc: '+1 gold per 2 city levels, +2 knowledge.', needs: { stone: 1 } },
   sawmill:      { name: 'Sawmill', cost: 6, special: 'forest', desc: '+1 gold per lumber camp; doubles the city\'s timber.' },
   caravanserai: { name: 'Caravanserai', cost: 7, special: 'desert', desc: '+2 gold, +1 pop; doubles the city\'s spice.', gold: 2, pop: 1 },
   stables:      { name: 'Stables', cost: 6, special: 'steppe', desc: 'Mounted units cost -1, +1 pop; doubles the city\'s horses.', pop: 1, needs: { timber: 1 } },
@@ -426,7 +426,7 @@ const TECHS = {
   engineering: { name: 'Engineering', tier: 4, req: ['bronze'], desc: 'Catapults.' },
   ironworking: { name: 'Iron Working', tier: 3, req: ['bronze', 'forestry'], desc: 'Iron ore can be mined (hills, mountains, marsh bogs); Bloomeries smelt it with timber. Iron serves wherever bronze does. Legionaries.' },
   chivalry:    { name: 'Chivalry', tier: 4, req: ['riding', 'bronze'], desc: 'Knights.' },
-  philosophy:  { name: 'Philosophy', tier: 4, req: ['trade'], desc: 'Shrines. Techs 25% cheaper.' },
+  philosophy:  { name: 'Philosophy', tier: 4, req: ['trade'], desc: 'Shrines. Knowledge +25%.' },
   assimilation:{ name: 'Assimilation', tier: 4, req: ['trade'], desc: 'Foreign & alien penalties reduced by one step.' },
 };
 
@@ -1620,6 +1620,7 @@ const vassalMethods = {
 
 const INTEGRATION_TURNS = 10;
 const REVOLT_AT = 12;
+const KNOWLEDGE_PRICE = 2.2; // tech cost multiplier, calibrated to the old gold-based pace
 const RIOT_AT = 6;        // no training or construction
 const INSURRECTION_AT = 9; // rebel partisans may appear
 
@@ -2644,18 +2645,49 @@ class Game {
     if (pl.techs.includes(t)) return { ok: false, why: 'Known' };
     if (!T.req.every(r => pl.techs.includes(r))) return { ok: false, why: 'Missing prerequisites' };
     const cost = this.techPrice(pid, t);
-    if (pl.gold < cost) return { ok: false, why: `Need ${cost} gold` };
+    if ((pl.knowledge || 0) < cost) return { ok: false, why: `Need ${cost} knowledge (have ${Math.floor(pl.knowledge || 0)})` };
     return { ok: true, cost };
   }
+  // Research costs knowledge, not gold. Costs still rise with city count (sprawl slows learning).
   techPrice(pid, t) {
     const n = this.cities.filter(c => c.owner === pid).length;
-    return techCost(TECHS[t].tier, n, this.has(pid, 'philosophy'), this.hasWonder(pid, 'sunpyramid'));
+    const tier = TECHS[t].tier;
+    return Math.round(KNOWLEDGE_PRICE * (1 + 0.3 * (tier - 1)) * techCost(tier, n, false, this.hasWonder(pid, 'sunpyramid')));
+  }
+  // Knowledge per turn, with its sources: cities, Shrines and Markets, and ideas carried by
+  // trade (more from unrelated peoples). Philosophy amplifies it; vassals pass a quarter upward.
+  knowledgeRate(pid) {
+    const parts = [];
+    const mine = this.cities.filter(c => c.owner === pid);
+    if (!mine.length) return { total: 0, parts };
+    parts.push(['Cities', mine.reduce((a, c) => a + 0.5 + 0.5 * c.level, 0)]);
+    if (mine.some(c => c.capital)) parts.push(['Capital', 1]);
+    const halls = mine.reduce((a, c) => a + (c.buildings.includes('temple') ? 2 : 0) + (c.buildings.includes('market') ? 2 : 0), 0);
+    if (halls) parts.push(['Shrines & Markets', halls]);
+    let ideas = 0;
+    for (const r of this.routesOf?.(pid) || []) {
+      if (r.last?.blocked) continue;
+      const other = r.a === pid ? r.b : r.a;
+      ideas += this.related(this.players[pid].culture, this.players[other].culture) ? 1 : 2;
+    }
+    if (ideas) parts.push(['Trade routes (ideas)', ideas]);
+    let base = parts.reduce((a, x) => a + x[1], 0);
+    if (this.has(pid, 'philosophy')) { parts.push(['Philosophy ×1.25', base * 0.25]); base *= 1.25; }
+    // tributaries pass a quarter of their learning to their overlord
+    const lord = this.overlordOf?.(pid);
+    if (lord != null) { parts.push(['Tribute to overlord', -base * 0.25]); base *= 0.75; }
+    for (const v of this.vassalsOf?.(pid) || []) {
+      const vr = this.knowledgeRate(v);
+      const t = vr.total / 0.75 * 0.25;
+      if (t > 0) { parts.push([`Tribute from ${this.players[v].name}`, t]); base += t; }
+    }
+    return { total: base, parts };
   }
   research(pid, t) {
     const chk = this.canResearch(pid, t);
     if (!chk.ok) return chk;
     const pl = this.players[pid];
-    pl.gold -= chk.cost;
+    pl.knowledge -= chk.cost;
     pl.techs.push(t);
     this.addLog(`${pl.name} learned ${TECHS[t].name}`, pid);
     return { ok: true };
@@ -3111,6 +3143,8 @@ class Game {
     const pl = this.players[this.current];
     // income
     this.collectGoods(pl.id);
+    pl.lastKnowledge = this.knowledgeRate(pl.id).total;
+    pl.knowledge = (pl.knowledge || 0) + pl.lastKnowledge;
     const inc = this.income(pl.id);
     pl.gold += inc;
     this.payTribute(pl.id, inc);
@@ -3741,8 +3775,23 @@ function bestMilitary(g, city, gold) {
   return best;
 }
 
+// Research no longer competes with gold: learn the best affordable tech whenever knowledge allows.
+function researchAct(g, pid) {
+  for (let n = 0; n < 3; n++) {
+    let bestT = null, bestTV = -Infinity;
+    for (const t of Object.keys(TECHS)) {
+      if (!g.canResearch(pid, t).ok) continue;
+      const v = techValue(g, pid, t);
+      if (v > bestTV) { bestTV = v; bestT = t; }
+    }
+    if (!bestT) return;
+    g.research(pid, bestT);
+  }
+}
+
 function spend(g, pid, prof) {
   const pl = g.players[pid];
+  researchAct(g, pid);
   for (let iter = 0; iter < 30; iter++) {
     const cities = g.cities.filter(c => c.owner === pid);
     if (!cities.length) return;
@@ -3824,16 +3873,7 @@ function spend(g, pid, prof) {
     }
     if (bestImp && (bestV >= 0.3 || pl.gold > 15)) { g.improve(pid, bestImp[0], bestImp[1]); continue; }
 
-    // d) research
-    let bestT = null, bestTV = 0;
-    for (const t of Object.keys(TECHS)) {
-      const chk = g.canResearch(pid, t);
-      if (!chk.ok) continue;
-      const v = techValue(g, pid, t);
-      if (v > bestTV) { bestTV = v; bestT = t; }
-    }
     const wantMil = Math.ceil(cities.length * (1 + prof.aggression)) + 1;
-    if (bestT && (bestTV > 1.2 || mil >= wantMil)) { g.research(pid, bestT); continue; }
 
     // e) military
     if ((mil < wantMil + (g.turn > 30 ? cities.length : 0) || pl.gold > 25) && capLeft > 0) {
@@ -3866,7 +3906,6 @@ function spend(g, pid, prof) {
       if (built) break;
     }
     if (built) continue;
-    if (bestT) { g.research(pid, bestT); continue; }
     break;
   }
 }
@@ -4924,6 +4963,7 @@ function initInput() {
   $('btnTribes').onclick = showTribes;
   $('btnDiplo').onclick = showDiplomacy;
   $('goodsBar').onclick = showGoods;
+  $('knowStat').onclick = showTech;
   $('btnHelp').onclick = showHelp;
   $('btnMenu').onclick = showLeave;
   $('modalClose').onclick = closeModal;
@@ -5077,6 +5117,8 @@ function goodsBarHTML(pid) {
 function updateTopbar() {
   const pl = game.players[R.viewer];
   $('goodsBar').innerHTML = goodsBarHTML(pl.id);
+  $('know').textContent = Math.floor(pl.knowledge || 0);
+  $('knowRate').textContent = `(+${(pl.lastKnowledge ?? game.knowledgeRate(pl.id).total).toFixed(1)})`;
   $('tribeChip').style.background = pl.color;
   $('tribeChip').style.borderColor = pl.color2 || '#111';
   $('tribeName').textContent = pl.name;
@@ -5327,7 +5369,9 @@ function showTech() {
   if (!game) return;
   const pid = R.viewer;
   const pl = game.players[pid];
-  let h = `<h2>Technology <span class="dim">— ◉ ${pl.gold} gold. Cost grows with your number of cities.</span></h2><div class="techtree">`;
+  const kr = game.knowledgeRate(pid);
+  let h = `<h2>Technology <span class="dim">— ✦ ${Math.floor(pl.knowledge || 0)} knowledge, +${kr.total.toFixed(1)}/turn. Costs grow with tier and with your number of cities.</span></h2>`;
+  h += `<p class="dim">Knowledge comes from: ${kr.parts.map(([n, v]) => `${esc(n)} ${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(1)}`).join(', ') || 'nothing yet'}. Research no longer costs gold. Trade routes carry ideas, more so between unrelated peoples.</p><div class="techtree">`;
   for (let tier = 1; tier <= 4; tier++) {
     h += `<div class="col"><h4>Tier ${tier}</h4>`;
     for (const [k, T] of Object.entries(TECHS)) {
@@ -5335,7 +5379,7 @@ function showTech() {
       const known = pl.techs.includes(k);
       const avail = !known && T.req.every(r => pl.techs.includes(r));
       const cost = game.techPrice(pid, k);
-      h += `<div class="tech ${known ? 'known' : avail ? 'avail' : 'locked'}" data-tech="${k}"><b>${T.name}</b>${known ? ' ✓' : `<span class="cost">◉${cost}</span>`}<br>${T.desc}${T.req.length ? `<br><span class="dim">needs ${T.req.map(r => TECHS[r].name).join(', ')}</span>` : ''}</div>`;
+      h += `<div class="tech ${known ? 'known' : avail ? 'avail' : 'locked'}" data-tech="${k}"><b>${T.name}</b>${known ? ' ✓' : `<span class="cost">✦${cost}</span>`}<br>${T.desc}${T.req.length ? `<br><span class="dim">needs ${T.req.map(r => TECHS[r].name).join(', ')}</span>` : ''}</div>`;
     }
     h += `</div>`;
   }
@@ -5815,6 +5859,8 @@ function showHelp() {
   <li>Click a tile inside your borders to build an improvement (farm, mine, lumber camp…). Improvements add pop; when pop fills the bar, the city levels up and earns more. Level 4 cities expand their borders.</li>
   <li>Train <b>Settlers</b> to found new cities — choose the land wisely. Settlers get pricier with every city.</li>
   <li>Your unit cap is the sum of (city level + 1). Each city feeds 2 units for free; every extra unit costs 1 gold of upkeep per turn.</li></ul>
+  <h3>Knowledge</h3>
+  <p>Research is paid in <b>knowledge</b> (✦), not gold. Each city gives 0.5 + 0.5 per level, the capital +1, each Shrine and Market +2, and each active trade route +1 (+2 with an unrelated people: ideas travel with goods). Philosophy adds 25%. Vassals pass a quarter of theirs to their overlord. Tech costs rise with tier and with your number of cities.</p>
   <h3>Unrest</h3>
   <p>Every city feels <b>pressure</b>:</p>
   <ul><li>a sprawling realm (+1 per 2 cities past 4);</li>

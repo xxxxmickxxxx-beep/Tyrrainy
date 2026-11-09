@@ -1,6 +1,6 @@
 # Proposal: what gold is for
 
-Status: **proposal, nothing implemented**. This needs decisions on the questions at the end before any code.
+Status: decisions taken (all recommendations accepted). **Phase 1 (knowledge) is implemented**; phases 2 (labor) and 3 (gold retune) are next.
 
 ## The problem today
 Gold is a universal converter. Every system eventually turns into "how much gold per turn".

@@ -14,6 +14,7 @@ import { ROOTS, LAND_BASE, joinName, combining, cleanBase, pickColors, offshootC
 
 const INTEGRATION_TURNS = 10;
 export const REVOLT_AT = 12;
+export const KNOWLEDGE_PRICE = 2.2; // tech cost multiplier, calibrated to the old gold-based pace
 export const RIOT_AT = 6;        // no training or construction
 export const INSURRECTION_AT = 9; // rebel partisans may appear
 
@@ -1038,18 +1039,49 @@ export class Game {
     if (pl.techs.includes(t)) return { ok: false, why: 'Known' };
     if (!T.req.every(r => pl.techs.includes(r))) return { ok: false, why: 'Missing prerequisites' };
     const cost = this.techPrice(pid, t);
-    if (pl.gold < cost) return { ok: false, why: `Need ${cost} gold` };
+    if ((pl.knowledge || 0) < cost) return { ok: false, why: `Need ${cost} knowledge (have ${Math.floor(pl.knowledge || 0)})` };
     return { ok: true, cost };
   }
+  // Research costs knowledge, not gold. Costs still rise with city count (sprawl slows learning).
   techPrice(pid, t) {
     const n = this.cities.filter(c => c.owner === pid).length;
-    return techCost(TECHS[t].tier, n, this.has(pid, 'philosophy'), this.hasWonder(pid, 'sunpyramid'));
+    const tier = TECHS[t].tier;
+    return Math.round(KNOWLEDGE_PRICE * (1 + 0.3 * (tier - 1)) * techCost(tier, n, false, this.hasWonder(pid, 'sunpyramid')));
+  }
+  // Knowledge per turn, with its sources: cities, Shrines and Markets, and ideas carried by
+  // trade (more from unrelated peoples). Philosophy amplifies it; vassals pass a quarter upward.
+  knowledgeRate(pid) {
+    const parts = [];
+    const mine = this.cities.filter(c => c.owner === pid);
+    if (!mine.length) return { total: 0, parts };
+    parts.push(['Cities', mine.reduce((a, c) => a + 0.5 + 0.5 * c.level, 0)]);
+    if (mine.some(c => c.capital)) parts.push(['Capital', 1]);
+    const halls = mine.reduce((a, c) => a + (c.buildings.includes('temple') ? 2 : 0) + (c.buildings.includes('market') ? 2 : 0), 0);
+    if (halls) parts.push(['Shrines & Markets', halls]);
+    let ideas = 0;
+    for (const r of this.routesOf?.(pid) || []) {
+      if (r.last?.blocked) continue;
+      const other = r.a === pid ? r.b : r.a;
+      ideas += this.related(this.players[pid].culture, this.players[other].culture) ? 1 : 2;
+    }
+    if (ideas) parts.push(['Trade routes (ideas)', ideas]);
+    let base = parts.reduce((a, x) => a + x[1], 0);
+    if (this.has(pid, 'philosophy')) { parts.push(['Philosophy ×1.25', base * 0.25]); base *= 1.25; }
+    // tributaries pass a quarter of their learning to their overlord
+    const lord = this.overlordOf?.(pid);
+    if (lord != null) { parts.push(['Tribute to overlord', -base * 0.25]); base *= 0.75; }
+    for (const v of this.vassalsOf?.(pid) || []) {
+      const vr = this.knowledgeRate(v);
+      const t = vr.total / 0.75 * 0.25;
+      if (t > 0) { parts.push([`Tribute from ${this.players[v].name}`, t]); base += t; }
+    }
+    return { total: base, parts };
   }
   research(pid, t) {
     const chk = this.canResearch(pid, t);
     if (!chk.ok) return chk;
     const pl = this.players[pid];
-    pl.gold -= chk.cost;
+    pl.knowledge -= chk.cost;
     pl.techs.push(t);
     this.addLog(`${pl.name} learned ${TECHS[t].name}`, pid);
     return { ok: true };
@@ -1505,6 +1537,8 @@ export class Game {
     const pl = this.players[this.current];
     // income
     this.collectGoods(pl.id);
+    pl.lastKnowledge = this.knowledgeRate(pl.id).total;
+    pl.knowledge = (pl.knowledge || 0) + pl.lastKnowledge;
     const inc = this.income(pl.id);
     pl.gold += inc;
     this.payTribute(pl.id, inc);

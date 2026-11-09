@@ -147,6 +147,12 @@ If the city survives that roll, the **conqueror chooses** whether to keep it or 
   - **Alliances and trade:** it proposes alliances with coalition partners or co-belligerents, and trade wherever it pays.
 - **Humans** act in the Diplomacy screen (D). Offers to a human wait for the start of that human's turn. A human refusal makes the AI wait 15 turns before asking again.
 
+### Knowledge (research)
+Research is paid in **knowledge** (✦), not gold. This is phase 1 of the gold-role pass (`docs/GOLD-PROPOSAL.md`).
+- **Sources per turn:** each city 0.5 + 0.5×level, capital +1, each Shrine and Market +2, each active trade route +1 (+2 with an unrelated people). Philosophy multiplies the total by 1.25. Vassals pass 25% to their overlord.
+- **Costs:** `2.2 × (1 + 0.3×(tier−1)) × techCost`, so costs still rise with city count, and higher tiers cost proportionally more. This is calibrated so the AI tech pace matches the old gold-based curve: about 4 techs by turn 20, 8–9 by 40, 12–13 by 60, 15–16 by 80.
+- **Effects:** wealth no longer turns directly into technology, and contact and trade speed learning.
+
 ### Strategic goods (`src/economy.js`)
 Goods are rival and come from places. Infinite goods shared freely made "ally with everyone" the dominant strategy, so they were replaced.
 - **Deposits:** a Mine on a copper or tin deposit gives that metal, a Pasture on a horse herd gives horses, a Lumber Camp gives timber, and a Quarry on hills gives stone.

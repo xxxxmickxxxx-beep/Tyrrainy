@@ -328,6 +328,7 @@ function initInput() {
   $('btnTribes').onclick = showTribes;
   $('btnDiplo').onclick = showDiplomacy;
   $('goodsBar').onclick = showGoods;
+  $('knowStat').onclick = showTech;
   $('btnHelp').onclick = showHelp;
   $('btnMenu').onclick = showLeave;
   $('modalClose').onclick = closeModal;
@@ -481,6 +482,8 @@ function goodsBarHTML(pid) {
 function updateTopbar() {
   const pl = game.players[R.viewer];
   $('goodsBar').innerHTML = goodsBarHTML(pl.id);
+  $('know').textContent = Math.floor(pl.knowledge || 0);
+  $('knowRate').textContent = `(+${(pl.lastKnowledge ?? game.knowledgeRate(pl.id).total).toFixed(1)})`;
   $('tribeChip').style.background = pl.color;
   $('tribeChip').style.borderColor = pl.color2 || '#111';
   $('tribeName').textContent = pl.name;
@@ -731,7 +734,9 @@ function showTech() {
   if (!game) return;
   const pid = R.viewer;
   const pl = game.players[pid];
-  let h = `<h2>Technology <span class="dim">— ◉ ${pl.gold} gold. Cost grows with your number of cities.</span></h2><div class="techtree">`;
+  const kr = game.knowledgeRate(pid);
+  let h = `<h2>Technology <span class="dim">— ✦ ${Math.floor(pl.knowledge || 0)} knowledge, +${kr.total.toFixed(1)}/turn. Costs grow with tier and with your number of cities.</span></h2>`;
+  h += `<p class="dim">Knowledge comes from: ${kr.parts.map(([n, v]) => `${esc(n)} ${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(1)}`).join(', ') || 'nothing yet'}. Research no longer costs gold. Trade routes carry ideas, more so between unrelated peoples.</p><div class="techtree">`;
   for (let tier = 1; tier <= 4; tier++) {
     h += `<div class="col"><h4>Tier ${tier}</h4>`;
     for (const [k, T] of Object.entries(TECHS)) {
@@ -739,7 +744,7 @@ function showTech() {
       const known = pl.techs.includes(k);
       const avail = !known && T.req.every(r => pl.techs.includes(r));
       const cost = game.techPrice(pid, k);
-      h += `<div class="tech ${known ? 'known' : avail ? 'avail' : 'locked'}" data-tech="${k}"><b>${T.name}</b>${known ? ' ✓' : `<span class="cost">◉${cost}</span>`}<br>${T.desc}${T.req.length ? `<br><span class="dim">needs ${T.req.map(r => TECHS[r].name).join(', ')}</span>` : ''}</div>`;
+      h += `<div class="tech ${known ? 'known' : avail ? 'avail' : 'locked'}" data-tech="${k}"><b>${T.name}</b>${known ? ' ✓' : `<span class="cost">✦${cost}</span>`}<br>${T.desc}${T.req.length ? `<br><span class="dim">needs ${T.req.map(r => TECHS[r].name).join(', ')}</span>` : ''}</div>`;
     }
     h += `</div>`;
   }
@@ -1219,6 +1224,8 @@ function showHelp() {
   <li>Click a tile inside your borders to build an improvement (farm, mine, lumber camp…). Improvements add pop; when pop fills the bar, the city levels up and earns more. Level 4 cities expand their borders.</li>
   <li>Train <b>Settlers</b> to found new cities — choose the land wisely. Settlers get pricier with every city.</li>
   <li>Your unit cap is the sum of (city level + 1). Each city feeds 2 units for free; every extra unit costs 1 gold of upkeep per turn.</li></ul>
+  <h3>Knowledge</h3>
+  <p>Research is paid in <b>knowledge</b> (✦), not gold. Each city gives 0.5 + 0.5 per level, the capital +1, each Shrine and Market +2, and each active trade route +1 (+2 with an unrelated people: ideas travel with goods). Philosophy adds 25%. Vassals pass a quarter of theirs to their overlord. Tech costs rise with tier and with your number of cities.</p>
   <h3>Unrest</h3>
   <p>Every city feels <b>pressure</b>:</p>
   <ul><li>a sprawling realm (+1 per 2 cities past 4);</li>

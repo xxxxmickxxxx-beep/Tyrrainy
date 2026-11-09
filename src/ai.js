@@ -461,8 +461,23 @@ function bestMilitary(g, city, gold) {
   return best;
 }
 
+// Research no longer competes with gold: learn the best affordable tech whenever knowledge allows.
+function researchAct(g, pid) {
+  for (let n = 0; n < 3; n++) {
+    let bestT = null, bestTV = -Infinity;
+    for (const t of Object.keys(TECHS)) {
+      if (!g.canResearch(pid, t).ok) continue;
+      const v = techValue(g, pid, t);
+      if (v > bestTV) { bestTV = v; bestT = t; }
+    }
+    if (!bestT) return;
+    g.research(pid, bestT);
+  }
+}
+
 function spend(g, pid, prof) {
   const pl = g.players[pid];
+  researchAct(g, pid);
   for (let iter = 0; iter < 30; iter++) {
     const cities = g.cities.filter(c => c.owner === pid);
     if (!cities.length) return;
@@ -544,16 +559,7 @@ function spend(g, pid, prof) {
     }
     if (bestImp && (bestV >= 0.3 || pl.gold > 15)) { g.improve(pid, bestImp[0], bestImp[1]); continue; }
 
-    // d) research
-    let bestT = null, bestTV = 0;
-    for (const t of Object.keys(TECHS)) {
-      const chk = g.canResearch(pid, t);
-      if (!chk.ok) continue;
-      const v = techValue(g, pid, t);
-      if (v > bestTV) { bestTV = v; bestT = t; }
-    }
     const wantMil = Math.ceil(cities.length * (1 + prof.aggression)) + 1;
-    if (bestT && (bestTV > 1.2 || mil >= wantMil)) { g.research(pid, bestT); continue; }
 
     // e) military
     if ((mil < wantMil + (g.turn > 30 ? cities.length : 0) || pl.gold > 25) && capLeft > 0) {
@@ -586,7 +592,6 @@ function spend(g, pid, prof) {
       if (built) break;
     }
     if (built) continue;
-    if (bestT) { g.research(pid, bestT); continue; }
     break;
   }
 }
