@@ -4,6 +4,7 @@ import { runAI, field, bestStep } from './ai.js';
 import { Renderer } from './render.js';
 import { MAP_SIZES, MAP_TYPES } from './mapgen.js';
 import { ROOTS } from './culture.js';
+import { PRICE } from './trade.js';
 import {
   TERRAIN, SPECIALTY, SPECIALTY_KEYS, KIN_DIST, AFFINITY, UNITS, IMPROVEMENTS, BUILDINGS, WONDERS, TECHS, RESOURCES, TEMPERAMENTS, SUBSIDIES, SENSITIVITY,
   STRATEGIC, GOOD_KEYS, GOOD_DOUBLER, RECIPES, LUXURIES, GROUPS, goodName, impYield,
@@ -191,8 +192,10 @@ function showOffers(pl) {
   const o = (game.offers || []).find(x => x.to === pl.id);
   if (!o) return;
   const from = game.players[o.from];
-  const what = { peace: 'peace', alliance: 'an alliance', route: 'a trade route' }[o.type];
+  const what = { peace: 'peace', alliance: 'an alliance', route: 'a trade route', vassal: 'terms: submit as their tributary', protect: 'to become your tributary in exchange for protection' }[o.type];
   let extra = '';
+  if (o.type === 'vassal') extra = `<p>You would keep your cities and people, but pay ${Math.round(25)}% of your gold income and your surplus goods as tribute, and follow their wars and peace. Refusing means the war goes on.</p>`;
+  if (o.type === 'protect') extra = `<p>They would pay you tribute and follow your wars. You would join their current wars: ${game.warsOf(o.from).map(e => esc(game.players[e].name)).join(', ') || 'none'}.</p>`;
   if (o.type === 'route') {
     const gn = game.routeGain(pl.id, o.from);
     extra = `<p>Right now you could buy about ${gn.buy} and sell about ${gn.sell} units of goods per turn along it. Upkeep and tolls depend on its length and path.</p>`;
@@ -345,7 +348,7 @@ function hoverLabel(t) {
 
 const LEGENDS = {
   trade: () => GOOD_KEYS.map(k => `<span class="sw" style="background:${STRATEGIC[k].color};border-radius:6px"></span>${STRATEGIC[k].name}`).join('') + '<br><span class="dim">Dots mark producing deposits. Dashed lines are trade routes in both partners\' colours. <b style="color:#ff3a2a">!</b> raided last turn, <b>×</b> blocked.</span>',
-  political: () => 'Tribe colours. Grey: unclaimed land.',
+  political: () => 'Tribe colours. Stripes: a tributary, striped in its overlord\'s colour. Grey: unclaimed land.',
   culture: () => 'Each colour is a people. Offshoots share a hue family with the people they split from. <b>Solid</b>: a tribe\'s own people or a regional offshoot. <b>Thick stripes</b>: a people (base colour) ruled by another tribe (stripe colour). <b>Thin dark lines</b>: own people on foreign or alien land.',
   specialty: () => Object.values(SPECIALTY).map(s => `<span class="sw" style="background:${s.color}"></span>${s.name}`).join('') + '<br><span class="dim">Unclaimed land is shown dimmed in the type a city founded there would get.</span>',
   unrest: () => [['#4caf50', 'Content'], ['#c8c840', 'Calming'], ['#f09030', 'Restless'], ['#e04030', 'Rioting'], ['#901818', 'Insurrection']].map(([c, n]) => `<span class="sw" style="background:${c}"></span>${n}`).join('') + '<br><span class="dim">Blue lines: subsidies (denser = higher tier). Only your own cities are shown.</span>',
@@ -791,7 +794,7 @@ function showTribes() {
     let homeName = p.home ? SPECIALTY[p.home].name : '—';
     if (p.rebel && p.rebelFrom != null) homeName += ` <span class="dim">(rose against ${esc(game.players[p.rebelFrom].name)})</span>`;
     const q = (v) => met ? v : '?';
-    h += `<tr style="opacity:${p.alive ? 1 : 0.45}"><td>${chip(p)}</td><td>${met ? esc(p.name) : '<i>Unknown tribe</i>'}${p.human ? ' (human)' : ''}${p.alive ? '' : ' — fallen'}</td><td>${q(homeName)}</td><td>${temper}</td><td>${q(cs)}</td><td>${q(p.peak || 0)}</td><td>${q('T' + (p.founded ?? 1))}</td><td>${p.fell != null ? q('T' + p.fell) : ''}</td><td>${p.alive ? q(game.score(p.id)) : '-'}</td><td>${q(p.techs.length)}</td><td>${q(p.kills)}</td></tr>`;
+    h += `<tr style="opacity:${p.alive ? 1 : 0.45}"><td>${chip(p)}</td><td>${met ? esc(p.name) : '<i>Unknown tribe</i>'}${p.human ? ' (human)' : ''}${p.alive ? '' : p.absorbedBy != null ? ' — absorbed' : ' — fallen'}${p.alive && game.overlordOf(p.id) != null ? ` <span class="dim">(vassal of ${esc(game.players[game.overlordOf(p.id)].name)})</span>` : ''}</td><td>${q(homeName)}</td><td>${temper}</td><td>${q(cs)}</td><td>${q(p.peak || 0)}</td><td>${q('T' + (p.founded ?? 1))}</td><td>${p.fell != null ? q('T' + p.fell) : ''}</td><td>${p.alive ? q(game.score(p.id)) : '-'}</td><td>${q(p.techs.length)}</td><td>${q(p.kills)}</td></tr>`;
   }
   h += `</table>`;
   const dom = game.dominance();
@@ -838,9 +841,20 @@ function showTribes() {
 }
 
 // ------------------------------------------------------------ diplomacy
-function relBadge(st, r) {
+function relBadge(st, r, me) {
+  if (st === 'vassal') return r.vassal === me ? `<span class="aff" style="background:#c8a0e8">Your overlord</span>` : `<span class="aff" style="background:#b080e0">Your vassal</span>`;
   const C = { war: ['War', '#e04030'], truce: ['Truce', '#e0a050'], peace: ['Peace', '#7ddc6a'], alliance: ['Alliance', '#5fa8e8'] }[st];
   return `<span class="aff" style="background:${C[1]}">${C[0]}${st === 'truce' ? ' ' + (r.until - game.turn) : ''}</span>`;
+}
+function libertyHTML(v) {
+  const r = game.vassalRel(v);
+  if (!r) return '';
+  const terms = game.libertyTerms(v).map(([n, x]) => `${esc(n)} ${x >= 0 ? '+' : '−'}${Math.abs(Math.round(x * 10) / 10)}`).join(', ');
+  const col = r.liberty >= 75 ? '#ff7050' : r.liberty >= 40 ? '#e0c050' : '#7ddc6a';
+  let h = `<br><span class="dim">liberty desire</span> <b style="color:${col}">${Math.round(r.liberty)}/100</b> <span class="dim">(${terms} per turn)</span>`;
+  const goods = Object.entries(r.lastTribute?.goods || {}).map(([k, n]) => `${n} ${STRATEGIC[k].name.toLowerCase()}`).join(', ');
+  h += `<br><span class="dim">tribute: ${r.lastGold || 0} gold${goods ? ', ' + goods : ''}${r.lastTribute?.raided != null ? ' (raided!)' : r.lastTribute?.blocked ? ' (goods route blocked)' : ''}</span>`;
+  return h;
 }
 function showDiplomacy() {
   if (!game) return;
@@ -856,9 +870,16 @@ function showDiplomacy() {
       const hz = p.temper ? game.hostility(p.id, me.id) : null;
       const att = hz == null ? '—' : hz < 1.3 ? '<span style="color:#7ddc6a">Friendly</span>' : hz < 1.9 ? '<span style="color:#e0d060">Wary</span>' : '<span style="color:#ff7060">Hostile</span>';
       const acts = [];
-      if (mine) {
-        if (r.state === 'war') acts.push(['peace', 'Offer peace']);
+      const iAmVassal = game.isVassal(me.id);
+      if (mine && r.state === 'vassal') {
+        if (r.overlord === me.id) { acts.push(['annex', 'Annex', !game.canAnnex(me.id, p.id).ok, game.canAnnex(me.id, p.id).why]); acts.push(['release', 'Release']); }
+        else acts.push(['independence', 'Declare independence']);
+      } else if (mine && iAmVassal) {
+        if (!game.routeBetween(me.id, p.id) && r.state !== 'war') acts.push(['route', 'Open route', !game.canOpenRoute(me.id, p.id).ok]);
+      } else if (mine) {
+        if (r.state === 'war') { acts.push(['peace', 'Offer peace']); acts.push(['vassal', 'Demand submission', !game.offerCheck(me.id, p.id, 'vassal').ok]); }
         else {
+          if (!game.isVassal(p.id) && !game.vassalsOf(me.id).length) acts.push(['protect', 'Seek protection', !game.offerCheck(me.id, p.id, 'protect').ok]);
           acts.push(['war', 'Declare war', !game.canDeclareWar(me.id, p.id).ok]);
           if (r.state === 'alliance') acts.push(['endally', 'End alliance']);
           else acts.push(['alliance', 'Propose alliance']);
@@ -877,11 +898,14 @@ function showDiplomacy() {
         route += `<br><span class="dim">${rt.path.length - 1} tiles${rt.transit?.length ? ', via ' + rt.transit.map(t => esc(game.players[t].name)).join(', ') : ''}</span>`;
       } else if (!game.atWar(me.id, p.id)) { const gn = game.routeGain(me.id, p.id); route = `<span class="dim">could buy ${gn.buy}, sell ${gn.sell}</span>`; }
       if (game.transitClosed(me.id, p.id)) route += '<br><span class="dim">our land is closed to them</span>';
-      h += `<tr><td>${chip(p)}</td><td>${esc(p.name)}${p.human ? ' (human)' : ''}</td><td>${relBadge(r.state, r)}</td><td>${att}</td><td style="font-size:12px">${route}</td><td>${acts.map(([k, l, dis]) => `<button data-dip="${k}" data-pid="${p.id}" ${dis ? 'disabled' : ''} style="padding:3px 7px;font-size:12px">${l}</button>`).join(' ')}</td></tr>`;
+      const lordOfP = game.overlordOf(p.id);
+      const vNote = r.state === 'vassal' ? libertyHTML(r.vassal) : lordOfP != null ? `<br><span class="dim">vassal of ${esc(game.players[lordOfP].name)}</span>` : '';
+      h += `<tr><td>${chip(p)}</td><td>${esc(p.name)}${p.human ? ' (human)' : ''}${vNote}</td><td>${relBadge(r.state, r, me.id)}</td><td>${att}</td><td style="font-size:12px">${route}</td><td>${acts.map(([k, l, dis, why]) => `<button data-dip="${k}" data-pid="${p.id}" ${dis ? 'disabled' : ''} title="${esc(why || '')}" style="padding:3px 7px;font-size:12px">${l}</button>`).join(' ')}</td></tr>`;
     }
     h += `</table>`;
   }
-  h += `<p class="dim"><b>Trade routes</b> (${game.routesOf(me.id).length}/${game.routeLimit(me.id)}) run between your nearest connected cities. Each turn up to ${3} goods flow each way from surplus to deficit (you keep a reserve of 4 + 3× your army's supply). Buyers pay ore/horses 4, timber/stone 2 per unit, plus 1 per unit to every tribe whose land the route crosses. Routes cost upkeep by length. An enemy unit standing on a route seizes its shipment. A route can't pass through land closed to either partner. See the <b>Trade</b> map mode and your goods (G).</p>`;
+  h += `<p class="dim"><b>Tributaries</b>: demand submission from a beaten enemy, or seek protection from a stronger neighbour. A vassal keeps its cities and people, pays 25% of its gold income plus surplus goods along a tribute route, and follows its overlord's wars. Liberty desire grows with distance, cultural difference and the overlord's weakness; at 100 the vassal breaks free. An overlord may annex kindred vassals, or any vassal after 30 quiet turns.</p>`;
+  h += `<p class="dim"><b>Trade routes</b> (${game.routesOf(me.id).length}/${game.routeLimit(me.id)}) run between your nearest connected cities. Each turn up to ${3} goods flow each way from surplus to deficit (you keep a reserve of 4 + 3× your army's supply). Buyers pay a price per unit (${Object.entries(PRICE).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${STRATEGIC[k].name.toLowerCase()} ${v}`).join(', ')}), plus 1 per unit to every tribe whose land the route crosses. Routes cost upkeep by length. An enemy unit standing on a route seizes its shipment. A route can't pass through land closed to either partner. See the <b>Trade</b> map mode and your goods (G).</p>`;
   openModal(h);
   $('modalBody').querySelectorAll('[data-dip]').forEach(b => b.onclick = () => {
     const k = b.dataset.dip, o = +b.dataset.pid;
@@ -889,6 +913,9 @@ function showDiplomacy() {
     if (k === 'war') { if (!confirm(`Declare war on the ${game.players[o].name}?`)) return; res = game.declareWar(me.id, o); }
     else if (k === 'endally') res = game.breakAlliance(me.id, o);
     else if (k === 'endroute') res = game.closeRoute(me.id, o);
+    else if (k === 'annex') { if (!confirm(`Absorb the ${game.players[o].name} into your realm?`)) return; res = game.annexVassal(me.id, o); }
+    else if (k === 'release') res = game.releaseVassal(me.id, o);
+    else if (k === 'independence') { if (!confirm(`Throw off ${game.players[o].name}'s rule? This means war.`)) return; res = game.declareIndependence(me.id); }
     else if (k === 'transit') { game.setTransit(me.id, o, !game.transitClosed(me.id, o)); res = { ok: true }; }
     else {
       res = game.offer(me.id, o, k);
@@ -1097,6 +1124,8 @@ function showHelp() {
   <p>A conquered people goes by its own name joined to its ruler's, e.g. <b>Esko-Mardujana</b>. If it breaks free after long rule, it keeps the mark (<b>Mardu-Eskjana</b>). Names never stack beyond two parts, and only the latest influence is kept. Subject peoples feel unrest more strongly (+0.25 sensitivity) and regional offshoots slightly (+0.1). Revolts follow these lines: a rebellion takes its city's identity. Labels (<b>L</b>) name regions on every map mode except terrain.</p>
   <h3>Diplomacy</h3>
   <p>Tribes are at <b>war</b> until they make peace. Peace begins with a 10-turn <b>truce</b>. Units can't attack or enter the land of tribes they aren't at war with; allies share vision, may pass through each other's land, and defend each other when attacked. Declaring war on a partner earns grudges from the victim and from everyone who knows you. AI tribes use their temperament and their view of you to decide on war, peace, trade and alliances. Open <b>Diplomacy (D)</b> to deal with tribes you have met. Offers between humans wait for the other player's turn.</p>
+  <h3>Tributaries</h3>
+  <p>Instead of conquering a beaten enemy, <b>demand its submission</b>, or ask a stronger neighbour for <b>protection</b> when you are outmatched. A tributary keeps its cities, its people and its own unrest. It pays its overlord 25% of its gold income, ships surplus goods the overlord lacks along a raidable tribute route, and follows its overlord's wars and peace; the two share vision and passage. <b>Liberty desire</b> builds from distance, a foreign overlord, tribute and an overlord too weak to inspire awe, and eases with kinship and shared enemies. At 100 the vassal breaks free. An overlord can release a vassal, or <b>annex</b> it peacefully if their peoples are related, or after 30 turns of low liberty desire. An overlord whose only remaining rivals are its own vassals wins by conquest.</p>
   <h3>Strategic goods</h3>
   <p>Copper, tin, horses, timber and stone come from <b>deposits</b>: a Mine on a copper or tin deposit (the two metals lie in different regions), a Pasture on a horse herd, a Lumber Camp in a forest, a Quarry on hills. Each yields 1 per turn into your national stockpile, but only if its city is <b>connected</b> to your capital through land that isn't hostile or blocked by enemies. Advanced units and many buildings <b>require</b> goods, e.g. a Swordsman needs 1 bronze and Walls need 2 stone. Basic units and buildings never do. Armies also need <b>supply</b>: every 4 units that needed a good consume 1 of it per turn. Unsupplied units fight weaker and don't heal. Deposits are scarce and regional, so they're worth settling, conquering, raiding and protecting. <b>Bronze</b> is made from 1 copper + 1 tin at a Bronze Workshop, and trades at a markup. Press <b>G</b> for details.</p>
   <h3>The iron age</h3>

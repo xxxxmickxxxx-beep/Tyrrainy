@@ -9,6 +9,7 @@ import { generateMap, pickStarts, MAP_SIZES } from './mapgen.js';
 import { diplomacyMethods } from './diplomacy.js';
 import { economyMethods } from './economy.js';
 import { tradeMethods } from './trade.js';
+import { vassalMethods } from './vassals.js';
 import { ROOTS, LAND_BASE, joinName, combining, cleanBase, pickColors, offshootColors } from './culture.js';
 
 const INTEGRATION_TURNS = 10;
@@ -636,6 +637,12 @@ export class Game {
     for (const u of this.units) if (u.owner === pid && u.type !== 'settler') p += 0.5;
     return p;
   }
+  // a bloc's weight: own power plus half of its vassals'
+  blocPower(pid) {
+    let p = this.power(pid);
+    for (const v of this.vassalsOf?.(pid) || []) p += 0.5 * this.power(v);
+    return p;
+  }
   // Tribes still in the game: alive and holding at least one city.
   contenders() {
     const holders = new Set(this.cities.map(c => c.owner));
@@ -653,7 +660,8 @@ export class Game {
     const alive = this.contenders();
     let res = { leader: -1, d: 0, key: this.turn + ':' + this.current };
     if (alive.length >= 3 && this.turn >= 15) {
-      const pw = alive.map(p => [p.id, this.power(p.id)]).sort((a, b) => b[1] - a[1]);
+      const pw = alive.filter(p => !this.isVassal(p.id)).map(p => [p.id, this.blocPower(p.id)]).sort((a, b) => b[1] - a[1]);
+      if (pw.length < 2) { this._dom = res; return res; }
       const rest = pw.slice(1).reduce((a, x) => a + x[1], 0) / (pw.length - 1);
       const vsField = (pw[0][1] / Math.max(1, rest) - 1.3) / 0.9;
       const vsSecond = (pw[0][1] / Math.max(1, pw[1][1]) - 1.2) / 0.6;
@@ -1276,6 +1284,7 @@ export class Game {
     if (!hasCity) {
       pl.alive = false;
       pl.fell = this.turn;
+      for (const v of this.vassalsOf(pid)) { this.setRelation(pid, v, 'peace'); this.addLog(`With ${pl.name} gone, ${this.players[v].name} is free.`, v); }
       this.offers = (this.offers || []).filter(o => o.from !== pid && o.to !== pid);
       this.units = this.units.filter(u => u.owner !== pid);
       this.rebuildUnitMap();
@@ -1305,7 +1314,10 @@ export class Game {
 
   checkConquest() {
     const c = this.contenders();
-    if (c.length === 1) this.declareWinner(c[0].id, 'conquest');
+    if (c.length === 1) { this.declareWinner(c[0].id, 'conquest'); return; }
+    // an overlord whose only rivals left are its own vassals has won
+    const free = c.filter(p => !this.isVassal(p.id));
+    if (free.length === 1 && c.every(p => p.id === free[0].id || this.overlordOf(p.id) === free[0].id)) this.declareWinner(free[0].id, 'conquest');
   }
 
   declareWinner(pid, how) {
@@ -1493,6 +1505,7 @@ export class Game {
     this.collectGoods(pl.id);
     const inc = this.income(pl.id);
     pl.gold += inc;
+    this.payTribute(pl.id, inc);
     if (pl.gold < 0) { // the treasury cannot cover subsidies: the most expensive lapse first
       const subs = this.cities.filter(c => c.owner === pl.id && c.subsidy >= 2).sort((a, b) => b.subsidy - a.subsidy);
       for (const c of subs) { if (pl.gold >= 0) break; pl.gold += SUBSIDIES[c.subsidy].cost; c.subsidy = 1; this.addLog(`The treasury is empty: subsidies in ${c.name} lapse`, pl.id, c.idx); }
@@ -1581,6 +1594,7 @@ export class Game {
     }
     if (wrapped || next <= this.current) {
       this.tradeTick();
+      this.vassalTick();
       this.recordHistory();
       for (const p of this.players) if (p.alive) this.bumpPeak(p.id);
       this.turn++;
@@ -1653,4 +1667,4 @@ export class Game {
   }
 }
 
-Object.assign(Game.prototype, diplomacyMethods, economyMethods, tradeMethods);
+Object.assign(Game.prototype, diplomacyMethods, economyMethods, tradeMethods, vassalMethods);

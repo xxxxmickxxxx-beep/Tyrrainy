@@ -851,7 +851,7 @@ const diplomacyMethods = {
     return r;
   },
   atWar(a, b) { return a !== b && a >= 0 && b >= 0 && this.relation(a, b).state === 'war'; },
-  allied(a, b) { return a !== b && this.relation(a, b).state === 'alliance'; },
+  allied(a, b) { const st = this.relation(a, b).state; return a !== b && (st === 'alliance' || st === 'vassal'); },
   setRelation(a, b, state, extra = {}) {
     this.relations = this.relations || {};
     this.relations[this.relKey(a, b)] = { state, since: this.turn, ...extra };
@@ -885,12 +885,18 @@ const diplomacyMethods = {
   makePeace(a, b) {
     this.setRelation(a, b, 'truce', { until: this.turn + TRUCE_TURNS });
     this.evict(a, b);
+    // an overlord's peace binds its vassals
+    for (const [x, y] of [[a, b], [b, a]]) for (const v of this.vassalsOf?.(x) || []) {
+      if (v !== y && this.atWar(v, y)) { this.setRelation(v, y, 'truce', { until: this.turn + TRUCE_TURNS }); this.evict(v, y); }
+    }
     this.addLog(`${this.players[a].name} and ${this.players[b].name} make peace.`, a);
     this.emit('diplo', { type: 'peace', a, b });
   },
   canDeclareWar(a, b) {
     const r = this.relation(a, b);
     if (r.state === 'war') return { ok: false, why: 'Already at war' };
+    if (r.state === 'vassal') return { ok: false, why: r.vassal === a ? 'Declare independence instead' : 'Release your vassal first' };
+    if (this.isVassal?.(a)) return { ok: false, why: 'Your overlord decides war and peace' };
     if (r.state === 'truce') return { ok: false, why: `Truce holds for ${r.until - this.turn} more turns` };
     return { ok: true };
   },
@@ -912,6 +918,8 @@ const diplomacyMethods = {
       this.setRelation(p.id, a, 'war');
       this.addLog(`${p.name} honours its alliance and joins the war against ${this.players[a].name}.`, p.id);
     }
+    // vassals follow their overlord into war
+    for (const v of this.vassalsOf?.(a) || []) if (v !== b && !this.atWar(v, b)) this.setRelation(v, b, 'war');
     return { ok: true };
   },
   formAlliance(a, b) {
@@ -945,6 +953,19 @@ const diplomacyMethods = {
   offerCheck(from, to, type) {
     if (!this.hasMet(from, to)) return { ok: false, why: 'You have not met them' };
     const st = this.relation(from, to).state;
+    if (this.isVassal(from) && type !== 'route') return { ok: false, why: 'Your overlord conducts your diplomacy' };
+    if (st === 'vassal' && type !== 'route') return { ok: false, why: 'Already bound by vassalage' };
+    if (type === 'vassal') {
+      if (st !== 'war') return { ok: false, why: 'You can only demand submission in war' };
+      if (this.isVassal(to)) return { ok: false, why: 'They already serve another' };
+      return { ok: true };
+    }
+    if (type === 'protect') {
+      if (st === 'war') return { ok: false, why: 'Not from an enemy' };
+      if (this.isVassal(to)) return { ok: false, why: 'They are a vassal themselves' };
+      if (this.vassalsOf(from).length) return { ok: false, why: 'You have vassals of your own' };
+      return { ok: true };
+    }
     if (type === 'peace' && st !== 'war') return { ok: false, why: 'Not at war' };
     if (type === 'alliance' && (st === 'war' || st === 'alliance')) return { ok: false, why: st === 'war' ? 'Make peace first' : 'Already allied' };
     if (type === 'route') return this.canOpenRoute(from, to);
@@ -954,6 +975,8 @@ const diplomacyMethods = {
     if (type === 'peace') this.makePeace(from, to);
     else if (type === 'alliance') this.formAlliance(from, to);
     else if (type === 'route') this.openRoute(from, to);
+    else if (type === 'vassal') this.makeVassal(to, from);
+    else if (type === 'protect') this.makeVassal(from, to, true);
   },
   answerOffer(o, accept) {
     if (!(this.offers || []).includes(o)) return { ok: false, why: 'Offer no longer stands' };
@@ -980,6 +1003,22 @@ const diplomacyMethods = {
     if (type === 'route') {
       const g = this.routeGain(pid, from);
       return h < 1.9 && (g.buy > 0 || g.sell > 0);
+    }
+    if (type === 'vassal') {
+      // submit when hopelessly outmatched or bleeding cities; appeasers bend sooner
+      const pl = this.players[pid];
+      const mine = this.cities.filter(c => c.owner === pid).length;
+      const bleeding = (pl.peak || mine) >= 3 && mine <= (pl.peak || mine) * 0.6;
+      const limit = pl.temper?.key === 'appeaser' ? 0.6 : 0.45;
+      return myP < theirP * limit || (bleeding && myP < theirP * 0.75);
+    }
+    if (type === 'protect') {
+      // take a ward if we don't loathe it, can face its enemies, and it is worth having
+      if (h > 1.6) return false;
+      const enemies = this.warsOf(from);
+      if (enemies.some(e => this.power(e) > myP * 0.9 && !this.atWar(pid, e))) return false;
+      const goods = this.cities.filter(c => c.owner === from).reduce((a, c) => a + Object.keys(this.cityProduction(c)).length, 0);
+      return goods >= 1 || this.related(this.players[pid].culture, this.players[from].culture);
     }
     if (type === 'alliance') {
       const T = this.players[pid].temper, F = this.players[from].temper;
@@ -1419,8 +1458,157 @@ const tradeMethods = {
 
 function UNIT_ATK(u) { return u.type !== 'settler'; }
 
+// ---- src/vassals.js ----
+// Tributaries (indirect rule). Mixed into Game.prototype.
+//
+// A vassal keeps its cities, its people and its own unrest. It pays its overlord 25% of its
+// gold income each turn and ships surplus goods the overlord lacks along a real (raidable)
+// tribute route. It follows the overlord's wars and peaces; the two share vision and passage.
+// Liberty desire builds from distance, cultural difference, the tribute burden and the
+// overlord's weakness, and eases with kinship and shared enemies. At 100 the vassal breaks
+// free. An overlord can release a vassal, or annex it peacefully once the peoples are
+// related or after 30 quiet turns.
+
+
+const TRIBUTE_SHARE = 0.25;
+const ANNEX_AFTER = 30;
+
+const vassalMethods = {
+  vassalRel(v) {
+    for (const [, r] of Object.entries(this.relations || {})) if (r.state === 'vassal' && r.vassal === v) return r;
+    return null;
+  },
+  overlordOf(v) { const r = this.vassalRel(v); return r && this.players[r.overlord]?.alive ? r.overlord : null; },
+  vassalsOf(o) { return Object.values(this.relations || {}).filter(r => r.state === 'vassal' && r.overlord === o && this.players[r.vassal]?.alive).map(r => r.vassal); },
+  isVassal(pid) { return this.overlordOf(pid) != null; },
+
+  makeVassal(v, o, protect = false) {
+    const V = this.players[v], O = this.players[o];
+    this.setRelation(v, o, 'vassal', { vassal: v, overlord: o, liberty: protect ? 5 : 25, protect });
+    this.evict?.(v, o);
+    // the vassal is drawn into its overlord's wars
+    for (const p of this.players) {
+      if (!p.alive || p.id === v || p.id === o) continue;
+      if (this.atWar(o, p.id) && !this.atWar(v, p.id)) this.setRelation(v, p.id, 'war');
+      // a protector takes up its new ward's wars
+      if (protect && this.atWar(v, p.id) && !this.atWar(o, p.id) && this.relation(o, p.id).state !== 'vassal') this.setRelation(o, p.id, 'war');
+    }
+    this.addLog(protect ? `${V.name} places itself under the protection of ${O.name}.` : `${V.name} submits to ${O.name} as a tributary.`, v);
+    this.emit('diplo', { type: 'vassal', a: o, b: v });
+    this.updateVision(v); this.updateVision(o);
+  },
+  releaseVassal(o, v) {
+    if (this.overlordOf(v) !== o) return { ok: false, why: 'Not your vassal' };
+    this.setRelation(o, v, 'peace');
+    this.addLog(`${this.players[o].name} releases ${this.players[v].name} from vassalage.`, o);
+    return { ok: true };
+  },
+  canAnnex(o, v) {
+    const r = this.vassalRel(v);
+    if (!r || r.overlord !== o) return { ok: false, why: 'Not your vassal' };
+    if (this.players[v].human) return { ok: false, why: 'A human vassal cannot be annexed' };
+    const related = this.related(this.players[v].culture, this.players[o].culture);
+    const settled = this.turn - r.since >= ANNEX_AFTER && r.liberty < 25;
+    if (!related && !settled) return { ok: false, why: `Needs kindred peoples, or ${ANNEX_AFTER} turns with liberty desire under 25 (${this.turn - r.since} turns, liberty ${Math.round(r.liberty)})` };
+    return { ok: true };
+  },
+  annexVassal(o, v) {
+    const chk = this.canAnnex(o, v);
+    if (!chk.ok) return chk;
+    const V = this.players[v];
+    for (const c of this.cities) {
+      if (c.owner !== v) continue;
+      c.owner = o; c.capital = false; c.held = 0; c.subsidy = 0; // no conquest shock: a peaceful union
+      for (const t of this.within(c.idx, 2)) if (this.tiles[t].ownerCity === c.id) this.tiles[t].owner = o;
+    }
+    for (const u of this.units) if (u.owner === v) { u.owner = o; u.goto = null; }
+    const st = this.stock(o), vs = this.stock(v);
+    for (const k of GOOD_KEYS) st[k] = Math.min(this.stockCap(o), st[k] + vs[k]);
+    this.players[o].gold += V.gold;
+    V.alive = false; V.fell = this.turn; V.absorbedBy = o;
+    this.routes = (this.routes || []).filter(r => r.a !== v && r.b !== v);
+    this.rebuildUnitMap();
+    this.addLog(`${this.players[o].name} peacefully absorbs ${V.name}.`, o);
+    this.emit('diplo', { type: 'annex', a: o, b: v });
+    this.updateVision(o);
+    this.checkConquest();
+    return { ok: true };
+  },
+  declareIndependence(v) {
+    const o = this.overlordOf(v);
+    if (o == null) return { ok: false, why: 'Not a vassal' };
+    this.setRelation(v, o, 'war');
+    this.addGrudge(o, v, 30);
+    this.addLog(`${this.players[v].name} throws off the rule of ${this.players[o].name}!`, v);
+    this.emit('diplo', { type: 'independence', a: v, b: o });
+    // allies of the overlord (and its other vassals) are drawn in
+    for (const p of this.players) {
+      if (!p.alive || p.id === v || p.id === o || !this.allied(p.id, o) || this.allied(p.id, v)) continue;
+      if (!this.atWar(p.id, v)) this.setRelation(p.id, v, 'war');
+    }
+    return { ok: true };
+  },
+
+  // Liberty desire: what each term contributes per turn (for display and the tick).
+  libertyTerms(v) {
+    const r = this.vassalRel(v);
+    if (!r) return [];
+    const o = r.overlord;
+    const terms = [];
+    const capO = this.cities.find(c => c.owner === o && c.capital) || this.cities.find(c => c.owner === o);
+    const capV = this.cities.find(c => c.owner === v && c.capital) || this.cities.find(c => c.owner === v);
+    if (capO && capV) { const d = this.dist(capO.idx, capV.idx); if (d > 8) terms.push(['Distance', Math.min(3, (d - 8) / 4)]); }
+    const related = this.related(this.players[v].culture, this.players[o].culture);
+    terms.push(related ? ['Kindred peoples', -1] : ['Foreign overlord', 1.5]);
+    terms.push(['Tribute', 1]);
+    const ratio = this.power(v) / Math.max(1, this.power(o));
+    if (ratio > 1) terms.push(['Overlord is weaker', 6]); else if (ratio > 0.6) terms.push(['Overlord is barely stronger', 3]);
+    else if (ratio < 0.3) terms.push(['Overlord is overwhelming', -1.5]);
+    const shared = this.warsOf(o).some(e => this.atWar(v, e) && e !== v);
+    if (shared || r.protect) terms.push([r.protect ? 'Protection' : 'Shared enemies', -1.5]);
+    return terms;
+  },
+  vassalTick() {
+    for (const r of Object.values(this.relations || {})) {
+      if (r.state !== 'vassal') continue;
+      if (!this.players[r.overlord]?.alive) { r.state = 'peace'; continue; }
+      if (!this.players[r.vassal]?.alive) continue;
+      r.liberty = Math.max(0, Math.min(100, (r.liberty || 0) + this.libertyTerms(r.vassal).reduce((a, [, x]) => a + x, 0)));
+      // goods tribute along a real route: free, but raidable
+      const p = this.routePath?.(r.vassal, r.overlord);
+      r.lastTribute = { goods: {}, raided: null, blocked: !p };
+      if (!p) continue;
+      r.path = p.path;
+      let cap = 3;
+      for (const k of GOOD_KEYS.slice().sort((x, y) => this.deficit(r.overlord, y) - this.deficit(r.overlord, x))) {
+        if (cap <= 0) break;
+        const n = Math.min(cap, this.surplus(r.vassal, k), this.deficit(r.overlord, k));
+        if (n <= 0) continue;
+        cap -= n;
+        this.stock(r.vassal)[k] -= n;
+        const raider = this.raiderOn(p.path, r.vassal, r.overlord);
+        const to = raider ? raider.owner : r.overlord;
+        this.stock(to)[k] = Math.min(this.stockCap(to), this.stock(to)[k] + n);
+        if (raider) { r.lastTribute.raided = raider.owner; this.addLog(`${this.players[raider.owner].name} raiders seize tribute bound for ${this.players[r.overlord].name}.`, raider.owner, raider.idx); }
+        else r.lastTribute.goods[k] = (r.lastTribute.goods[k] || 0) + n;
+      }
+    }
+  },
+  // Gold tribute, taken when the vassal collects its income.
+  payTribute(v, inc) {
+    const o = this.overlordOf(v);
+    if (o == null || inc <= 0) return 0;
+    const t = Math.floor(inc * TRIBUTE_SHARE);
+    this.players[v].gold -= t;
+    this.players[o].gold += t;
+    const r = this.vassalRel(v); if (r) r.lastGold = t;
+    return t;
+  },
+};
+
 // ---- src/game.js ----
 // Core rules. Pure logic, no DOM — runs in the browser and in node (for sims).
+
 
 
 
@@ -2055,6 +2243,12 @@ class Game {
     for (const u of this.units) if (u.owner === pid && u.type !== 'settler') p += 0.5;
     return p;
   }
+  // a bloc's weight: own power plus half of its vassals'
+  blocPower(pid) {
+    let p = this.power(pid);
+    for (const v of this.vassalsOf?.(pid) || []) p += 0.5 * this.power(v);
+    return p;
+  }
   // Tribes still in the game: alive and holding at least one city.
   contenders() {
     const holders = new Set(this.cities.map(c => c.owner));
@@ -2072,7 +2266,8 @@ class Game {
     const alive = this.contenders();
     let res = { leader: -1, d: 0, key: this.turn + ':' + this.current };
     if (alive.length >= 3 && this.turn >= 15) {
-      const pw = alive.map(p => [p.id, this.power(p.id)]).sort((a, b) => b[1] - a[1]);
+      const pw = alive.filter(p => !this.isVassal(p.id)).map(p => [p.id, this.blocPower(p.id)]).sort((a, b) => b[1] - a[1]);
+      if (pw.length < 2) { this._dom = res; return res; }
       const rest = pw.slice(1).reduce((a, x) => a + x[1], 0) / (pw.length - 1);
       const vsField = (pw[0][1] / Math.max(1, rest) - 1.3) / 0.9;
       const vsSecond = (pw[0][1] / Math.max(1, pw[1][1]) - 1.2) / 0.6;
@@ -2695,6 +2890,7 @@ class Game {
     if (!hasCity) {
       pl.alive = false;
       pl.fell = this.turn;
+      for (const v of this.vassalsOf(pid)) { this.setRelation(pid, v, 'peace'); this.addLog(`With ${pl.name} gone, ${this.players[v].name} is free.`, v); }
       this.offers = (this.offers || []).filter(o => o.from !== pid && o.to !== pid);
       this.units = this.units.filter(u => u.owner !== pid);
       this.rebuildUnitMap();
@@ -2724,7 +2920,10 @@ class Game {
 
   checkConquest() {
     const c = this.contenders();
-    if (c.length === 1) this.declareWinner(c[0].id, 'conquest');
+    if (c.length === 1) { this.declareWinner(c[0].id, 'conquest'); return; }
+    // an overlord whose only rivals left are its own vassals has won
+    const free = c.filter(p => !this.isVassal(p.id));
+    if (free.length === 1 && c.every(p => p.id === free[0].id || this.overlordOf(p.id) === free[0].id)) this.declareWinner(free[0].id, 'conquest');
   }
 
   declareWinner(pid, how) {
@@ -2912,6 +3111,7 @@ class Game {
     this.collectGoods(pl.id);
     const inc = this.income(pl.id);
     pl.gold += inc;
+    this.payTribute(pl.id, inc);
     if (pl.gold < 0) { // the treasury cannot cover subsidies: the most expensive lapse first
       const subs = this.cities.filter(c => c.owner === pl.id && c.subsidy >= 2).sort((a, b) => b.subsidy - a.subsidy);
       for (const c of subs) { if (pl.gold >= 0) break; pl.gold += SUBSIDIES[c.subsidy].cost; c.subsidy = 1; this.addLog(`The treasury is empty: subsidies in ${c.name} lapse`, pl.id, c.idx); }
@@ -3000,6 +3200,7 @@ class Game {
     }
     if (wrapped || next <= this.current) {
       this.tradeTick();
+      this.vassalTick();
       this.recordHistory();
       for (const p of this.players) if (p.alive) this.bumpPeak(p.id);
       this.turn++;
@@ -3072,7 +3273,7 @@ class Game {
   }
 }
 
-Object.assign(Game.prototype, diplomacyMethods, economyMethods, tradeMethods);
+Object.assign(Game.prototype, diplomacyMethods, economyMethods, tradeMethods, vassalMethods);
 
 // ---- src/ai.js ----
 // Computer opponents. Greedy heuristics, fast enough for 8 tribes on huge maps.
@@ -3188,13 +3389,35 @@ function diplomacyAct(g, pid) {
   const others = g.contenders().filter(p => p.id !== pid && g.hasMet(pid, p.id));
   const offerOk = (o, type) => (g.turn - (pl.lastOffer[o + type] ?? -99)) >= 5;
   const offer = (o, type) => { pl.lastOffer[o + type] = g.turn; return g.offer(pid, o, type); };
+  // vassals: bide their time, break free when liberty peaks and they can stand alone
+  const lord = g.overlordOf(pid);
+  if (lord != null) {
+    const r = g.vassalRel(pid);
+    if (r.liberty >= 100 && myP >= g.power(lord) * 0.5) g.declareIndependence(pid);
+    return;
+  }
+  // overlords absorb vassals when they can
+  for (const v of g.vassalsOf(pid)) if (g.canAnnex(pid, v).ok) g.annexVassal(pid, v);
+  // under attack and outmatched: seek a protector
+  const threats = g.warsOf(pid).filter(e => g.power(e) > myP * 2);
+  if (threats.length && !g.vassalsOf(pid).length && offerOk(-1, 'protect')) {
+    const protector = others.filter(o => !g.atWar(pid, o.id) && !g.isVassal(o.id) && g.power(o.id) > Math.max(...threats.map(e => g.power(e))) * 0.9)
+      .sort((a, b) => g.hostility(pid, a.id) - g.hostility(pid, b.id))[0];
+    if (protector) { pl.lastOffer['-1protect'] = g.turn; g.offer(pid, protector.id, 'protect'); }
+  }
   for (const o of others) {
     const r = g.relation(pid, o.id);
     const h = g.hostility(pid, o.id);
     const theirP = g.power(o.id);
     const wars = g.warsOf(pid).length;
+    if (r.state === 'vassal') continue;
     if (r.state === 'war') {
       const age = g.turn - (r.since || 0);
+      // a crushing advantage: demand submission rather than grind out a conquest
+      if (age >= 5 && myP >= theirP * 2 && !g.isVassal(o.id) && offerOk(o.id, 'vassal')) {
+        const res = offer(o.id, 'vassal');
+        if (res.accepted) continue;
+      }
       const losing = myP < theirP * 0.6;
       const containing = T.joined === o.id;
       const weary = age >= 25;
@@ -3948,8 +4171,12 @@ class Renderer {
     const city = tl.ownerCity != null ? g.cityById(tl.ownerCity) : null;
     const owner = tl.owner;
     switch (this.mapMode) {
-      case 'political':
-        return { fill: owner >= 0 ? g.players[owner].color : NEUTRAL };
+      case 'political': {
+        if (owner < 0) return { fill: NEUTRAL };
+        const lord = g.overlordOf?.(owner);
+        // a vassal's land carries its overlord's stripes: spheres of influence at a glance
+        return lord != null ? { fill: g.players[owner].color, hatch: g.players[lord].color } : { fill: g.players[owner].color };
+      }
       case 'culture': {
         if (owner < 0 || !city) return { fill: NEUTRAL };
         const cul = g.cultures?.[city.culture];
@@ -4376,6 +4603,7 @@ class Renderer {
 
 
 
+
 const $ = (id) => document.getElementById(id);
 const SAVE_KEY = 'tyrrainy-save-v1';
 
@@ -4558,8 +4786,10 @@ function showOffers(pl) {
   const o = (game.offers || []).find(x => x.to === pl.id);
   if (!o) return;
   const from = game.players[o.from];
-  const what = { peace: 'peace', alliance: 'an alliance', route: 'a trade route' }[o.type];
+  const what = { peace: 'peace', alliance: 'an alliance', route: 'a trade route', vassal: 'terms: submit as their tributary', protect: 'to become your tributary in exchange for protection' }[o.type];
   let extra = '';
+  if (o.type === 'vassal') extra = `<p>You would keep your cities and people, but pay ${Math.round(25)}% of your gold income and your surplus goods as tribute, and follow their wars and peace. Refusing means the war goes on.</p>`;
+  if (o.type === 'protect') extra = `<p>They would pay you tribute and follow your wars. You would join their current wars: ${game.warsOf(o.from).map(e => esc(game.players[e].name)).join(', ') || 'none'}.</p>`;
   if (o.type === 'route') {
     const gn = game.routeGain(pl.id, o.from);
     extra = `<p>Right now you could buy about ${gn.buy} and sell about ${gn.sell} units of goods per turn along it. Upkeep and tolls depend on its length and path.</p>`;
@@ -4712,7 +4942,7 @@ function hoverLabel(t) {
 
 const LEGENDS = {
   trade: () => GOOD_KEYS.map(k => `<span class="sw" style="background:${STRATEGIC[k].color};border-radius:6px"></span>${STRATEGIC[k].name}`).join('') + '<br><span class="dim">Dots mark producing deposits. Dashed lines are trade routes in both partners\' colours. <b style="color:#ff3a2a">!</b> raided last turn, <b>×</b> blocked.</span>',
-  political: () => 'Tribe colours. Grey: unclaimed land.',
+  political: () => 'Tribe colours. Stripes: a tributary, striped in its overlord\'s colour. Grey: unclaimed land.',
   culture: () => 'Each colour is a people. Offshoots share a hue family with the people they split from. <b>Solid</b>: a tribe\'s own people or a regional offshoot. <b>Thick stripes</b>: a people (base colour) ruled by another tribe (stripe colour). <b>Thin dark lines</b>: own people on foreign or alien land.',
   specialty: () => Object.values(SPECIALTY).map(s => `<span class="sw" style="background:${s.color}"></span>${s.name}`).join('') + '<br><span class="dim">Unclaimed land is shown dimmed in the type a city founded there would get.</span>',
   unrest: () => [['#4caf50', 'Content'], ['#c8c840', 'Calming'], ['#f09030', 'Restless'], ['#e04030', 'Rioting'], ['#901818', 'Insurrection']].map(([c, n]) => `<span class="sw" style="background:${c}"></span>${n}`).join('') + '<br><span class="dim">Blue lines: subsidies (denser = higher tier). Only your own cities are shown.</span>',
@@ -5158,7 +5388,7 @@ function showTribes() {
     let homeName = p.home ? SPECIALTY[p.home].name : '—';
     if (p.rebel && p.rebelFrom != null) homeName += ` <span class="dim">(rose against ${esc(game.players[p.rebelFrom].name)})</span>`;
     const q = (v) => met ? v : '?';
-    h += `<tr style="opacity:${p.alive ? 1 : 0.45}"><td>${chip(p)}</td><td>${met ? esc(p.name) : '<i>Unknown tribe</i>'}${p.human ? ' (human)' : ''}${p.alive ? '' : ' — fallen'}</td><td>${q(homeName)}</td><td>${temper}</td><td>${q(cs)}</td><td>${q(p.peak || 0)}</td><td>${q('T' + (p.founded ?? 1))}</td><td>${p.fell != null ? q('T' + p.fell) : ''}</td><td>${p.alive ? q(game.score(p.id)) : '-'}</td><td>${q(p.techs.length)}</td><td>${q(p.kills)}</td></tr>`;
+    h += `<tr style="opacity:${p.alive ? 1 : 0.45}"><td>${chip(p)}</td><td>${met ? esc(p.name) : '<i>Unknown tribe</i>'}${p.human ? ' (human)' : ''}${p.alive ? '' : p.absorbedBy != null ? ' — absorbed' : ' — fallen'}${p.alive && game.overlordOf(p.id) != null ? ` <span class="dim">(vassal of ${esc(game.players[game.overlordOf(p.id)].name)})</span>` : ''}</td><td>${q(homeName)}</td><td>${temper}</td><td>${q(cs)}</td><td>${q(p.peak || 0)}</td><td>${q('T' + (p.founded ?? 1))}</td><td>${p.fell != null ? q('T' + p.fell) : ''}</td><td>${p.alive ? q(game.score(p.id)) : '-'}</td><td>${q(p.techs.length)}</td><td>${q(p.kills)}</td></tr>`;
   }
   h += `</table>`;
   const dom = game.dominance();
@@ -5205,9 +5435,20 @@ function showTribes() {
 }
 
 // ------------------------------------------------------------ diplomacy
-function relBadge(st, r) {
+function relBadge(st, r, me) {
+  if (st === 'vassal') return r.vassal === me ? `<span class="aff" style="background:#c8a0e8">Your overlord</span>` : `<span class="aff" style="background:#b080e0">Your vassal</span>`;
   const C = { war: ['War', '#e04030'], truce: ['Truce', '#e0a050'], peace: ['Peace', '#7ddc6a'], alliance: ['Alliance', '#5fa8e8'] }[st];
   return `<span class="aff" style="background:${C[1]}">${C[0]}${st === 'truce' ? ' ' + (r.until - game.turn) : ''}</span>`;
+}
+function libertyHTML(v) {
+  const r = game.vassalRel(v);
+  if (!r) return '';
+  const terms = game.libertyTerms(v).map(([n, x]) => `${esc(n)} ${x >= 0 ? '+' : '−'}${Math.abs(Math.round(x * 10) / 10)}`).join(', ');
+  const col = r.liberty >= 75 ? '#ff7050' : r.liberty >= 40 ? '#e0c050' : '#7ddc6a';
+  let h = `<br><span class="dim">liberty desire</span> <b style="color:${col}">${Math.round(r.liberty)}/100</b> <span class="dim">(${terms} per turn)</span>`;
+  const goods = Object.entries(r.lastTribute?.goods || {}).map(([k, n]) => `${n} ${STRATEGIC[k].name.toLowerCase()}`).join(', ');
+  h += `<br><span class="dim">tribute: ${r.lastGold || 0} gold${goods ? ', ' + goods : ''}${r.lastTribute?.raided != null ? ' (raided!)' : r.lastTribute?.blocked ? ' (goods route blocked)' : ''}</span>`;
+  return h;
 }
 function showDiplomacy() {
   if (!game) return;
@@ -5223,9 +5464,16 @@ function showDiplomacy() {
       const hz = p.temper ? game.hostility(p.id, me.id) : null;
       const att = hz == null ? '—' : hz < 1.3 ? '<span style="color:#7ddc6a">Friendly</span>' : hz < 1.9 ? '<span style="color:#e0d060">Wary</span>' : '<span style="color:#ff7060">Hostile</span>';
       const acts = [];
-      if (mine) {
-        if (r.state === 'war') acts.push(['peace', 'Offer peace']);
+      const iAmVassal = game.isVassal(me.id);
+      if (mine && r.state === 'vassal') {
+        if (r.overlord === me.id) { acts.push(['annex', 'Annex', !game.canAnnex(me.id, p.id).ok, game.canAnnex(me.id, p.id).why]); acts.push(['release', 'Release']); }
+        else acts.push(['independence', 'Declare independence']);
+      } else if (mine && iAmVassal) {
+        if (!game.routeBetween(me.id, p.id) && r.state !== 'war') acts.push(['route', 'Open route', !game.canOpenRoute(me.id, p.id).ok]);
+      } else if (mine) {
+        if (r.state === 'war') { acts.push(['peace', 'Offer peace']); acts.push(['vassal', 'Demand submission', !game.offerCheck(me.id, p.id, 'vassal').ok]); }
         else {
+          if (!game.isVassal(p.id) && !game.vassalsOf(me.id).length) acts.push(['protect', 'Seek protection', !game.offerCheck(me.id, p.id, 'protect').ok]);
           acts.push(['war', 'Declare war', !game.canDeclareWar(me.id, p.id).ok]);
           if (r.state === 'alliance') acts.push(['endally', 'End alliance']);
           else acts.push(['alliance', 'Propose alliance']);
@@ -5244,11 +5492,14 @@ function showDiplomacy() {
         route += `<br><span class="dim">${rt.path.length - 1} tiles${rt.transit?.length ? ', via ' + rt.transit.map(t => esc(game.players[t].name)).join(', ') : ''}</span>`;
       } else if (!game.atWar(me.id, p.id)) { const gn = game.routeGain(me.id, p.id); route = `<span class="dim">could buy ${gn.buy}, sell ${gn.sell}</span>`; }
       if (game.transitClosed(me.id, p.id)) route += '<br><span class="dim">our land is closed to them</span>';
-      h += `<tr><td>${chip(p)}</td><td>${esc(p.name)}${p.human ? ' (human)' : ''}</td><td>${relBadge(r.state, r)}</td><td>${att}</td><td style="font-size:12px">${route}</td><td>${acts.map(([k, l, dis]) => `<button data-dip="${k}" data-pid="${p.id}" ${dis ? 'disabled' : ''} style="padding:3px 7px;font-size:12px">${l}</button>`).join(' ')}</td></tr>`;
+      const lordOfP = game.overlordOf(p.id);
+      const vNote = r.state === 'vassal' ? libertyHTML(r.vassal) : lordOfP != null ? `<br><span class="dim">vassal of ${esc(game.players[lordOfP].name)}</span>` : '';
+      h += `<tr><td>${chip(p)}</td><td>${esc(p.name)}${p.human ? ' (human)' : ''}${vNote}</td><td>${relBadge(r.state, r, me.id)}</td><td>${att}</td><td style="font-size:12px">${route}</td><td>${acts.map(([k, l, dis, why]) => `<button data-dip="${k}" data-pid="${p.id}" ${dis ? 'disabled' : ''} title="${esc(why || '')}" style="padding:3px 7px;font-size:12px">${l}</button>`).join(' ')}</td></tr>`;
     }
     h += `</table>`;
   }
-  h += `<p class="dim"><b>Trade routes</b> (${game.routesOf(me.id).length}/${game.routeLimit(me.id)}) run between your nearest connected cities. Each turn up to ${3} goods flow each way from surplus to deficit (you keep a reserve of 4 + 3× your army's supply). Buyers pay ore/horses 4, timber/stone 2 per unit, plus 1 per unit to every tribe whose land the route crosses. Routes cost upkeep by length. An enemy unit standing on a route seizes its shipment. A route can't pass through land closed to either partner. See the <b>Trade</b> map mode and your goods (G).</p>`;
+  h += `<p class="dim"><b>Tributaries</b>: demand submission from a beaten enemy, or seek protection from a stronger neighbour. A vassal keeps its cities and people, pays 25% of its gold income plus surplus goods along a tribute route, and follows its overlord's wars. Liberty desire grows with distance, cultural difference and the overlord's weakness; at 100 the vassal breaks free. An overlord may annex kindred vassals, or any vassal after 30 quiet turns.</p>`;
+  h += `<p class="dim"><b>Trade routes</b> (${game.routesOf(me.id).length}/${game.routeLimit(me.id)}) run between your nearest connected cities. Each turn up to ${3} goods flow each way from surplus to deficit (you keep a reserve of 4 + 3× your army's supply). Buyers pay a price per unit (${Object.entries(PRICE).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${STRATEGIC[k].name.toLowerCase()} ${v}`).join(', ')}), plus 1 per unit to every tribe whose land the route crosses. Routes cost upkeep by length. An enemy unit standing on a route seizes its shipment. A route can't pass through land closed to either partner. See the <b>Trade</b> map mode and your goods (G).</p>`;
   openModal(h);
   $('modalBody').querySelectorAll('[data-dip]').forEach(b => b.onclick = () => {
     const k = b.dataset.dip, o = +b.dataset.pid;
@@ -5256,6 +5507,9 @@ function showDiplomacy() {
     if (k === 'war') { if (!confirm(`Declare war on the ${game.players[o].name}?`)) return; res = game.declareWar(me.id, o); }
     else if (k === 'endally') res = game.breakAlliance(me.id, o);
     else if (k === 'endroute') res = game.closeRoute(me.id, o);
+    else if (k === 'annex') { if (!confirm(`Absorb the ${game.players[o].name} into your realm?`)) return; res = game.annexVassal(me.id, o); }
+    else if (k === 'release') res = game.releaseVassal(me.id, o);
+    else if (k === 'independence') { if (!confirm(`Throw off ${game.players[o].name}'s rule? This means war.`)) return; res = game.declareIndependence(me.id); }
     else if (k === 'transit') { game.setTransit(me.id, o, !game.transitClosed(me.id, o)); res = { ok: true }; }
     else {
       res = game.offer(me.id, o, k);
@@ -5464,6 +5718,8 @@ function showHelp() {
   <p>A conquered people goes by its own name joined to its ruler's, e.g. <b>Esko-Mardujana</b>. If it breaks free after long rule, it keeps the mark (<b>Mardu-Eskjana</b>). Names never stack beyond two parts, and only the latest influence is kept. Subject peoples feel unrest more strongly (+0.25 sensitivity) and regional offshoots slightly (+0.1). Revolts follow these lines: a rebellion takes its city's identity. Labels (<b>L</b>) name regions on every map mode except terrain.</p>
   <h3>Diplomacy</h3>
   <p>Tribes are at <b>war</b> until they make peace. Peace begins with a 10-turn <b>truce</b>. Units can't attack or enter the land of tribes they aren't at war with; allies share vision, may pass through each other's land, and defend each other when attacked. Declaring war on a partner earns grudges from the victim and from everyone who knows you. AI tribes use their temperament and their view of you to decide on war, peace, trade and alliances. Open <b>Diplomacy (D)</b> to deal with tribes you have met. Offers between humans wait for the other player's turn.</p>
+  <h3>Tributaries</h3>
+  <p>Instead of conquering a beaten enemy, <b>demand its submission</b>, or ask a stronger neighbour for <b>protection</b> when you are outmatched. A tributary keeps its cities, its people and its own unrest. It pays its overlord 25% of its gold income, ships surplus goods the overlord lacks along a raidable tribute route, and follows its overlord's wars and peace; the two share vision and passage. <b>Liberty desire</b> builds from distance, a foreign overlord, tribute and an overlord too weak to inspire awe, and eases with kinship and shared enemies. At 100 the vassal breaks free. An overlord can release a vassal, or <b>annex</b> it peacefully if their peoples are related, or after 30 turns of low liberty desire. An overlord whose only remaining rivals are its own vassals wins by conquest.</p>
   <h3>Strategic goods</h3>
   <p>Copper, tin, horses, timber and stone come from <b>deposits</b>: a Mine on a copper or tin deposit (the two metals lie in different regions), a Pasture on a horse herd, a Lumber Camp in a forest, a Quarry on hills. Each yields 1 per turn into your national stockpile, but only if its city is <b>connected</b> to your capital through land that isn't hostile or blocked by enemies. Advanced units and many buildings <b>require</b> goods, e.g. a Swordsman needs 1 bronze and Walls need 2 stone. Basic units and buildings never do. Armies also need <b>supply</b>: every 4 units that needed a good consume 1 of it per turn. Unsupplied units fight weaker and don't heal. Deposits are scarce and regional, so they're worth settling, conquering, raiding and protecting. <b>Bronze</b> is made from 1 copper + 1 tin at a Bronze Workshop, and trades at a markup. Press <b>G</b> for details.</p>
   <h3>The iron age</h3>

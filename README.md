@@ -174,6 +174,24 @@ Goods are rival and come from places. Infinite goods shared freely made "ally wi
   - it values enemy cities 40% more for each good they produce that it is starving for.
 - **Effect in sims (8 tribes, large map, 100 turns):** 10–13 wars per game, against 5–7 with infinite goods, plus 19–65 raids and more alliances.
 
+### Tributaries (`src/vassals.js`)
+- **Forming:**
+  - **Submission:** a tribe at war demands it (`offer 'vassal'`). The AI demands it after 5+ turns of war at 2× the enemy's power. A target accepts below 45% of the demander's power (60% for appeasers), or when it has lost 40% of its peak cities and is below 75%.
+  - **Protection:** a weak tribe asks for it (`offer 'protect'`) when an enemy has 2× its power. The protector must not loathe it, must be able to face its enemies, and must gain goods or kinship. The protector joins the ward's wars.
+- **Terms:** the vassal keeps its cities, people and unrest. Each turn it pays **25% of its gold income** and ships surplus goods the overlord lacks (up to 3) along a real, **raidable** tribute route. It follows its overlord's wars and peaces (vassals join wars the overlord declares, and an overlord's peace binds its vassals), can't conduct its own diplomacy beyond trade routes, and shares vision and passage like an ally.
+- **Liberty desire (0–100) per turn:**
+  - distance between capitals beyond 8 (up to +3);
+  - foreign overlord +1.5, or kindred peoples −1;
+  - tribute +1;
+  - overlord's strength: weaker than the vassal +6, barely stronger +3, overwhelming −1.5;
+  - shared enemies or protection −1.5.
+
+  At 100 an AI vassal at least half its overlord's power declares independence (war). A human vassal may do so at any time.
+- **Endings:** the overlord can **release** a vassal (peace) or **annex** it peacefully: it needs related peoples, or 30+ turns with liberty under 25. Annexed cities join without conquest shock, and the absorbed tribe shows as "absorbed" in the records. If an overlord falls, its vassals go free.
+- **Power & victory:** dominance and coalitions use **bloc power** (own power + half of each vassal's) and never treat a vassal as the leader. An overlord whose only remaining rivals are its own vassals wins by conquest; vassals don't share the victory.
+- **Map:** in political mode, a vassal's land is striped in its overlord's colour.
+- **Sims (8 tribes, large map, 120 turns):** 11–18 vassalages, 1–4 annexations and 4–7 independence wars per game, with 6–8 vassals standing at the end.
+
 ### Peoples (cultures) & records
 Peoples are separate from polities (`src/culture.js`), as in CK3, and names never exceed two parts.
 

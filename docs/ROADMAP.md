@@ -19,7 +19,7 @@ Each pair of tribes is in one of four states: **War**, **Truce** (a fixed number
 
 Why first: everything below needs "not at war" to mean something.
 
-## 2. Tributaries / indirect rule (medium; the direct answer to dead zones)
+## 2. Tributaries / indirect rule — DONE (see README › Tributaries)
 When a tribe is badly beaten (it has lost most of its power, or its capital is under siege), the victor can demand **vassalage** instead of conquering its cities.
 - **The tributary keeps its cities, its culture and its own unrest.** That costs the overlord nothing in unrest.
 - It pays tribute, say 25% of its income. It joins the overlord's wars, and can't make war or peace on its own.
@@ -70,5 +70,5 @@ Ruins and unclaimed land slowly regrow.
 
 ## Production chains: status
 - Done: bronze (copper + tin), cloth (wool), the iron age (iron ore + timber → iron; metal substitution), food and luxuries.
-- Next in the agreed order: tributaries, then a production-chain view, then the gold-role pass.
+- Done: tributaries. Next in the agreed order: a production-chain view, then the gold-role pass.
 - Deferred: rations (salt + food) for armies fighting outside their own borders.

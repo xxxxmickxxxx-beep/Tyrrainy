@@ -35,13 +35,13 @@ for (let k = 0; k < games; k++) {
   while (!g.winner && steps < 5000) { if (boost && g.current === 0) g.players[0].gold += boost; runAI(g, g.current); g.endTurn(); steps++; }
   console.log(`game ${k}: turn ${g.turn} winner ${g.winner && g.players[g.winner.pid].name} (${g.winner?.how}) in ${Date.now() - t0}ms`);
   console.log(`  revolts=${st.revolts} insurgents=${st.insurg} festivals=${st.fest} backfired=${st.backfire} razed=${st.razed || 0}(chosen ${st.chosen || 0}) improvementsDestroyed=${st.impLost || 0} buildingLossEvents=${st.bldLost || 0} rebellions=${st.rebellions || 0} rebelCities=${g.cities.filter(c => g.players[c.owner].rebel).length}`);
-  const rel = { war: 0, truce: 0, peace: 0, alliance: 0 }; const live = g.contenders();
+  const rel = { war: 0, truce: 0, peace: 0, alliance: 0, vassal: 0 }; const live = g.contenders();
   for (let i = 0; i < live.length; i++) for (let j = i + 1; j < live.length; j++) if (g.hasMet(live[i].id, live[j].id)) rel[g.relation(live[i].id, live[j].id).state]++;
   const goods = g.contenders().map(p => `${p.name.slice(0, 8)}:${Object.entries(g.stock(p.id)).map(([k, v]) => k.slice(0, 2) + v).join(' ')}`).join(' | ');
   const units = {}; for (const u of g.units) units[u.type] = (units[u.type] || 0) + 1;
   console.log(`  stockpiles: ${goods}`);
   console.log(`  unit mix: ${Object.entries(units).sort((a, b) => b[1] - a[1]).map(([k, v]) => k + ':' + v).join(' ')}`);
-  console.log(`  diplomacy events: war ${st.war || 0}, peace ${st.peace || 0}, alliance ${st.alliance || 0}, routes opened ${st.route || 0} (active ${(g.routes || []).length}), raids ${st.raids || 0} | final relations among met pairs: ${JSON.stringify(rel)}`);
+  console.log(`  diplomacy events: war ${st.war || 0}, peace ${st.peace || 0}, alliance ${st.alliance || 0}, routes opened ${st.route || 0} (active ${(g.routes || []).length}), raids ${st.raids || 0}, vassalages ${st.vassal || 0}, annexed ${st.annex || 0}, independence ${st.independence || 0} (vassals now ${g.contenders().filter(p => g.isVassal(p.id)).length}) | final relations among met pairs: ${JSON.stringify(rel)}`);
   console.log(`  coalition joins: ${st.joins.join(', ') || 'none'}`);
   console.log(`  share of attacks on leader while dominant, by temperament: ` + Object.entries(st.byTemper).map(([k, v]) => `${k} ${Math.round(100 * v.leader / Math.max(1, v.leader + v.other))}% (${v.leader + v.other})`).join(', '));
   const subs = [0, 0, 0, 0]; for (const c of g.cities) subs[c.subsidy || 0]++;

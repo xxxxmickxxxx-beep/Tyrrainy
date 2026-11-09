@@ -17,7 +17,7 @@ export const diplomacyMethods = {
     return r;
   },
   atWar(a, b) { return a !== b && a >= 0 && b >= 0 && this.relation(a, b).state === 'war'; },
-  allied(a, b) { return a !== b && this.relation(a, b).state === 'alliance'; },
+  allied(a, b) { const st = this.relation(a, b).state; return a !== b && (st === 'alliance' || st === 'vassal'); },
   setRelation(a, b, state, extra = {}) {
     this.relations = this.relations || {};
     this.relations[this.relKey(a, b)] = { state, since: this.turn, ...extra };
@@ -51,12 +51,18 @@ export const diplomacyMethods = {
   makePeace(a, b) {
     this.setRelation(a, b, 'truce', { until: this.turn + TRUCE_TURNS });
     this.evict(a, b);
+    // an overlord's peace binds its vassals
+    for (const [x, y] of [[a, b], [b, a]]) for (const v of this.vassalsOf?.(x) || []) {
+      if (v !== y && this.atWar(v, y)) { this.setRelation(v, y, 'truce', { until: this.turn + TRUCE_TURNS }); this.evict(v, y); }
+    }
     this.addLog(`${this.players[a].name} and ${this.players[b].name} make peace.`, a);
     this.emit('diplo', { type: 'peace', a, b });
   },
   canDeclareWar(a, b) {
     const r = this.relation(a, b);
     if (r.state === 'war') return { ok: false, why: 'Already at war' };
+    if (r.state === 'vassal') return { ok: false, why: r.vassal === a ? 'Declare independence instead' : 'Release your vassal first' };
+    if (this.isVassal?.(a)) return { ok: false, why: 'Your overlord decides war and peace' };
     if (r.state === 'truce') return { ok: false, why: `Truce holds for ${r.until - this.turn} more turns` };
     return { ok: true };
   },
@@ -78,6 +84,8 @@ export const diplomacyMethods = {
       this.setRelation(p.id, a, 'war');
       this.addLog(`${p.name} honours its alliance and joins the war against ${this.players[a].name}.`, p.id);
     }
+    // vassals follow their overlord into war
+    for (const v of this.vassalsOf?.(a) || []) if (v !== b && !this.atWar(v, b)) this.setRelation(v, b, 'war');
     return { ok: true };
   },
   formAlliance(a, b) {
@@ -111,6 +119,19 @@ export const diplomacyMethods = {
   offerCheck(from, to, type) {
     if (!this.hasMet(from, to)) return { ok: false, why: 'You have not met them' };
     const st = this.relation(from, to).state;
+    if (this.isVassal(from) && type !== 'route') return { ok: false, why: 'Your overlord conducts your diplomacy' };
+    if (st === 'vassal' && type !== 'route') return { ok: false, why: 'Already bound by vassalage' };
+    if (type === 'vassal') {
+      if (st !== 'war') return { ok: false, why: 'You can only demand submission in war' };
+      if (this.isVassal(to)) return { ok: false, why: 'They already serve another' };
+      return { ok: true };
+    }
+    if (type === 'protect') {
+      if (st === 'war') return { ok: false, why: 'Not from an enemy' };
+      if (this.isVassal(to)) return { ok: false, why: 'They are a vassal themselves' };
+      if (this.vassalsOf(from).length) return { ok: false, why: 'You have vassals of your own' };
+      return { ok: true };
+    }
     if (type === 'peace' && st !== 'war') return { ok: false, why: 'Not at war' };
     if (type === 'alliance' && (st === 'war' || st === 'alliance')) return { ok: false, why: st === 'war' ? 'Make peace first' : 'Already allied' };
     if (type === 'route') return this.canOpenRoute(from, to);
@@ -120,6 +141,8 @@ export const diplomacyMethods = {
     if (type === 'peace') this.makePeace(from, to);
     else if (type === 'alliance') this.formAlliance(from, to);
     else if (type === 'route') this.openRoute(from, to);
+    else if (type === 'vassal') this.makeVassal(to, from);
+    else if (type === 'protect') this.makeVassal(from, to, true);
   },
   answerOffer(o, accept) {
     if (!(this.offers || []).includes(o)) return { ok: false, why: 'Offer no longer stands' };
@@ -146,6 +169,22 @@ export const diplomacyMethods = {
     if (type === 'route') {
       const g = this.routeGain(pid, from);
       return h < 1.9 && (g.buy > 0 || g.sell > 0);
+    }
+    if (type === 'vassal') {
+      // submit when hopelessly outmatched or bleeding cities; appeasers bend sooner
+      const pl = this.players[pid];
+      const mine = this.cities.filter(c => c.owner === pid).length;
+      const bleeding = (pl.peak || mine) >= 3 && mine <= (pl.peak || mine) * 0.6;
+      const limit = pl.temper?.key === 'appeaser' ? 0.6 : 0.45;
+      return myP < theirP * limit || (bleeding && myP < theirP * 0.75);
+    }
+    if (type === 'protect') {
+      // take a ward if we don't loathe it, can face its enemies, and it is worth having
+      if (h > 1.6) return false;
+      const enemies = this.warsOf(from);
+      if (enemies.some(e => this.power(e) > myP * 0.9 && !this.atWar(pid, e))) return false;
+      const goods = this.cities.filter(c => c.owner === from).reduce((a, c) => a + Object.keys(this.cityProduction(c)).length, 0);
+      return goods >= 1 || this.related(this.players[pid].culture, this.players[from].culture);
     }
     if (type === 'alliance') {
       const T = this.players[pid].temper, F = this.players[from].temper;

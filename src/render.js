@@ -299,8 +299,12 @@ export class Renderer {
     const city = tl.ownerCity != null ? g.cityById(tl.ownerCity) : null;
     const owner = tl.owner;
     switch (this.mapMode) {
-      case 'political':
-        return { fill: owner >= 0 ? g.players[owner].color : NEUTRAL };
+      case 'political': {
+        if (owner < 0) return { fill: NEUTRAL };
+        const lord = g.overlordOf?.(owner);
+        // a vassal's land carries its overlord's stripes: spheres of influence at a glance
+        return lord != null ? { fill: g.players[owner].color, hatch: g.players[lord].color } : { fill: g.players[owner].color };
+      }
       case 'culture': {
         if (owner < 0 || !city) return { fill: NEUTRAL };
         const cul = g.cultures?.[city.culture];

@@ -111,13 +111,35 @@ function diplomacyAct(g, pid) {
   const others = g.contenders().filter(p => p.id !== pid && g.hasMet(pid, p.id));
   const offerOk = (o, type) => (g.turn - (pl.lastOffer[o + type] ?? -99)) >= 5;
   const offer = (o, type) => { pl.lastOffer[o + type] = g.turn; return g.offer(pid, o, type); };
+  // vassals: bide their time, break free when liberty peaks and they can stand alone
+  const lord = g.overlordOf(pid);
+  if (lord != null) {
+    const r = g.vassalRel(pid);
+    if (r.liberty >= 100 && myP >= g.power(lord) * 0.5) g.declareIndependence(pid);
+    return;
+  }
+  // overlords absorb vassals when they can
+  for (const v of g.vassalsOf(pid)) if (g.canAnnex(pid, v).ok) g.annexVassal(pid, v);
+  // under attack and outmatched: seek a protector
+  const threats = g.warsOf(pid).filter(e => g.power(e) > myP * 2);
+  if (threats.length && !g.vassalsOf(pid).length && offerOk(-1, 'protect')) {
+    const protector = others.filter(o => !g.atWar(pid, o.id) && !g.isVassal(o.id) && g.power(o.id) > Math.max(...threats.map(e => g.power(e))) * 0.9)
+      .sort((a, b) => g.hostility(pid, a.id) - g.hostility(pid, b.id))[0];
+    if (protector) { pl.lastOffer['-1protect'] = g.turn; g.offer(pid, protector.id, 'protect'); }
+  }
   for (const o of others) {
     const r = g.relation(pid, o.id);
     const h = g.hostility(pid, o.id);
     const theirP = g.power(o.id);
     const wars = g.warsOf(pid).length;
+    if (r.state === 'vassal') continue;
     if (r.state === 'war') {
       const age = g.turn - (r.since || 0);
+      // a crushing advantage: demand submission rather than grind out a conquest
+      if (age >= 5 && myP >= theirP * 2 && !g.isVassal(o.id) && offerOk(o.id, 'vassal')) {
+        const res = offer(o.id, 'vassal');
+        if (res.accepted) continue;
+      }
       const losing = myP < theirP * 0.6;
       const containing = T.joined === o.id;
       const weary = age >= 25;
