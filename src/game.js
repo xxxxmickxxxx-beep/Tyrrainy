@@ -412,7 +412,7 @@ export class Game {
     if (city.worksTurn !== this.turn) { city.worksTurn = this.turn; city.worksDone = 0; }
     city.worksDone++;
   }
-  improveCost(pid, k) { return IMPROVEMENTS[k].cost; }
+  improveCost(pid, k) { return Math.max(1, IMPROVEMENTS[k].cost - (this.has(pid, 'engineering') ? 1 : 0)); }
   // One construction per city per turn, and none while hostile troops stand next to it.
   buildBlock(city) {
     if (this.neighbors(city.idx).some(n => { const u = this.unitAt(n); return u && u.owner !== city.owner && this.atWar(u.owner, city.owner); })) return 'Enemies at the gates';
@@ -630,7 +630,7 @@ export class Game {
     const cul = this.peopleFor(city, owner);
     const pl = {
       id, name: this.uniqueTribeName(cul.name), color: cul.color, color2: cul.color2, culture: cul.id, home: city.specialty, human, rebel: true, rebelFrom: owner,
-      gold: 4, techs: [...old.techs], explored: new Array(this.W * this.H).fill(0), alive: true, kills: 0, losses: 0, born: this.turn,
+      gold: 4, techs: this.inheritedTechs(city, owner), explored: new Array(this.W * this.H).fill(0), alive: true, kills: 0, losses: 0, born: this.turn,
     };
     if (!human) { pl.temper = rollTemper(this.rng); pl.temper.grudges[owner] = 40; }
     pl.founded = this.turn; pl.peak = 0;
@@ -657,7 +657,34 @@ export class Game {
     return this.newCulture({ base: city.name, root: X.root, parent: X.id, home: city.specialty, city, reuse: true });
   }
 
+  // A new polity rising in a city (client or rebellion) keeps only the knowledge its own land
+  // uses: improvements its tiles can carry, its buildings, its garrison's arms, the sea if it is
+  // on the coast, the mountains if it has them, and whatever those rest on.
+  inheritedTechs(city, from) {
+    const known = new Set(this.players[from].techs);
+    const keep = new Set();
+    const tiles = this.within(city.idx, 2);
+    for (const [k, I] of Object.entries(IMPROVEMENTS)) {
+      if (!I.tech || !known.has(I.tech)) continue;
+      if (tiles.some(t => I.terrain.includes(this.tiles[t].t) && (!I.requires || [].concat(I.resource).includes(this.tiles[t].res)))) keep.add(I.tech);
+    }
+    for (const b of city.buildings) if (BUILDINGS[b]?.tech && known.has(BUILDINGS[b].tech)) keep.add(BUILDINGS[b].tech);
+    const gar = this.unitAt(city.idx);
+    if (gar && UNITS[gar.type].tech && known.has(UNITS[gar.type].tech)) keep.add(UNITS[gar.type].tech);
+    const coastal = this.neighbors(city.idx).some(n => this.isWater(n));
+    if (coastal) for (const t of ['fishing', 'sailing']) if (known.has(t)) keep.add(t);
+    if (tiles.some(t => this.tiles[t].t === 'mountain') && known.has('climbing')) keep.add('climbing');
+    if (tiles.some(t => this.tiles[t].t === 'forest' || this.tiles[t].t === 'hills') && known.has('roads')) keep.add('roads');
+    if (known.has('shieldwall')) keep.add('shieldwall'); // every polity can raise a shield wall
+    // and everything those rest on
+    const add = (t) => { for (const r of TECHS[t].req) if (!keep.has(r)) { keep.add(r); add(r); } };
+    for (const t of [...keep]) add(t);
+    return Object.keys(TECHS).filter(t => keep.has(t));
+  }
+
   // ---- clients: a city released as a new tribe, subject to its former owner from the start
+  // room for new tribes (clients, colonies, rebellions) under the world's cap
+  tribeRoom() { return MAX_TRIBES - this.players.filter(p => p.alive).length; }
   canReleaseCity(city) {
     const pid = city.owner;
     if (city.capital) return { ok: false, why: 'Not the capital' };
@@ -675,7 +702,7 @@ export class Game {
     const id = this.players.length;
     const pl = {
       id, name: this.uniqueTribeName(cul.name), color: cul.color, color2: cul.color2, culture: cul.id, home: city.specialty, human: false, client: true, clientOf: owner,
-      gold: 6 + city.level * 2, techs: [...O.techs], explored: new Array(this.W * this.H).fill(0), alive: true, kills: 0, losses: 0, born: this.turn,
+      gold: 6 + city.level * 2, techs: this.inheritedTechs(city, owner), explored: new Array(this.W * this.H).fill(0), alive: true, kills: 0, losses: 0, born: this.turn,
       met: { [owner]: true },
     };
     pl.temper = rollTemper(this.rng);

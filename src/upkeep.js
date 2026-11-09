@@ -1,7 +1,8 @@
 // Technology upkeep and dark ages. Mixed into Game.prototype. (Game option: settings.techUpkeep)
 //
-// Every known tech costs knowledge each turn (by tier). A subject pays nothing for what its
-// overlord knows. Upkeep halves if a trade partner, vassal or overlord knows the tech, and drops a further 25% if any tribe at peace with you knows it:
+// Every known tech costs knowledge each turn (by tier). A subject pays half for what its
+// overlord knows (on top of the partner discount). Upkeep halves if a trade partner, vassal or
+// overlord knows the tech, and drops a further 25% if any tribe at peace with you knows it:
 // isolation is expensive, contact keeps ideas alive. The knowledge stock is the buffer
 // (libraries); only when it runs dry does *decline* build up. When decline reaches DECLINE_AT, a
 // tech must be forgotten. Only "leaf" techs (nothing else you know depends on them) can go, so
@@ -26,10 +27,10 @@ export const upkeepMethods = {
     return { strong, weak };
   },
   techUpkeepOf(pid, t, partners = this.knowledgePartners(pid)) {
-    // a subject lives inside its overlord's learning: what the overlord knows costs it nothing
-    const lord = this.overlordOf?.(pid);
-    if (lord != null && this.players[lord]?.techs.includes(t)) return 0;
     let u = TECH_UPKEEP[TECHS[t].tier];
+    // a subject leans on its overlord's learning: half again for what the overlord knows
+    const lord = this.overlordOf?.(pid);
+    if (lord != null && this.players[lord]?.techs.includes(t)) u *= 0.5;
     const knows = (set) => [...set].some(o => this.players[o]?.techs.includes(t));
     if (knows(partners.strong)) u *= 0.5;
     if (knows(partners.weak)) u *= 0.75;

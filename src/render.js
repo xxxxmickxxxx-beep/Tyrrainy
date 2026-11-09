@@ -205,35 +205,55 @@ export class Renderer {
       }
       ctx.stroke();
     }
-    // borders
+    // borders. A bloc (an overlord and its subjects, at any depth) is outlined in the overlord's
+    // two-tone border; inside it, each subject's own colour marks its land.
+    const bw = Math.max(1.5, S * 0.08);
+    const top = (o) => (o < 0 ? -1 : g.topOverlord(o));
+    const warEdges = [];
     for (const i of list) {
       if (explored && !explored[i]) continue;
       const tl = g.tiles[i];
       if (tl.owner < 0) continue;
       const [x, y] = this.tileCenter(i);
-      const col = g.players[tl.owner].color;
-      const col2 = g.players[tl.owner].color2 || '#111';
+      const own = g.players[tl.owner], T = top(tl.owner), lord = g.players[T];
       const nb = this.neighborDirs(i);
-      // two-tone border: accent colour on the outside edge, fill colour just inside it
-      const bw = Math.max(1.5, S * 0.08);
-      for (const [rad, c] of [[S - 0.5 - bw / 2, col2], [S - 0.5 - bw * 1.5, col]]) {
+      const outside = (n) => n === null || top(g.tiles[n].owner) !== T;
+      const otherOwner = (n) => n === null || g.tiles[n].owner !== tl.owner;
+      const lines = [[S - 0.5 - bw / 2, lord.color2 || '#111', bw, outside], [S - 0.5 - bw * 1.5, lord.color, bw, outside]];
+      if (T !== tl.owner) lines.push([S - 0.5 - bw * 2.4, own.color, bw * 0.8, otherOwner]); // the subject's own line
+      for (const [rad, c, w, edge] of lines) {
         const corners = hexCorners(x, y, rad);
         ctx.strokeStyle = c;
-        ctx.lineWidth = bw;
+        ctx.lineWidth = w;
         ctx.beginPath();
         for (let k = 0; k < 6; k++) {
-          const n = nb[k];
-          if (n !== null && g.tiles[n].owner === tl.owner) continue;
+          if (!edge(nb[k])) continue;
           const a = corners[(k + 5) % 6], b = corners[k];
           ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]);
         }
         ctx.stroke();
       }
+      // fronts: borders between tribes at war (each edge once)
+      const corners = hexCorners(x, y, S);
+      for (let k = 0; k < 6; k++) {
+        const n = nb[k];
+        if (n === null || n < i || g.tiles[n].owner < 0 || g.tiles[n].owner === tl.owner) continue;
+        if (explored && !explored[n]) continue;
+        if (!g.atWar(tl.owner, g.tiles[n].owner)) continue;
+        warEdges.push(corners[(k + 5) % 6], corners[k]);
+      }
       if (!terrainMode) continue;
       ctx.globalAlpha = 0.12;
       this.hexPath(x, y, S);
-      ctx.fillStyle = col; ctx.fill();
+      ctx.fillStyle = own.color; ctx.fill();
       ctx.globalAlpha = 1;
+    }
+    if (warEdges.length) {
+      ctx.strokeStyle = '#ff2a1a'; ctx.lineWidth = Math.max(2, S * 0.11); ctx.lineCap = 'butt';
+      ctx.setLineDash([Math.max(3, S * 0.22), Math.max(2, S * 0.16)]);
+      ctx.beginPath();
+      for (let k = 0; k < warEdges.length; k += 2) { ctx.moveTo(warEdges[k][0], warEdges[k][1]); ctx.lineTo(warEdges[k + 1][0], warEdges[k + 1][1]); }
+      ctx.stroke(); ctx.setLineDash([]); ctx.lineCap = 'round';
     }
     // highlights
     for (const [i, kind] of this.highlights) {

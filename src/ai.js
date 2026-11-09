@@ -5,14 +5,14 @@ import { SUBSIDIES, GRAND } from './data.js';
 
 const HOME_TECH_BIAS = {
   plains: { agriculture: 4, husbandry: 2, riding: 3 },
-  hilltop: { mining: 4, masonry: 3, archery: 1 },
+  hilltop: { mining: 4, masonry: 3, archery: 1, shieldwall: 1 },
   coastal: { fishing: 4, sailing: 4, navigation: 2 },
-  riverside: { agriculture: 4, irrigation: 2, trade: 3, bronze: 2 },
+  riverside: { agriculture: 4, irrigation: 2, trade: 3, bronze: 2, metalarms: 1 },
   forest: { forestry: 4, archery: 3, roads: 2 },
   desert: { husbandry: 3, riding: 4, irrigation: 3 },
   steppe: { husbandry: 4, riding: 4, chivalry: 2 },
   marsh: { drainage: 3, agriculture: 2, fishing: 2 },
-  mountain: { mining: 4, climbing: 4, masonry: 3 },
+  mountain: { mining: 4, climbing: 4, masonry: 3, shieldwall: 2 },
 };
 
 function profile(g, pid) {
@@ -122,8 +122,10 @@ function diplomacyAct(g, pid) {
     if (r.liberty >= 100 && g.standRatio(pid) >= 0.5) { g.riseAgainst(pid); return; }
     if (!g.terms(pid).free) return;
   }
-  // overlords absorb vassals when they can
-  for (const v of g.vassalsOf(pid)) if (g.canAnnex(pid, v).ok) g.annexVassal(pid, v);
+  // overlords absorb vassals when they can, but not past the size they can govern directly
+  // (beyond that, sprawl unrest outweighs direct rule: subjects are the better deal)
+  const nMine = () => g.cities.filter(c => c.owner === pid).length;
+  for (const v of g.vassalsOf(pid)) if (g.canAnnex(pid, v).ok && nMine() + g.cities.filter(c => c.owner === v).length <= 12) g.annexVassal(pid, v);
   // under attack and outmatched: seek a protector
   const threats = g.warsOf(pid).filter(e => g.power(e) > myP * 2);
   if (lord == null && threats.length && !g.vassalsOf(pid).length && offerOk(-1, 'protect')) {
@@ -436,11 +438,44 @@ function siteScore(g, pid, i) {
   return s;
 }
 
+// Colonies: beyond the land it means to rule directly, a tribe may plant a city on good distant
+// land, weighted toward goods it lacks, and charter it at once as a client. How keen a tribe is
+// on this varies (pl.colonial), so some stay compact and others spread subjects across the map.
+const RES_GOOD = { copper: 'copper', tin: 'tin', iron: 'ironore', horses: 'horses', sheep: 'wool', spices: 'spice', fish: 'food', wheat: 'food' };
+function colonySite(g, pid) {
+  const pl = g.players[pid];
+  if (pl._colony?.turn === g.turn) return pl._colony.i;
+  const mine = g.cities.filter(c => c.owner === pid);
+  let best = null, bestS = 5;
+  for (let i = 0; i < g.tiles.length; i++) {
+    const t = g.tiles[i];
+    if (!pl.explored[i] || t.owner >= 0 || t.city >= 0 || TERRAIN[t.t].water) continue;
+    let dmin = 99;
+    for (const c of mine) dmin = Math.min(dmin, g.dist(c.idx, i));
+    if (dmin < 6 || dmin > 22) continue;
+    let s = siteScore(g, pid, i);
+    if (s === -Infinity) continue;
+    for (const n of g.within(i, 1)) { const good = RES_GOOD[g.tiles[n].res]; if (good) s += goodHunger(g, pid, good) * 1.5; }
+    s -= dmin * 0.1;
+    if (s > bestS) { bestS = s; best = i; }
+  }
+  pl._colony = { turn: g.turn, i: best };
+  return best;
+}
+function found(g, u) {
+  const pid = u.owner, idx = u.idx, colony = u.colony;
+  g.settle(u);
+  const c = g.cityAt(idx);
+  if (colony && c && c.owner === pid && g.releaseCity(c).ok) g.addLog(`It is a colony: ${c.name} is chartered as a client realm.`, pid, idx);
+}
+
 function settlerAct(g, u, cache) {
   const pid = u.owner;
   const pl = g.players[pid];
   if (u.goal != null && g.canFoundAt(pid, u.goal).ok !== true) u.goal = null;
-  if (u.goal === u.idx) { g.settle(u); return; }
+  // a colonist stays a colonist: it looks for another colony site, and whatever it founds is chartered
+  if (u.colony && u.goal == null) { pl._colony = null; u.goal = colonySite(g, pid); }
+  if (u.goal === u.idx) { found(g, u); return; }
   if (u.goal == null) {
     let best = null, bestS = -Infinity;
     for (const i of g.within(u.idx, 9)) {
@@ -452,8 +487,8 @@ function settlerAct(g, u, cache) {
     u.age = 0;
   }
   u.age = (u.age || 0) + 1;
-  if (u.goal == null || u.age > 12) {
-    if (g.canSettle(u).ok) { g.settle(u); return; }
+  if (u.goal == null || u.age > (u.colony ? 30 : 12)) {
+    if (g.canSettle(u).ok) { found(g, u); return; }
     const t = exploreTarget(g, u);
     if (t !== null) {
       const step = bestStep(g, u, field(g, t, u, cache), true);
@@ -465,7 +500,7 @@ function settlerAct(g, u, cache) {
   if (dist[u.idx] === Infinity) { u.goal = null; return; }
   const step = bestStep(g, u, dist, true);
   if (step !== null) g.moveUnit(u, step);
-  if (g.units.includes(u) && u.idx === u.goal) g.settle(u);
+  if (g.units.includes(u) && u.idx === u.goal) found(g, u);
 }
 
 // ---------------- economy
@@ -493,7 +528,14 @@ function techValue(g, pid, t) {
   }
   if (t === 'climbing') v += g.tiles.some((tl, i) => tl.owner === pid && tl.t === 'mountain') ? 1 : -1;
   if (t === 'sailing' || t === 'navigation') v += g.cities.some(c => c.owner === pid && c.specialty === 'coastal') ? 1.5 : -0.5;
-  if (['masonry', 'bronze', 'engineering', 'chivalry'].includes(t)) v += 1 + g.turn / 25;
+  // arms are worth learning when the materials can be had, made or bought
+  const canGet = (k) => g.avail(pid, k) > 0 || supplyRate(g, pid, k) > 0 || g.routesOf(pid).length > 0;
+  if (t === 'shieldwall') v += 1.5 + g.turn / 25;
+  if (t === 'metalarms') v += (canGet('metal') ? 1.5 : 0.3) + g.turn / 25;
+  if (t === 'legions') v += (canGet('iron') ? 1.5 : 0) + g.turn / 25;
+  if (t === 'siegecraft') v += (canGet('timber') ? 1 : 0) + g.turn / 30;
+  if (t === 'chivalry') v += (canGet('horses') ? 1 : 0) + g.turn / 30;
+  if (['masonry', 'bronze', 'engineering'].includes(t)) v += 1 + g.turn / 25;
   if (['philosophy', 'assimilation', 'trade'].includes(t)) v += g.turn / 20;
   return v / TECHS[t].tier;
 }
@@ -676,6 +718,20 @@ function spend(g, pid, prof) {
         if (g.train(c, 'settler').ok) continue;
         // not enough labor yet: this city saves for the settler instead of spending on other things
         if (g.workCheck(c, g.unitCost(c, 'settler')).short <= g.laborRate(c) * 3) saving = c;
+      }
+    }
+
+    // b2) colonies: at its comfortable size, a colonial tribe plants subjects on distant land
+    pl.colonial = pl.colonial ?? 0.2 + g.rng() * 0.8;
+    const colonists = units.filter(u => u.colony).length;
+    // (only while the world has room for the new realm: an unchartered colony far from home revolts)
+    if (colonists === 0 && settlers <= 1 && pl.colonial > 0.35 && g.tribeRoom() >= 3 && cities.length >= Math.min(6, wantCities - 1) && capLeft > 0 && pl.gold > 20
+      && g.turn - (pl.lastColony ?? -99) >= 8 / pl.colonial && g.vassalsOf(pid).length < 1 + Math.floor(cities.length / 4)) {
+      const site = colonySite(g, pid);
+      const c = site != null && cities.filter(c => !g.unitAt(c.idx)).sort((a, b) => g.dist(a.idx, site) - g.dist(b.idx, site))[0];
+      if (c) {
+        const r = g.train(c, 'settler');
+        if (r.ok) { r.unit.colony = true; r.unit.goal = site; pl.lastColony = g.turn; continue; }
       }
     }
 

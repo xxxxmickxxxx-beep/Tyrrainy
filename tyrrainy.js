@@ -246,21 +246,21 @@ const UNITS = {
   settler:   { name: 'Settler',   atk: 0, def: 1, hp: 10, mv: 1, rng: 1, cost: 5, glyph: 'S', traits: ['settler'] },
   archer:    { name: 'Archer',    atk: 2, def: 1, hp: 10, mv: 1, rng: 2, cost: 3, glyph: 'A', tech: 'archery' },
   rider:     { name: 'Rider',     atk: 2, def: 1, hp: 10, mv: 2, rng: 1, cost: 3, glyph: 'R', tech: 'riding', traits: ['mounted'], needs: { horses: 1 } },
-  defender:  { name: 'Defender',  atk: 1, def: 3, hp: 15, mv: 1, rng: 1, cost: 3, glyph: 'D', tech: 'masonry' },
-  swordsman: { name: 'Swordsman', atk: 3, def: 3, hp: 15, mv: 1, rng: 1, cost: 5, glyph: 'X', tech: 'bronze', needs: { metal: 1 } },
-  catapult:  { name: 'Catapult',  atk: 4, def: 0, hp: 10, mv: 1, rng: 3, cost: 8, glyph: 'C', tech: 'engineering', needs: { timber: 2 } },
+  defender:  { name: 'Defender',  atk: 1, def: 3, hp: 15, mv: 1, rng: 1, cost: 3, glyph: 'D', tech: 'shieldwall' },
+  swordsman: { name: 'Swordsman', atk: 3, def: 3, hp: 15, mv: 1, rng: 1, cost: 5, glyph: 'X', tech: 'metalarms', needs: { metal: 1 } },
+  catapult:  { name: 'Catapult',  atk: 4, def: 0, hp: 10, mv: 1, rng: 3, cost: 8, glyph: 'C', tech: 'siegecraft', needs: { timber: 2 } },
   knight:    { name: 'Knight',    atk: 3.5, def: 1, hp: 15, mv: 3, rng: 1, cost: 8, glyph: 'K', tech: 'chivalry', traits: ['mounted'], needs: { metal: 1, horses: 1 } },
   // specialty uniques
   lancer:     { name: 'Lancer',      atk: 4, def: 1, hp: 12, mv: 2, rng: 1, cost: 5, glyph: 'L', tech: 'riding', traits: ['mounted'], unique: 'plains', needs: { horses: 1 } },
   slinger:    { name: 'Slinger',     atk: 2, def: 1, hp: 8,  mv: 1, rng: 2, cost: 3, glyph: 's', unique: 'hilltop', traits: ['hillwalk'] },
   corsair:    { name: 'Corsair',     atk: 3, def: 2, hp: 12, mv: 3, rng: 1, cost: 6, glyph: 'Q', tech: 'sailing', traits: ['naval'], unique: 'coastal', needs: { timber: 2 } },
-  pikeman:    { name: 'Pikeman',     atk: 2, def: 3, hp: 12, mv: 1, rng: 1, cost: 4, glyph: 'P', tech: 'bronze', traits: ['antimount'], unique: 'riverside', needs: { metal: 1 } },
+  pikeman:    { name: 'Pikeman',     atk: 2, def: 3, hp: 12, mv: 1, rng: 1, cost: 4, glyph: 'P', tech: 'metalarms', traits: ['antimount'], unique: 'riverside', needs: { metal: 1 } },
   ranger:     { name: 'Ranger',      atk: 3, def: 1, hp: 10, mv: 1, rng: 2, cost: 5, glyph: 'G', tech: 'archery', traits: ['forestwalk'], unique: 'forest' },
   camel:      { name: 'Camel Raider',atk: 3, def: 1, hp: 12, mv: 3, rng: 1, cost: 5, glyph: 'M', tech: 'riding', traits: ['mounted', 'desertwalk'], unique: 'desert' },
   horsearcher:{ name: 'Horse Archer',atk: 2, def: 1, hp: 10, mv: 2, rng: 2, cost: 5, glyph: 'H', tech: 'riding', traits: ['mounted', 'skirmish'], unique: 'steppe', needs: { horses: 1 } },
   bogstalker: { name: 'Bog Stalker', atk: 3, def: 1, hp: 10, mv: 2, rng: 1, cost: 4, glyph: 'B', traits: ['marshwalk', 'stealth'], unique: 'marsh' },
-  legionary:  { name: 'Legionary',   atk: 4, def: 4, hp: 16, mv: 1, rng: 1, cost: 7, glyph: 'I', tech: 'ironworking', needs: { iron: 1 } },
-  highlander: { name: 'Highlander',  atk: 2, def: 4, hp: 15, mv: 1, rng: 1, cost: 5, glyph: 'U', tech: 'masonry', traits: ['mountainwalk', 'hillwalk'], unique: 'mountain', needs: { metal: 1 } },
+  legionary:  { name: 'Legionary',   atk: 4, def: 4, hp: 16, mv: 1, rng: 1, cost: 7, glyph: 'I', tech: 'legions', needs: { iron: 1 } },
+  highlander: { name: 'Highlander',  atk: 2, def: 4, hp: 15, mv: 1, rng: 1, cost: 5, glyph: 'U', tech: 'shieldwall', traits: ['mountainwalk', 'hillwalk'], unique: 'mountain', needs: { metal: 1 } },
 };
 
 const EMBARKED = { name: 'Boat', atk: 1, def: 1, mv: 2, rng: 1 };
@@ -446,18 +446,23 @@ const TECHS = {
   husbandry:   { name: 'Husbandry', tier: 1, req: [], desc: 'Pastures on horses.' },
   archery:     { name: 'Archery', tier: 2, req: ['forestry'], desc: 'Archers. Rangers in forest cities.' },
   riding:      { name: 'Riding', tier: 2, req: ['husbandry'], desc: 'Riders, Lancers, Camels, Horse Archers.' },
-  masonry:     { name: 'Masonry', tier: 2, req: ['mining'], desc: 'Defenders, Walls, Highlanders.' },
+  masonry:     { name: 'Masonry', tier: 2, req: ['mining'], desc: 'Walls, Amphitheaters.' },
   climbing:    { name: 'Climbing', tier: 2, req: ['mining'], desc: 'Move onto mountains, settle them.' },
   sailing:     { name: 'Sailing', tier: 2, req: ['fishing'], desc: 'Units embark onto shallows. Corsairs.' },
   irrigation:  { name: 'Irrigation', tier: 2, req: ['agriculture'], desc: 'Irrigate desert near rivers/oases.' },
   drainage:    { name: 'Drainage', tier: 2, req: ['agriculture'], desc: 'Reed beds in marshes; marsh move cost 1.' },
-  bronze:      { name: 'Bronze Working', tier: 3, req: ['masonry'], desc: 'Bronze Workshops (copper + tin → bronze). Swordsmen, Pikemen.' },
+  bronze:      { name: 'Bronze Working', tier: 3, req: ['masonry'], desc: 'Bronze Workshops (copper + tin → bronze).' },
   navigation:  { name: 'Navigation', tier: 3, req: ['sailing'], desc: 'Embark on ocean, boats +1 move, whaling.' },
   trade:       { name: 'Trade', tier: 3, req: ['irrigation'], desc: '+1 gold in every city of level 3+.' },
   roads:       { name: 'Pathfinding', tier: 3, req: ['forestry', 'husbandry'], desc: 'Forest & hills move cost 1 for all units. Grand project: Royal Road.' },
-  engineering: { name: 'Engineering', tier: 4, req: ['bronze'], desc: 'Catapults. Grand project: Imperial Granaries.' },
-  ironworking: { name: 'Iron Working', tier: 3, req: ['bronze', 'forestry'], desc: 'Iron ore can be mined (hills, mountains, marsh bogs); Bloomeries smelt it with timber. Iron serves wherever bronze does. Legionaries. Grand project: Grand Arsenal.' },
-  chivalry:    { name: 'Chivalry', tier: 4, req: ['riding', 'bronze'], desc: 'Knights.' },
+  engineering: { name: 'Engineering', tier: 4, req: ['bronze'], desc: 'Improvements and roads cost 1 less labor. Grand project: Imperial Granaries.' },
+  ironworking: { name: 'Iron Working', tier: 3, req: ['bronze', 'forestry'], desc: 'Iron ore can be mined (hills, mountains, marsh bogs); Bloomeries smelt it with timber. Iron serves wherever bronze does. Grand project: Grand Arsenal.' },
+  // military techs: how to field units, not how to make their materials (those can be traded for)
+  shieldwall:  { name: 'Shield Wall', tier: 2, req: [], desc: 'Defenders, Highlanders.', mil: true },
+  metalarms:   { name: 'Metal Arms', tier: 3, req: ['shieldwall'], desc: 'Swordsmen, Pikemen (need metal: bronze or iron, made or bought).', mil: true },
+  legions:     { name: 'Legions', tier: 3, req: ['metalarms'], desc: 'Legionaries (need iron, made or bought).', mil: true },
+  siegecraft:  { name: 'Siegecraft', tier: 4, req: ['metalarms'], desc: 'Catapults.', mil: true },
+  chivalry:    { name: 'Chivalry', tier: 4, req: ['riding', 'metalarms'], desc: 'Knights.', mil: true },
   philosophy:  { name: 'Philosophy', tier: 4, req: ['trade'], desc: 'Shrines. Knowledge +25%. Grand project: Great Library.' },
   assimilation:{ name: 'Assimilation', tier: 4, req: ['trade'], desc: 'Foreign & alien penalties reduced by one step.' },
 };
@@ -1778,8 +1783,9 @@ const vassalMethods = {
 // ---- src/upkeep.js ----
 // Technology upkeep and dark ages. Mixed into Game.prototype. (Game option: settings.techUpkeep)
 //
-// Every known tech costs knowledge each turn (by tier). A subject pays nothing for what its
-// overlord knows. Upkeep halves if a trade partner, vassal or overlord knows the tech, and drops a further 25% if any tribe at peace with you knows it:
+// Every known tech costs knowledge each turn (by tier). A subject pays half for what its
+// overlord knows (on top of the partner discount). Upkeep halves if a trade partner, vassal or
+// overlord knows the tech, and drops a further 25% if any tribe at peace with you knows it:
 // isolation is expensive, contact keeps ideas alive. The knowledge stock is the buffer
 // (libraries); only when it runs dry does *decline* build up. When decline reaches DECLINE_AT, a
 // tech must be forgotten. Only "leaf" techs (nothing else you know depends on them) can go, so
@@ -1804,10 +1810,10 @@ const upkeepMethods = {
     return { strong, weak };
   },
   techUpkeepOf(pid, t, partners = this.knowledgePartners(pid)) {
-    // a subject lives inside its overlord's learning: what the overlord knows costs it nothing
-    const lord = this.overlordOf?.(pid);
-    if (lord != null && this.players[lord]?.techs.includes(t)) return 0;
     let u = TECH_UPKEEP[TECHS[t].tier];
+    // a subject leans on its overlord's learning: half again for what the overlord knows
+    const lord = this.overlordOf?.(pid);
+    if (lord != null && this.players[lord]?.techs.includes(t)) u *= 0.5;
     const knows = (set) => [...set].some(o => this.players[o]?.techs.includes(t));
     if (knows(partners.strong)) u *= 0.5;
     if (knows(partners.weak)) u *= 0.75;
@@ -1913,9 +1919,10 @@ const DRILL_COST = 8;
 
 const projectMethods = {
   isRoad(i) { const t = this.tiles[i]; return !!t.road || t.city >= 0; },
-  roadCost(i) {
+  roadCost(i, pid = null) {
     const t = this.tiles[i].t;
-    return t === 'mountain' ? 4 : (t === 'forest' || t === 'hills' || t === 'marsh') ? 3 : 2;
+    const c = t === 'mountain' ? 4 : (t === 'forest' || t === 'hills' || t === 'marsh') ? 3 : 2;
+    return pid != null && this.has(pid, 'engineering') ? c - 1 : c;
   },
   // the city that would pay for a road on tile i: the owning city, or your nearest within 4
   roadCity(pid, i) {
@@ -1936,7 +1943,7 @@ const projectMethods = {
     if (u && u.owner !== pid && this.atWar(u.owner, pid)) return { ok: false, why: 'Enemy on the tile' };
     const city = this.roadCity(pid, i);
     if (!city) return { ok: false, why: 'No city of yours close enough' };
-    const w = this.workCheck(city, this.roadCost(i));
+    const w = this.workCheck(city, this.roadCost(i, pid));
     if (!w.ok) return w;
     return { ...w, city };
   },
@@ -2777,7 +2784,7 @@ class Game {
     if (city.worksTurn !== this.turn) { city.worksTurn = this.turn; city.worksDone = 0; }
     city.worksDone++;
   }
-  improveCost(pid, k) { return IMPROVEMENTS[k].cost; }
+  improveCost(pid, k) { return Math.max(1, IMPROVEMENTS[k].cost - (this.has(pid, 'engineering') ? 1 : 0)); }
   // One construction per city per turn, and none while hostile troops stand next to it.
   buildBlock(city) {
     if (this.neighbors(city.idx).some(n => { const u = this.unitAt(n); return u && u.owner !== city.owner && this.atWar(u.owner, city.owner); })) return 'Enemies at the gates';
@@ -2995,7 +3002,7 @@ class Game {
     const cul = this.peopleFor(city, owner);
     const pl = {
       id, name: this.uniqueTribeName(cul.name), color: cul.color, color2: cul.color2, culture: cul.id, home: city.specialty, human, rebel: true, rebelFrom: owner,
-      gold: 4, techs: [...old.techs], explored: new Array(this.W * this.H).fill(0), alive: true, kills: 0, losses: 0, born: this.turn,
+      gold: 4, techs: this.inheritedTechs(city, owner), explored: new Array(this.W * this.H).fill(0), alive: true, kills: 0, losses: 0, born: this.turn,
     };
     if (!human) { pl.temper = rollTemper(this.rng); pl.temper.grudges[owner] = 40; }
     pl.founded = this.turn; pl.peak = 0;
@@ -3022,7 +3029,34 @@ class Game {
     return this.newCulture({ base: city.name, root: X.root, parent: X.id, home: city.specialty, city, reuse: true });
   }
 
+  // A new polity rising in a city (client or rebellion) keeps only the knowledge its own land
+  // uses: improvements its tiles can carry, its buildings, its garrison's arms, the sea if it is
+  // on the coast, the mountains if it has them, and whatever those rest on.
+  inheritedTechs(city, from) {
+    const known = new Set(this.players[from].techs);
+    const keep = new Set();
+    const tiles = this.within(city.idx, 2);
+    for (const [k, I] of Object.entries(IMPROVEMENTS)) {
+      if (!I.tech || !known.has(I.tech)) continue;
+      if (tiles.some(t => I.terrain.includes(this.tiles[t].t) && (!I.requires || [].concat(I.resource).includes(this.tiles[t].res)))) keep.add(I.tech);
+    }
+    for (const b of city.buildings) if (BUILDINGS[b]?.tech && known.has(BUILDINGS[b].tech)) keep.add(BUILDINGS[b].tech);
+    const gar = this.unitAt(city.idx);
+    if (gar && UNITS[gar.type].tech && known.has(UNITS[gar.type].tech)) keep.add(UNITS[gar.type].tech);
+    const coastal = this.neighbors(city.idx).some(n => this.isWater(n));
+    if (coastal) for (const t of ['fishing', 'sailing']) if (known.has(t)) keep.add(t);
+    if (tiles.some(t => this.tiles[t].t === 'mountain') && known.has('climbing')) keep.add('climbing');
+    if (tiles.some(t => this.tiles[t].t === 'forest' || this.tiles[t].t === 'hills') && known.has('roads')) keep.add('roads');
+    if (known.has('shieldwall')) keep.add('shieldwall'); // every polity can raise a shield wall
+    // and everything those rest on
+    const add = (t) => { for (const r of TECHS[t].req) if (!keep.has(r)) { keep.add(r); add(r); } };
+    for (const t of [...keep]) add(t);
+    return Object.keys(TECHS).filter(t => keep.has(t));
+  }
+
   // ---- clients: a city released as a new tribe, subject to its former owner from the start
+  // room for new tribes (clients, colonies, rebellions) under the world's cap
+  tribeRoom() { return MAX_TRIBES - this.players.filter(p => p.alive).length; }
   canReleaseCity(city) {
     const pid = city.owner;
     if (city.capital) return { ok: false, why: 'Not the capital' };
@@ -3040,7 +3074,7 @@ class Game {
     const id = this.players.length;
     const pl = {
       id, name: this.uniqueTribeName(cul.name), color: cul.color, color2: cul.color2, culture: cul.id, home: city.specialty, human: false, client: true, clientOf: owner,
-      gold: 6 + city.level * 2, techs: [...O.techs], explored: new Array(this.W * this.H).fill(0), alive: true, kills: 0, losses: 0, born: this.turn,
+      gold: 6 + city.level * 2, techs: this.inheritedTechs(city, owner), explored: new Array(this.W * this.H).fill(0), alive: true, kills: 0, losses: 0, born: this.turn,
       met: { [owner]: true },
     };
     pl.temper = rollTemper(this.rng);
@@ -4251,14 +4285,14 @@ Object.assign(Game.prototype, diplomacyMethods, economyMethods, tradeMethods, va
 
 const HOME_TECH_BIAS = {
   plains: { agriculture: 4, husbandry: 2, riding: 3 },
-  hilltop: { mining: 4, masonry: 3, archery: 1 },
+  hilltop: { mining: 4, masonry: 3, archery: 1, shieldwall: 1 },
   coastal: { fishing: 4, sailing: 4, navigation: 2 },
-  riverside: { agriculture: 4, irrigation: 2, trade: 3, bronze: 2 },
+  riverside: { agriculture: 4, irrigation: 2, trade: 3, bronze: 2, metalarms: 1 },
   forest: { forestry: 4, archery: 3, roads: 2 },
   desert: { husbandry: 3, riding: 4, irrigation: 3 },
   steppe: { husbandry: 4, riding: 4, chivalry: 2 },
   marsh: { drainage: 3, agriculture: 2, fishing: 2 },
-  mountain: { mining: 4, climbing: 4, masonry: 3 },
+  mountain: { mining: 4, climbing: 4, masonry: 3, shieldwall: 2 },
 };
 
 function profile(g, pid) {
@@ -4368,8 +4402,10 @@ function diplomacyAct(g, pid) {
     if (r.liberty >= 100 && g.standRatio(pid) >= 0.5) { g.riseAgainst(pid); return; }
     if (!g.terms(pid).free) return;
   }
-  // overlords absorb vassals when they can
-  for (const v of g.vassalsOf(pid)) if (g.canAnnex(pid, v).ok) g.annexVassal(pid, v);
+  // overlords absorb vassals when they can, but not past the size they can govern directly
+  // (beyond that, sprawl unrest outweighs direct rule: subjects are the better deal)
+  const nMine = () => g.cities.filter(c => c.owner === pid).length;
+  for (const v of g.vassalsOf(pid)) if (g.canAnnex(pid, v).ok && nMine() + g.cities.filter(c => c.owner === v).length <= 12) g.annexVassal(pid, v);
   // under attack and outmatched: seek a protector
   const threats = g.warsOf(pid).filter(e => g.power(e) > myP * 2);
   if (lord == null && threats.length && !g.vassalsOf(pid).length && offerOk(-1, 'protect')) {
@@ -4682,11 +4718,44 @@ function siteScore(g, pid, i) {
   return s;
 }
 
+// Colonies: beyond the land it means to rule directly, a tribe may plant a city on good distant
+// land, weighted toward goods it lacks, and charter it at once as a client. How keen a tribe is
+// on this varies (pl.colonial), so some stay compact and others spread subjects across the map.
+const RES_GOOD = { copper: 'copper', tin: 'tin', iron: 'ironore', horses: 'horses', sheep: 'wool', spices: 'spice', fish: 'food', wheat: 'food' };
+function colonySite(g, pid) {
+  const pl = g.players[pid];
+  if (pl._colony?.turn === g.turn) return pl._colony.i;
+  const mine = g.cities.filter(c => c.owner === pid);
+  let best = null, bestS = 5;
+  for (let i = 0; i < g.tiles.length; i++) {
+    const t = g.tiles[i];
+    if (!pl.explored[i] || t.owner >= 0 || t.city >= 0 || TERRAIN[t.t].water) continue;
+    let dmin = 99;
+    for (const c of mine) dmin = Math.min(dmin, g.dist(c.idx, i));
+    if (dmin < 6 || dmin > 22) continue;
+    let s = siteScore(g, pid, i);
+    if (s === -Infinity) continue;
+    for (const n of g.within(i, 1)) { const good = RES_GOOD[g.tiles[n].res]; if (good) s += goodHunger(g, pid, good) * 1.5; }
+    s -= dmin * 0.1;
+    if (s > bestS) { bestS = s; best = i; }
+  }
+  pl._colony = { turn: g.turn, i: best };
+  return best;
+}
+function found(g, u) {
+  const pid = u.owner, idx = u.idx, colony = u.colony;
+  g.settle(u);
+  const c = g.cityAt(idx);
+  if (colony && c && c.owner === pid && g.releaseCity(c).ok) g.addLog(`It is a colony: ${c.name} is chartered as a client realm.`, pid, idx);
+}
+
 function settlerAct(g, u, cache) {
   const pid = u.owner;
   const pl = g.players[pid];
   if (u.goal != null && g.canFoundAt(pid, u.goal).ok !== true) u.goal = null;
-  if (u.goal === u.idx) { g.settle(u); return; }
+  // a colonist stays a colonist: it looks for another colony site, and whatever it founds is chartered
+  if (u.colony && u.goal == null) { pl._colony = null; u.goal = colonySite(g, pid); }
+  if (u.goal === u.idx) { found(g, u); return; }
   if (u.goal == null) {
     let best = null, bestS = -Infinity;
     for (const i of g.within(u.idx, 9)) {
@@ -4698,8 +4767,8 @@ function settlerAct(g, u, cache) {
     u.age = 0;
   }
   u.age = (u.age || 0) + 1;
-  if (u.goal == null || u.age > 12) {
-    if (g.canSettle(u).ok) { g.settle(u); return; }
+  if (u.goal == null || u.age > (u.colony ? 30 : 12)) {
+    if (g.canSettle(u).ok) { found(g, u); return; }
     const t = exploreTarget(g, u);
     if (t !== null) {
       const step = bestStep(g, u, field(g, t, u, cache), true);
@@ -4711,7 +4780,7 @@ function settlerAct(g, u, cache) {
   if (dist[u.idx] === Infinity) { u.goal = null; return; }
   const step = bestStep(g, u, dist, true);
   if (step !== null) g.moveUnit(u, step);
-  if (g.units.includes(u) && u.idx === u.goal) g.settle(u);
+  if (g.units.includes(u) && u.idx === u.goal) found(g, u);
 }
 
 // ---------------- economy
@@ -4739,7 +4808,14 @@ function techValue(g, pid, t) {
   }
   if (t === 'climbing') v += g.tiles.some((tl, i) => tl.owner === pid && tl.t === 'mountain') ? 1 : -1;
   if (t === 'sailing' || t === 'navigation') v += g.cities.some(c => c.owner === pid && c.specialty === 'coastal') ? 1.5 : -0.5;
-  if (['masonry', 'bronze', 'engineering', 'chivalry'].includes(t)) v += 1 + g.turn / 25;
+  // arms are worth learning when the materials can be had, made or bought
+  const canGet = (k) => g.avail(pid, k) > 0 || supplyRate(g, pid, k) > 0 || g.routesOf(pid).length > 0;
+  if (t === 'shieldwall') v += 1.5 + g.turn / 25;
+  if (t === 'metalarms') v += (canGet('metal') ? 1.5 : 0.3) + g.turn / 25;
+  if (t === 'legions') v += (canGet('iron') ? 1.5 : 0) + g.turn / 25;
+  if (t === 'siegecraft') v += (canGet('timber') ? 1 : 0) + g.turn / 30;
+  if (t === 'chivalry') v += (canGet('horses') ? 1 : 0) + g.turn / 30;
+  if (['masonry', 'bronze', 'engineering'].includes(t)) v += 1 + g.turn / 25;
   if (['philosophy', 'assimilation', 'trade'].includes(t)) v += g.turn / 20;
   return v / TECHS[t].tier;
 }
@@ -4922,6 +4998,20 @@ function spend(g, pid, prof) {
         if (g.train(c, 'settler').ok) continue;
         // not enough labor yet: this city saves for the settler instead of spending on other things
         if (g.workCheck(c, g.unitCost(c, 'settler')).short <= g.laborRate(c) * 3) saving = c;
+      }
+    }
+
+    // b2) colonies: at its comfortable size, a colonial tribe plants subjects on distant land
+    pl.colonial = pl.colonial ?? 0.2 + g.rng() * 0.8;
+    const colonists = units.filter(u => u.colony).length;
+    // (only while the world has room for the new realm: an unchartered colony far from home revolts)
+    if (colonists === 0 && settlers <= 1 && pl.colonial > 0.35 && g.tribeRoom() >= 3 && cities.length >= Math.min(6, wantCities - 1) && capLeft > 0 && pl.gold > 20
+      && g.turn - (pl.lastColony ?? -99) >= 8 / pl.colonial && g.vassalsOf(pid).length < 1 + Math.floor(cities.length / 4)) {
+      const site = colonySite(g, pid);
+      const c = site != null && cities.filter(c => !g.unitAt(c.idx)).sort((a, b) => g.dist(a.idx, site) - g.dist(b.idx, site))[0];
+      if (c) {
+        const r = g.train(c, 'settler');
+        if (r.ok) { r.unit.colony = true; r.unit.goal = site; pl.lastColony = g.turn; continue; }
       }
     }
 
@@ -5197,35 +5287,55 @@ class Renderer {
       }
       ctx.stroke();
     }
-    // borders
+    // borders. A bloc (an overlord and its subjects, at any depth) is outlined in the overlord's
+    // two-tone border; inside it, each subject's own colour marks its land.
+    const bw = Math.max(1.5, S * 0.08);
+    const top = (o) => (o < 0 ? -1 : g.topOverlord(o));
+    const warEdges = [];
     for (const i of list) {
       if (explored && !explored[i]) continue;
       const tl = g.tiles[i];
       if (tl.owner < 0) continue;
       const [x, y] = this.tileCenter(i);
-      const col = g.players[tl.owner].color;
-      const col2 = g.players[tl.owner].color2 || '#111';
+      const own = g.players[tl.owner], T = top(tl.owner), lord = g.players[T];
       const nb = this.neighborDirs(i);
-      // two-tone border: accent colour on the outside edge, fill colour just inside it
-      const bw = Math.max(1.5, S * 0.08);
-      for (const [rad, c] of [[S - 0.5 - bw / 2, col2], [S - 0.5 - bw * 1.5, col]]) {
+      const outside = (n) => n === null || top(g.tiles[n].owner) !== T;
+      const otherOwner = (n) => n === null || g.tiles[n].owner !== tl.owner;
+      const lines = [[S - 0.5 - bw / 2, lord.color2 || '#111', bw, outside], [S - 0.5 - bw * 1.5, lord.color, bw, outside]];
+      if (T !== tl.owner) lines.push([S - 0.5 - bw * 2.4, own.color, bw * 0.8, otherOwner]); // the subject's own line
+      for (const [rad, c, w, edge] of lines) {
         const corners = hexCorners(x, y, rad);
         ctx.strokeStyle = c;
-        ctx.lineWidth = bw;
+        ctx.lineWidth = w;
         ctx.beginPath();
         for (let k = 0; k < 6; k++) {
-          const n = nb[k];
-          if (n !== null && g.tiles[n].owner === tl.owner) continue;
+          if (!edge(nb[k])) continue;
           const a = corners[(k + 5) % 6], b = corners[k];
           ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]);
         }
         ctx.stroke();
       }
+      // fronts: borders between tribes at war (each edge once)
+      const corners = hexCorners(x, y, S);
+      for (let k = 0; k < 6; k++) {
+        const n = nb[k];
+        if (n === null || n < i || g.tiles[n].owner < 0 || g.tiles[n].owner === tl.owner) continue;
+        if (explored && !explored[n]) continue;
+        if (!g.atWar(tl.owner, g.tiles[n].owner)) continue;
+        warEdges.push(corners[(k + 5) % 6], corners[k]);
+      }
       if (!terrainMode) continue;
       ctx.globalAlpha = 0.12;
       this.hexPath(x, y, S);
-      ctx.fillStyle = col; ctx.fill();
+      ctx.fillStyle = own.color; ctx.fill();
       ctx.globalAlpha = 1;
+    }
+    if (warEdges.length) {
+      ctx.strokeStyle = '#ff2a1a'; ctx.lineWidth = Math.max(2, S * 0.11); ctx.lineCap = 'butt';
+      ctx.setLineDash([Math.max(3, S * 0.22), Math.max(2, S * 0.16)]);
+      ctx.beginPath();
+      for (let k = 0; k < warEdges.length; k += 2) { ctx.moveTo(warEdges[k][0], warEdges[k][1]); ctx.lineTo(warEdges[k + 1][0], warEdges[k + 1][1]); }
+      ctx.stroke(); ctx.setLineDash([]); ctx.lineCap = 'round';
     }
     // highlights
     for (const [i, kind] of this.highlights) {
@@ -6426,7 +6536,7 @@ function cityPanel(c) {
     const plan = game.roadPlan(c);
     const sc = game.canScholars(c), dr = game.canDrill(c), pg = game.canPlacate(c, 'labor');
     h += `<h4>Projects</h4><div class="opts">`;
-    h += `<button data-act="extendroads" ${plan ? '' : 'disabled'} title="${plan ? '' : 'Joined by road to its neighbours'}">Extend roads ${plan ? workLabel(game.roadCost(plan.next), game.canBuildRoad(c.owner, plan.next)) : ''}<small>${plan ? `toward ${esc(plan.target.name)}, ${plan.left} tile${plan.left > 1 ? 's' : ''} to go` : 'connected to nearby cities'}</small></button>`;
+    h += `<button data-act="extendroads" ${plan ? '' : 'disabled'} title="${plan ? '' : 'Joined by road to its neighbours'}">Extend roads ${plan ? workLabel(game.roadCost(plan.next, c.owner), game.canBuildRoad(c.owner, plan.next)) : ''}<small>${plan ? `toward ${esc(plan.target.name)}, ${plan.left} tile${plan.left > 1 ? 's' : ''} to go` : 'connected to nearby cities'}</small></button>`;
     h += `<button data-act="scholars" ${sc.ok ? '' : 'disabled'} title="${esc(sc.why || '')}">Scholars ⚒${sc.labor || 4}<small>turn labor into ${sc.gain || 1} knowledge (4 : 1)</small></button>`;
     h += `<button data-act="games" ${pg.ok ? '' : 'disabled'} title="${esc(pg.why || '')}">Public games ${workLabel(game.placateCost(c), pg.work || pg)}<small>a festival paid in labor (${Math.round(game.festivalRisk(c) * 100)}% riot risk)</small></button>`;
     h += `<button data-act="drill" ${dr.ok ? '' : 'disabled'} title="${esc(dr.why || '')}">Drill garrison ${workLabel(8, dr)}<small>the unit here becomes a veteran</small></button>`;
@@ -6522,7 +6632,7 @@ function tilePanel(i) {
   }
   if (myTurn() && !TERRAIN[tl.t].water && !game.isRoad(i) && (tl.owner === pid || tl.owner < 0)) {
     const chk = game.canBuildRoad(pid, i);
-    if (chk.ok || tl.owner === pid) h += `<h4>Road</h4><button data-act="road" ${chk.ok ? '' : 'disabled'} title="${esc(chk.why || '')}">Build road ${workLabel(game.roadCost(i), chk)}<small>${chk.ok ? `paid by ${esc(chk.city.name)}; road-to-road moves cost ½ for anyone, and trade routes along roads are cheaper` : esc(chk.why)}</small></button>`;
+    if (chk.ok || tl.owner === pid) h += `<h4>Road</h4><button data-act="road" ${chk.ok ? '' : 'disabled'} title="${esc(chk.why || '')}">Build road ${workLabel(game.roadCost(i, pid), chk)}<small>${chk.ok ? `paid by ${esc(chk.city.name)}; road-to-road moves cost ½ for anyone, and trade routes along roads are cheaper` : esc(chk.why)}</small></button>`;
   } else if (game.tiles[i].road) h += `<div class="desc">A road runs here.</div>`;
   if (tl.damaged) {
     h += `<div class="desc" style="color:#ff8a70">This ${IMPROVEMENTS[tl.imp].name} is damaged and yields nothing. Another round of pillage will destroy it, and the city will lose the pop it gave.</div>`;
@@ -7274,11 +7384,13 @@ function showHelp() {
   <p>In Diplomacy (D), set each subject's <b>terms</b>: tribute (none, light 15%, standard 25%, heavy 40%), a <b>subsidy</b> you pay them, and <b>war rights</b>. A <i>bound</i> subject only fights your wars; a <i>free hand</i> lets it wage its own, even against your other subjects, and you share 30% of the blame. Easing terms applies at once. Tightening them raises the subject's liberty desire and is a demand it may refuse, which means war. Each button shows whether an AI subject will accept, and the answer comes the moment you send it. A human subject answers on its turn.</p>
   <p>When two of your subjects fight, you can <b>force a truce</b>: the side that's winning resents it, and the loser is grateful. Or prop up the weaker side with a subsidy, keeping the stronger one busy and small.</p>
   <p>Subjects whose liberty desire reaches 50 <b>conspire</b> together. When the conspirators' combined strength reaches 80% of yours (plus half your loyal subjects'), they rise together as allies. Ease their terms or pay them off to break the pact (they leave below 35).</p>
+  <p>On the map, an overlord's border runs around its subjects' land too, and borders between tribes at war are marked with a <b style="color:#ff4a3a">red dashed line</b>.</p>
   <p><b>Indirect rule:</b> when you take a city, or later from the city panel, you can release it as a <b>client</b> (a new tribe of its own people, subject to you) or <b>grant</b> it to one of your subjects nearby. Subjects can release their own clients too.</p>
   <h3>Strategic goods</h3>
   <p>Copper, tin, horses, timber and stone come from <b>deposits</b>: a Mine on a copper or tin deposit (the two metals lie in different regions), a Pasture on a horse herd, a Lumber Camp in a forest, a Quarry on hills. Each yields 1 per turn into your national stockpile, but only if its city is <b>connected</b> to your capital through land that isn't hostile or blocked by enemies. Advanced units and many buildings <b>require</b> goods, e.g. a Swordsman needs 1 bronze and Walls need 2 stone. Basic units and buildings never do. Armies also need <b>supply</b>: every 4 units that needed a good consume 1 of it per turn. Unsupplied units fight weaker and don't heal. Deposits are scarce and regional, so they're worth settling, conquering, raiding and protecting. <b>Bronze</b> is made from 1 copper + 1 tin at a Bronze Workshop, and trades at a markup. Press <b>G</b> for details, or <b>P</b> for the production-chain diagram.</p>
   <h3>The iron age</h3>
   <p><b>Iron Working</b> makes iron ore minable: it's common between the copper and tin regions, and lies in marsh bogs (Bog Iron Pit). A <b>Bloomery</b> smelts 1 iron ore with 1 timber (charcoal) into 1 iron. Every unit that needed bronze now takes any <b>metal</b>, iron first, so tin loses its grip and forests gain one. Iron alone arms the <b>Legionary</b>.</p>
+  <p><b>Arms vs. industry:</b> units are unlocked by military techs (Shield Wall, Metal Arms, Legions, Siegecraft, Chivalry, plus Archery and Riding), not by knowing how to make their materials. You can field Legionaries without Iron Working if you can buy iron. A client or rebel realm keeps only the knowledge its own land uses.</p>
   <h3>Food & luxuries</h3>
   <p><b>Food</b> comes from Farms, Irrigation, Fisheries, Whaling and Reed Beds: up to 4 per city, doubled by a Granary. Cities of level 3+ eat (level − 2) food a turn from the national stockpile. Hungry cities stop leveling up and gain unrest. A city cut off from the capital eats only what it grows, so <b>sieges starve cities</b>.</p>
   <p><b>Luxuries</b>: wool from Pastures on sheep becomes <b>cloth</b> at a Weaver, and <b>spice</b> comes from Plantations on rare spice deposits (doubled by a Caravanserai). Each city of level 4+ takes one of each, and each calms it by 1. Cities of level 6+ with none grumble. Luxuries are scarce and regional, so they're worth trading for.</p>

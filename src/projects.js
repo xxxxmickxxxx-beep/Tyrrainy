@@ -17,9 +17,10 @@ export const DRILL_COST = 8;
 
 export const projectMethods = {
   isRoad(i) { const t = this.tiles[i]; return !!t.road || t.city >= 0; },
-  roadCost(i) {
+  roadCost(i, pid = null) {
     const t = this.tiles[i].t;
-    return t === 'mountain' ? 4 : (t === 'forest' || t === 'hills' || t === 'marsh') ? 3 : 2;
+    const c = t === 'mountain' ? 4 : (t === 'forest' || t === 'hills' || t === 'marsh') ? 3 : 2;
+    return pid != null && this.has(pid, 'engineering') ? c - 1 : c;
   },
   // the city that would pay for a road on tile i: the owning city, or your nearest within 4
   roadCity(pid, i) {
@@ -40,7 +41,7 @@ export const projectMethods = {
     if (u && u.owner !== pid && this.atWar(u.owner, pid)) return { ok: false, why: 'Enemy on the tile' };
     const city = this.roadCity(pid, i);
     if (!city) return { ok: false, why: 'No city of yours close enough' };
-    const w = this.workCheck(city, this.roadCost(i));
+    const w = this.workCheck(city, this.roadCost(i, pid));
     if (!w.ok) return w;
     return { ...w, city };
   },
