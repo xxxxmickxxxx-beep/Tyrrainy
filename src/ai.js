@@ -331,6 +331,7 @@ function siteScore(g, pid, i) {
     else if (tl.t !== 'mountain') s += 1;
     if (tl.res) s += 1.3;
     if (tl.res === 'copper' || tl.res === 'tin' || tl.res === 'horses') s += 1.2; // strategic deposits draw settlers
+    if (tl.res === 'spices' || tl.res === 'sheep') s += 0.8;
     if (tl.river) s += 0.4;
   }
   const spec = g.specialtyAt(i);
@@ -402,6 +403,8 @@ function techValue(g, pid, t) {
 function goodHunger(g, pid, good) {
   if (INPUT_GOODS.has(good)) return g.inputDemand(pid, good) && g.stock(pid)[good] < g.inputDemand(pid, good) ? 1.2 : 0.1;
   const st = g.stock(pid)[good], prod = (g.players[pid].lastProd?.[good] || 0) + (g.players[pid].lastMade?.[good] || 0);
+  const demand = g.goodDemand(pid, good);
+  if (demand > 0 && prod < demand && st < demand * 3) return 1.2; // consuming faster than we make it
   if (prod === 0 && st < 4) return 1.2;
   if (st < 6) return 0.6;
   return 0.15;

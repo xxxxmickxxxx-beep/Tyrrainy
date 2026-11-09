@@ -256,14 +256,15 @@ const EMBARKED = { name: 'Boat', atk: 1, def: 1, mv: 2, rng: 1 };
 const IMPROVEMENTS = {
   farm:     { name: 'Farm',        terrain: ['plains', 'steppe'], tech: 'agriculture', cost: 4, pop: 1 },
   irrigate: { name: 'Irrigation',  terrain: ['desert'], tech: 'irrigation', cost: 4, pop: 1, needRiverOrOasis: true },
-  pasture:  { name: 'Pasture',     terrain: ['steppe', 'plains'], tech: 'husbandry', cost: 4, pop: 1, resource: 'horses' },
+  pasture:  { name: 'Pasture',     terrain: ['steppe', 'plains', 'hills'], tech: 'husbandry', cost: 4, pop: 1, resource: ['horses', 'sheep'] },
+  plantation: { name: 'Plantation', terrain: ['desert', 'forest'], tech: 'irrigation', cost: 5, pop: 1, resource: 'spices', requires: true },
   lumber:   { name: 'Lumber Camp', terrain: ['forest'], tech: 'forestry', cost: 4, pop: 1 },
   hunt:     { name: 'Hunting Lodge', terrain: ['forest'], tech: null, cost: 2, pop: 1, resource: 'game', consume: true },
   gather:   { name: 'Forage',      terrain: ['plains', 'steppe', 'desert', 'marsh', 'hills'], tech: null, cost: 2, pop: 1, resource: 'fruit', consume: true },
   mine:     { name: 'Mine',        terrain: ['hills', 'mountain'], tech: 'mining', cost: 5, pop: 2, resource: ['copper', 'tin'] },
   quarry:   { name: 'Quarry',      terrain: ['hills'], tech: 'mining', cost: 4, pop: 1 },
-  fishery:  { name: 'Fishery',     terrain: ['shallows'], tech: 'fishing', cost: 3, pop: 1, resource: 'fish', consume: true },
-  whaling:  { name: 'Whaling',     terrain: ['ocean'], tech: 'navigation', cost: 5, pop: 2, resource: 'whales', consume: true },
+  fishery:  { name: 'Fishery',     terrain: ['shallows'], tech: 'fishing', cost: 3, pop: 1, resource: 'fish', requires: true },
+  whaling:  { name: 'Whaling',     terrain: ['ocean'], tech: 'navigation', cost: 5, pop: 2, resource: 'whales', requires: true },
   reedbeds: { name: 'Reed Beds',   terrain: ['marsh'], tech: 'drainage', cost: 4, pop: 1 },
 };
 
@@ -272,6 +273,8 @@ const RESOURCES = {
   game:   { name: 'Game',       color: '#a0673a' },
   horses: { name: 'Horses',     color: '#6a4a2a' },
   copper: { name: 'Copper',     color: '#d07a3a' },
+  sheep:  { name: 'Sheep',      color: '#f4f0e0' },
+  spices: { name: 'Spices',     color: '#c03050' },
   tin:    { name: 'Tin',        color: '#a8b8c4' },
   fish:   { name: 'Fish',       color: '#e0f0ff' },
   whales: { name: 'Whales',     color: '#b0c8e0' },
@@ -282,16 +285,17 @@ const RESOURCES = {
 // ---------------- Buildings ----------------
 const BUILDINGS = {
   walls:        { name: 'Walls', cost: 6, tech: 'masonry', desc: 'City defense x2 (stacks with specialty).', needs: { stone: 2 } },
+  weaver:       { name: 'Weaver', cost: 6, tech: 'husbandry', needs: { timber: 1 }, desc: 'Weaves up to 2 wool into 2 cloth each turn.' },
   bronzeworks:  { name: 'Bronze Workshop', cost: 8, tech: 'bronze', needs: { stone: 1 }, desc: 'Smelts up to 2 copper + 2 tin into 2 bronze each turn.' },
   courthouse:   { name: 'Courthouse', cost: 5, calm: 1, desc: '-1 unrest pressure.' },
   amphitheater: { name: 'Amphitheater', cost: 9, tech: 'masonry', calm: 2, desc: '-2 unrest pressure.', needs: { stone: 2 } },
   temple:       { name: 'Shrine', cost: 8, tech: 'philosophy', calm: 2, desc: '+1 pop, +1 gold, -2 unrest. Integration twice as fast.', needs: { stone: 1 } },
-  granary:      { name: 'Granary', cost: 6, special: 'plains', desc: '+2 pop.' , pop: 2, needs: { timber: 1 } },
+  granary:      { name: 'Granary', cost: 6, special: 'plains', desc: '+2 pop; doubles the city\'s food.' , pop: 2, needs: { timber: 1 } },
   watchtower:   { name: 'Watchtower', cost: 5, special: 'hilltop', desc: '+2 vision, city defense +50%; doubles the city\'s stone.', needs: { stone: 1 } },
   harbor:       { name: 'Harbor', cost: 7, special: 'coastal', desc: '+2 gold per turn.', gold: 2, needs: { timber: 2 } },
   market:       { name: 'Market', cost: 8, special: 'riverside', desc: '+1 gold per 2 city levels.', needs: { stone: 1 } },
   sawmill:      { name: 'Sawmill', cost: 6, special: 'forest', desc: '+1 gold per lumber camp; doubles the city\'s timber.' },
-  caravanserai: { name: 'Caravanserai', cost: 7, special: 'desert', desc: '+2 gold, +1 pop.', gold: 2, pop: 1 },
+  caravanserai: { name: 'Caravanserai', cost: 7, special: 'desert', desc: '+2 gold, +1 pop; doubles the city\'s spice.', gold: 2, pop: 1 },
   stables:      { name: 'Stables', cost: 6, special: 'steppe', desc: 'Mounted units cost -1, +1 pop; doubles the city\'s horses.', pop: 1, needs: { timber: 1 } },
   peatworks:    { name: 'Peat Works', cost: 6, special: 'marsh', desc: '+1 gold per marsh tile in territory (max 3).' },
   deepmine:     { name: 'Deep Mine', cost: 8, special: 'mountain', desc: '+3 gold per turn; doubles the city\'s copper and tin.', gold: 3, needs: { timber: 1 } },
@@ -303,22 +307,32 @@ const BUILDINGS = {
 // train advanced units and raise buildings (hard requirements; basic units and buildings
 // never need goods). Stockpiles are capped; surplus beyond the cap is lost.
 const STRATEGIC = {
-  copper: { name: 'Copper', short: 'Cu', color: '#d07a3a', from: 'a Mine on a copper deposit (hills, mountains)' },
-  tin:    { name: 'Tin',    short: 'Sn', color: '#a8b8c4', from: 'a Mine on a tin deposit (hills, mountains), rarer and far from copper' },
-  bronze: { name: 'Bronze', short: 'Br', color: '#c89a3a', from: 'a Bronze Workshop smelting copper + tin' },
-  horses: { name: 'Horses', short: 'Hr', color: '#9a6a3a', from: 'a Pasture on a horse herd (steppe)' },
-  timber: { name: 'Timber', short: 'Tb', color: '#4f9a4a', from: 'a Lumber Camp in a forest' },
-  stone:  { name: 'Stone',  short: 'St', color: '#d8c8a0', from: 'a Quarry on hills' },
+  food:   { name: 'Food',   short: 'Fd', color: '#e8c84a', cityCap: 4, kind: 'sustenance', from: 'Farms, Irrigation, Fisheries, Whaling and Reed Beds' },
+  copper: { name: 'Copper', short: 'Cu', color: '#d07a3a', kind: 'arms', from: 'a Mine on a copper deposit (hills, mountains)' },
+  tin:    { name: 'Tin',    short: 'Sn', color: '#a8b8c4', kind: 'arms', from: 'a Mine on a tin deposit (hills, mountains), rarer and far from copper' },
+  bronze: { name: 'Bronze', short: 'Br', color: '#c89a3a', kind: 'arms', from: 'a Bronze Workshop smelting copper + tin' },
+  horses: { name: 'Horses', short: 'Hr', color: '#9a6a3a', kind: 'arms', from: 'a Pasture on a horse herd (steppe)' },
+  timber: { name: 'Timber', short: 'Tb', color: '#4f9a4a', kind: 'build', from: 'a Lumber Camp in a forest' },
+  stone:  { name: 'Stone',  short: 'St', color: '#d8c8a0', kind: 'build', from: 'a Quarry on hills' },
+  wool:   { name: 'Wool',   short: 'Wo', color: '#efe6cf', kind: 'luxury', from: 'a Pasture on sheep (hills, steppe)' },
+  cloth:  { name: 'Cloth',  short: 'Cl', color: '#8a6ad0', kind: 'luxury', from: 'a Weaver weaving wool' },
+  spice:  { name: 'Spice',  short: 'Sp', color: '#d0405a', kind: 'luxury', from: 'a Plantation on rare spice deposits (desert, forest)' },
 };
+const LUXURIES = ['cloth', 'spice'];
 const GOOD_KEYS = Object.keys(STRATEGIC);
 // Processing: a building in a connected city turns inputs from the stockpile into a product.
 // Add entries here to extend production chains.
 const RECIPES = {
   bronze: { inputs: { copper: 1, tin: 1 }, building: 'bronzeworks', rate: 2 },
+  cloth:  { inputs: { wool: 1 }, building: 'weaver', rate: 2 },
 };
 const INPUT_GOODS = new Set(Object.values(RECIPES).flatMap(r => Object.keys(r.inputs)));
 // improvement -> good it yields: fixed, or chosen by the tile's resource
-const IMP_YIELD = { mine: { byRes: { copper: 'copper', tin: 'tin' } }, pasture: { good: 'horses', res: 'horses' }, lumber: { good: 'timber' }, quarry: { good: 'stone' } };
+const IMP_YIELD = {
+  mine: { byRes: { copper: 'copper', tin: 'tin' } }, pasture: { byRes: { horses: 'horses', sheep: 'wool' } },
+  lumber: { good: 'timber' }, quarry: { good: 'stone' }, plantation: { good: 'spice', res: 'spices' },
+  farm: { good: 'food' }, irrigate: { good: 'food' }, fishery: { good: 'food' }, whaling: { good: 'food' }, reedbeds: { good: 'food' },
+};
 function impYield(imp, res) {
   const y = IMP_YIELD[imp];
   if (!y) return null;
@@ -327,7 +341,7 @@ function impYield(imp, res) {
   return y.good;
 }
 // specialty buildings that double goods produced in their city
-const GOOD_DOUBLER = { deepmine: ['copper', 'tin'], stables: ['horses'], sawmill: ['timber'], watchtower: ['stone'] };
+const GOOD_DOUBLER = { deepmine: ['copper', 'tin'], stables: ['horses'], sawmill: ['timber'], watchtower: ['stone'], granary: ['food'], caravanserai: ['spice'] };
 function resMatches(I, res) { return Array.isArray(I.resource) ? I.resource.includes(res) : I.resource === res; }
 
 // ---------------- Subsidies ----------------
@@ -727,11 +741,11 @@ function generateMap(W, H, seed, type = 'continents') {
     const p = rng();
     switch (tl.t) {
       case 'plains': tl.res = p < 0.14 ? 'fruit' : p < 0.26 ? 'wheat' : null; break;
-      case 'steppe': tl.res = p < 0.18 ? 'horses' : p < 0.26 ? 'fruit' : null; break;
-      case 'desert': tl.res = p < 0.09 ? 'oasis' : p < 0.13 ? 'fruit' : null; break;
-      case 'forest': tl.res = p < 0.22 ? 'game' : null; break;
+      case 'steppe': tl.res = p < 0.16 ? 'horses' : p < 0.24 ? 'sheep' : p < 0.30 ? 'fruit' : null; break;
+      case 'desert': tl.res = p < 0.09 ? 'oasis' : p < 0.16 ? 'spices' : p < 0.19 ? 'fruit' : null; break;
+      case 'forest': tl.res = p < 0.2 ? 'game' : p < 0.24 ? 'spices' : null; break;
       case 'marsh': tl.res = p < 0.16 ? 'fruit' : null; break;
-      case 'hills': tl.res = metalAt(i, 0.3, 0.3, p) || (p > 0.92 ? 'fruit' : null); break;
+      case 'hills': tl.res = metalAt(i, 0.3, 0.3, p) || (p > 0.9 ? 'sheep' : p > 0.85 ? 'fruit' : null); break;
       case 'mountain': tl.res = metalAt(i, 0.35, 0.35, p); break;
       case 'shallows': tl.res = p < 0.22 ? 'fish' : null; break;
       case 'ocean': tl.res = p < 0.04 ? 'whales' : null; break;
@@ -973,7 +987,8 @@ const SUPPLY_PER = 4; // each 4 units needing a good consume 1 of it per turn
 const economyMethods = {
   stock(pid) {
     const pl = this.players[pid];
-    if (!pl.stock) pl.stock = Object.fromEntries(GOOD_KEYS.map(k => [k, 0]));
+    if (!pl.stock) pl.stock = {};
+    for (const k of GOOD_KEYS) if (pl.stock[k] == null) pl.stock[k] = 0;
     return pl.stock;
   },
   stockCap(pid) { return 8 + 2 * this.cities.filter(c => c.owner === pid).length; },
@@ -1010,7 +1025,7 @@ const economyMethods = {
       if (g) out[g] = (out[g] || 0) + 1;
     }
     // a city can only work so much of one good: supply depends on how many places produce it
-    for (const g in out) out[g] = Math.min(CITY_GOOD_CAP, out[g]);
+    for (const g in out) out[g] = Math.min(STRATEGIC[g].cityCap || CITY_GOOD_CAP, out[g]);
     for (const b of city.buildings) for (const g of GOOD_DOUBLER[b] || []) if (out[g]) out[g] *= 2;
     return out;
   },
@@ -1081,12 +1096,64 @@ const economyMethods = {
     for (const k of GOOD_KEYS) {
       let v = st[k] - (need[k] || 0);
       if (v < 0) { pl.unsupplied[k] = true; v = 0; }
-      st[k] = Math.min(cap, v);
+      st[k] = v;
       if (pl.unsupplied[k] && !was[k]) this.addLog(`${pl.name} has run out of ${STRATEGIC[k].name.toLowerCase()}: units that need it are unsupplied.`, pid);
     }
+    const eaten = this.feedCities(pid);
+    const lux = this.supplyLuxuries(pid);
+    for (const k of GOOD_KEYS) st[k] = Math.min(cap, st[k]);
     pl.lastProd = prod;
     pl.lastMade = made;
     pl.lastNeed = need;
+    pl.lastEaten = eaten;
+    pl.lastLux = lux;
+  },
+
+  // ---- sustenance: cities of level 3+ eat (level - 2) food a turn. Connected cities eat from
+  // the stockpile; cut-off cities only what they grow themselves. Hungry cities stop growing
+  // and grow restless.
+  foodDemand(city) { return Math.max(0, city.level - 2); },
+  feedCities(pid) {
+    const st = this.stock(pid);
+    const conn = this.connectedCities(pid);
+    const mine = this.cities.filter(c => c.owner === pid);
+    let demand = 0;
+    for (const c of mine) if (conn.has(c.id)) demand += this.foodDemand(c);
+    const eaten = Math.min(st.food, demand);
+    st.food -= eaten;
+    const fed = demand ? eaten / demand : 1;
+    for (const c of mine) {
+      const d = this.foodDemand(c);
+      const was = c.hunger || 0;
+      if (!d) c.hunger = 0;
+      else if (conn.has(c.id)) c.hunger = 1 - fed;
+      else c.hunger = Math.max(0, 1 - (this.cityProduction(c).food || 0) / d);
+      if (c.hunger > 0.3 && was <= 0.3) this.addLog(`${c.name} is going hungry.`, pid, c.idx);
+      if (c.hunger <= 0.3 && was > 0.3) this.addPop(c, 0); // growth resumes
+    }
+    return eaten;
+  },
+  // ---- luxuries: each city of level 4+ takes up to 1 of each luxury; each calms it (-1).
+  // Larger cities are served first. Level 6+ cities with none grumble.
+  supplyLuxuries(pid) {
+    const st = this.stock(pid);
+    const conn = this.connectedCities(pid);
+    const used = {};
+    const mine = this.cities.filter(c => c.owner === pid).sort((a, b) => b.level - a.level);
+    for (const c of mine) {
+      c.lux = [];
+      if (c.level < 4 || !conn.has(c.id)) continue;
+      for (const k of LUXURIES) if (st[k] > 0) { st[k]--; c.lux.push(k); used[k] = (used[k] || 0) + 1; }
+    }
+    return used;
+  },
+  // Everything a tribe uses of a good per turn: army supply, food, luxuries, workshop inputs.
+  goodDemand(pid, k) {
+    let d = this.supplyNeed(pid)[k] || 0;
+    if (k === 'food') for (const c of this.cities) if (c.owner === pid) d += this.foodDemand(c);
+    if (LUXURIES.includes(k)) d += this.cities.filter(c => c.owner === pid && c.level >= 4).length;
+    d += this.inputDemand(pid, k);
+    return d;
   },
   // Workshop capacity per product for a tribe (connected cities only).
   workshops(pid) {
@@ -1142,7 +1209,7 @@ const economyMethods = {
 
 const ROUTE_CAP = 3;
 // bronze trades at a markup over its inputs (copper 3 + tin 4)
-const PRICE = { copper: 3, tin: 4, bronze: 10, horses: 4, timber: 2, stone: 2 };
+const PRICE = { food: 1, copper: 3, tin: 4, bronze: 10, horses: 4, timber: 2, stone: 2, wool: 2, cloth: 5, spice: 6 };
 const TOLL = 1;
 const MAX_ROUTE_LEN = 40;
 
@@ -1162,7 +1229,9 @@ const tradeMethods = {
   // Raw inputs are only worth keeping with a workshop to feed: otherwise every unit is for sale.
   reserve(pid, k) {
     if (INPUT_GOODS.has(k)) return 2 * this.inputDemand(pid, k);
-    return 4 + 3 * (this.supplyNeed(pid)[k] || 0);
+    const d = this.goodDemand(pid, k);
+    if (STRATEGIC[k].kind === 'sustenance' || STRATEGIC[k].kind === 'luxury') return 2 + 2 * d; // eaten every turn: a thinner buffer
+    return 4 + 3 * d;
   },
   surplus(pid, k) { return Math.max(0, this.stock(pid)[k] - this.reserve(pid, k)); },
   deficit(pid, k) {
@@ -1530,7 +1599,7 @@ class Game {
   addPop(city, n) {
     city.pop += n;
     let leveled = false;
-    while (city.pop >= city.level + 1) {
+    while (city.pop >= city.level + 1 && !(city.hunger > 0.3)) {
       city.pop -= city.level + 1;
       city.level++;
       leveled = true;
@@ -1739,12 +1808,15 @@ class Game {
     if (raw && adj) pressure.push([`Cultural sensitivity ×${sens.toFixed(2).replace(/0$/, '')}`, adj]);
     if (aff >= 2) pressure.push([AFFINITY[aff].name, aff - 1]);
     if (city.riotUntil != null && this.turn <= city.riotUntil) pressure.push(['Festival riot', 2]);
+    if (city.hunger > 0) pressure.push(['Hunger', Math.ceil(2 * city.hunger)]);
+    if (city.level >= 6 && !(city.lux?.length)) pressure.push(['Wants luxuries', 1]);
     if (city.capital) calm.push(['Capital', 3]);
     if (aff === 0) calm.push(['Homeland', 1]);
     const gar = this.unitAt(city.idx);
     if (gar && gar.owner === pid && gar.type !== 'settler') calm.push(['Garrison', 1]);
     for (const b of city.buildings) if (BUILDINGS[b].calm) calm.push([BUILDINGS[b].name, BUILDINGS[b].calm]);
     if (city.subsidy) calm.push([SUBSIDIES[city.subsidy].name, SUBSIDIES[city.subsidy].calm]);
+    if (city.lux?.length) calm.push(['Luxuries (' + city.lux.join(', ') + ')', city.lux.length]);
     const fest = city.festivalUntil != null && this.turn <= city.festivalUntil;
     if (fest) calm.push(['Festival', 2]);
     const P = pressure.reduce((a, x) => a + x[1], 0), C = calm.reduce((a, x) => a + x[1], 0);
@@ -2289,7 +2361,7 @@ class Game {
     const out = [];
     for (const [k, I] of Object.entries(IMPROVEMENTS)) {
       if (!I.terrain.includes(tl.t)) continue;
-      if (I.consume && !resMatches(I, tl.res)) continue;
+      if ((I.consume || I.requires) && !resMatches(I, tl.res)) continue;
       if (k === 'irrigate' && !(tl.river || tl.res === 'oasis' || this.neighbors(i).some(n => this.tiles[n].river || this.tiles[n].res === 'oasis'))) continue;
       if (k === 'gather' && tl.res !== 'fruit') continue;
       out.push(k);
@@ -2326,7 +2398,7 @@ class Game {
     const tl = this.tiles[i];
     const pop = this.improvePop(i, k);
     this.players[pid].gold -= this.improveCost(pid, k);
-    if (I.consume) { tl.res = null; if (k === 'fishery' || k === 'whaling') tl.imp = k; } else { tl.imp = k; }
+    if (I.consume) tl.res = null; else tl.imp = k;
     tl.impPop = pop;
     const city = this.cityById(tl.ownerCity);
     if (city) this.addPop(city, pop);
@@ -3302,6 +3374,7 @@ function siteScore(g, pid, i) {
     else if (tl.t !== 'mountain') s += 1;
     if (tl.res) s += 1.3;
     if (tl.res === 'copper' || tl.res === 'tin' || tl.res === 'horses') s += 1.2; // strategic deposits draw settlers
+    if (tl.res === 'spices' || tl.res === 'sheep') s += 0.8;
     if (tl.river) s += 0.4;
   }
   const spec = g.specialtyAt(i);
@@ -3373,6 +3446,8 @@ function techValue(g, pid, t) {
 function goodHunger(g, pid, good) {
   if (INPUT_GOODS.has(good)) return g.inputDemand(pid, good) && g.stock(pid)[good] < g.inputDemand(pid, good) ? 1.2 : 0.1;
   const st = g.stock(pid)[good], prod = (g.players[pid].lastProd?.[good] || 0) + (g.players[pid].lastMade?.[good] || 0);
+  const demand = g.goodDemand(pid, good);
+  if (demand > 0 && prod < demand && st < demand * 3) return 1.2; // consuming faster than we make it
   if (prod === 0 && st < 4) return 1.2;
   if (st < 6) return 0.6;
   return 0.15;
@@ -4713,8 +4788,9 @@ function refreshAll() { updateTopbar(); refreshPanel(); R.dirty = true; }
 function goodsBarHTML(pid) {
   const pl = game.players[pid];
   const st = game.stock(pid), prod = pl.lastProd || game.production(pid), need = game.supplyNeed(pid), un = pl.unsupplied || {};
-  return GOOD_KEYS.map(k => {
-    const net = (prod[k] || 0) + (pl.lastMade?.[k] || 0) - (pl.lastUsed?.[k] || 0) - (need[k] || 0);
+  return GOOD_KEYS.filter(k => st[k] || prod[k] || pl.lastMade?.[k] || game.goodDemand(pid, k) || un[k]).map(k => {
+    const ate = k === 'food' ? (pl.lastEaten || 0) : (pl.lastLux?.[k] || 0);
+    const net = (prod[k] || 0) + (pl.lastMade?.[k] || 0) - (pl.lastUsed?.[k] || 0) - (need[k] || 0) - ate;
     return `<span class="g ${un[k] ? 'short' : ''}" title="${STRATEGIC[k].name}: ${st[k]} in stock, ${net >= 0 ? '+' : ''}${net} per turn"><i style="background:${STRATEGIC[k].color}"></i>${STRATEGIC[k].short} <b>${st[k]}</b><span class="dim">${net >= 0 ? '+' : ''}${net}</span></span>`;
   }).join('');
 }
@@ -4816,6 +4892,9 @@ function cityPanel(c) {
     }
     h += `<div class="desc">${affNote}</div>`;
     h += `<div class="row"><span>Income</span><b>+${game.cityIncome(c)} gold</b></div>`;
+    const fd = game.foodDemand(c);
+    if (fd) h += `<div class="row"><span>Food</span><span>eats ${fd}/turn${c.hunger > 0 ? ` · <b style="color:${c.hunger > 0.3 ? '#ff7050' : '#e0c050'}">${Math.round(c.hunger * 100)}% unfed${c.hunger > 0.3 ? ', not growing' : ''}</b>` : ' · fed'}</span></div>`;
+    if (c.level >= 4) h += `<div class="row"><span>Luxuries</span><span>${c.lux?.length ? c.lux.map(k => STRATEGIC[k].name).join(', ') : '<span class="dim">none</span>'}</span></div>`;
     const cp = game.cityProduction(c);
     if (Object.keys(cp).length) h += `<div class="row"><span>Goods</span><span>${Object.entries(cp).map(([k, n]) => `+${n} ${STRATEGIC[k].name.toLowerCase()}`).join(', ')}</span></div>`;
     if (!game.isConnected(c)) h += `<div class="desc" style="color:#ff9a60"><b>Cut off from the capital.</b> Its goods can't reach your stockpile, and it can't use the stockpile to train or build. Clear the enemies or hostile land between them.</div>`;
@@ -5146,13 +5225,15 @@ function showGoods() {
   if (!game) return;
   const pid = R.viewer, pl = game.players[pid];
   const st = game.stock(pid), prod = game.production(pid), need = game.supplyNeed(pid), lost = game.stranded(pid), cap = game.stockCap(pid);
-  let h = `<h2>Strategic goods</h2><p class="dim">Goods come from deposits worked by improvements (at most 2 of a good per city, doubled by its specialty building) and flow into one national stockpile (cap ${cap}: 8 + 2 per city), but only from cities connected to your capital. They are spent to train advanced units and raise buildings, and every 4 units that needed a good keep consuming 1 per turn as supply.</p>`;
-  h += `<table class="tribes"><tr><th>Good</th><th>Stock</th><th>Produced</th><th>Smelted</th><th>Army supply</th><th>Stranded</th><th>Comes from</th><th>Used by</th></tr>`;
+  let h = `<h2>Strategic goods</h2><p class="dim">Goods come from deposits worked by improvements (at most 2 of a good per city, doubled by its specialty building) and flow into one national stockpile (cap ${cap}: 8 + 2 per city), but only from cities connected to your capital. They are spent to train advanced units and raise buildings, and every 4 units that needed a good keep consuming 1 per turn as supply. Cities of level 3+ <b>eat</b> food (level − 2 each). Hungry cities stop growing and grow restless, and cut-off cities eat only what they grow. Cities of level 4+ take one of each <b>luxury</b> (cloth, spice), largest first, and each calms them by 1. Cities of level 6+ with none grumble.</p>`;
+  h += `<table class="tribes"><tr><th>Good</th><th>Stock</th><th>Produced</th><th>Made / used</th><th>Army supply</th><th>Cities eat</th><th>Stranded</th><th>Comes from</th><th>Used by</th></tr>`;
   for (const k of GOOD_KEYS) {
     const G = STRATEGIC[k];
-    const users = [...Object.entries(UNITS).filter(([, U]) => U.needs?.[k]).map(([, U]) => U.name), ...Object.entries(BUILDINGS).filter(([, B]) => B.needs?.[k]).map(([, B]) => B.name)];
+    const users = [...Object.entries(UNITS).filter(([, U]) => U.needs?.[k]).map(([, U]) => U.name), ...Object.entries(BUILDINGS).filter(([, B]) => B.needs?.[k]).map(([, B]) => B.name), ...Object.entries(RECIPES).filter(([, R]) => R.inputs[k]).map(([p]) => '→ ' + STRATEGIC[p].name)];
+    if (k === 'food') users.unshift('cities of level 3+ (level − 2 each)');
+    if (LUXURIES.includes(k)) users.unshift('cities of level 4+ (1 each, −1 unrest)');
     const srcCities = game.cities.filter(c => c.owner === pid && game.cityProduction(c)[k]).map(c => `${esc(c.name)}${game.isConnected(c) ? '' : ' ⚠'}`);
-    h += `<tr><td><i style="display:inline-block;width:10px;height:10px;background:${G.color};border:1px solid #111;margin-right:5px"></i><b>${G.name}</b></td><td>${st[k]}</td><td>+${prod[k]}</td><td>${pl.lastMade?.[k] ? '+' + pl.lastMade[k] : pl.lastUsed?.[k] ? '−' + pl.lastUsed[k] : '—'}</td><td>${need[k] ? '−' + need[k] : '—'}${pl.unsupplied?.[k] ? ' <b style="color:#ff8060">short!</b>' : ''}</td><td>${lost[k] ? `<span style="color:#ff9a60">${lost[k]} lost</span>` : '—'}</td><td class="dim">${srcCities.join(', ') || G.from}</td><td class="dim">${users.join(', ')}</td></tr>`;
+    h += `<tr><td><i style="display:inline-block;width:10px;height:10px;background:${G.color};border:1px solid #111;margin-right:5px"></i><b>${G.name}</b></td><td>${st[k]}</td><td>+${prod[k]}</td><td>${pl.lastMade?.[k] ? '+' + pl.lastMade[k] : pl.lastUsed?.[k] ? '−' + pl.lastUsed[k] : '—'}</td><td>${need[k] ? '−' + need[k] : '—'}${pl.unsupplied?.[k] ? ' <b style="color:#ff8060">short!</b>' : ''}</td><td>${k === 'food' ? `−${pl.lastEaten || 0} <span class="dim">of ${game.goodDemand(pid, 'food') - (need.food || 0)} wanted</span>` : LUXURIES.includes(k) ? `−${pl.lastLux?.[k] || 0} <span class="dim">of ${game.cities.filter(c => c.owner === pid && c.level >= 4).length} wanted</span>` : '—'}</td><td>${lost[k] ? `<span style="color:#ff9a60">${lost[k]} lost</span>` : '—'}</td><td class="dim">${srcCities.join(', ') || G.from}</td><td class="dim">${users.join(', ')}</td></tr>`;
   }
   const flows = {};
   for (const r of game.routesOf(pid)) {
@@ -5337,6 +5418,9 @@ function showHelp() {
   <p>Tribes are at <b>war</b> until they make peace. Peace begins with a 10-turn <b>truce</b>. Units can't attack or enter the land of tribes they aren't at war with; allies share vision, may pass through each other's land, and defend each other when attacked. Declaring war on a partner earns grudges from the victim and from everyone who knows you. AI tribes use their temperament and their view of you to decide on war, peace, trade and alliances. Open <b>Diplomacy (D)</b> to deal with tribes you have met. Offers between humans wait for the other player's turn.</p>
   <h3>Strategic goods</h3>
   <p>Copper, tin, horses, timber and stone come from <b>deposits</b>: a Mine on a copper or tin deposit (the two metals lie in different regions), a Pasture on a horse herd, a Lumber Camp in a forest, a Quarry on hills. Each yields 1 per turn into your national stockpile, but only if its city is <b>connected</b> to your capital through land that isn't hostile or blocked by enemies. Advanced units and many buildings <b>require</b> goods, e.g. a Swordsman needs 1 bronze and Walls need 2 stone. Basic units and buildings never do. Armies also need <b>supply</b>: every 4 units that needed a good consume 1 of it per turn. Unsupplied units fight weaker and don't heal. Deposits are scarce and regional, so they're worth settling, conquering, raiding and protecting. <b>Bronze</b> is made from 1 copper + 1 tin at a Bronze Workshop, and trades at a markup. Press <b>G</b> for details.</p>
+  <h3>Food & luxuries</h3>
+  <p><b>Food</b> comes from Farms, Irrigation, Fisheries, Whaling and Reed Beds: up to 4 per city, doubled by a Granary. Cities of level 3+ eat (level − 2) food a turn from the national stockpile. Hungry cities stop leveling up and gain unrest. A city cut off from the capital eats only what it grows, so <b>sieges starve cities</b>.</p>
+  <p><b>Luxuries</b>: wool from Pastures on sheep becomes <b>cloth</b> at a Weaver, and <b>spice</b> comes from Plantations on rare spice deposits (doubled by a Caravanserai). Each city of level 4+ takes one of each, and each calms it by 1. Cities of level 6+ with none grumble. Luxuries are scarce and regional, so they're worth trading for.</p>
   <h3>Trade routes</h3>
   <p>Open a <b>trade route</b> with a tribe at peace from the Diplomacy screen. It's a real path between your nearest connected cities, by sea once both of you know Sailing. Each turn goods flow automatically from surplus to deficit, up to 3 each way. Buyers pay the seller, plus a toll to every tribe whose land is crossed, so middlemen profit. Any tribe can close its land to another's trade. <b>Enemy units standing on a route seize its shipments</b>: raid your enemies' supply lines and guard your own. AI tribes take up arms against those who attack their suppliers, and covet cities that sit on goods they lack.</p>
   <h3>Map modes</h3><p>Press <b>M</b> or use the Map menu: Terrain, Political (tribe colours only), Culture (stripes mark peoples under foreign rule), Specialty (and what unclaimed land would become), and Unrest.</p>

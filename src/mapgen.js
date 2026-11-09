@@ -148,11 +148,11 @@ export function generateMap(W, H, seed, type = 'continents') {
     const p = rng();
     switch (tl.t) {
       case 'plains': tl.res = p < 0.14 ? 'fruit' : p < 0.26 ? 'wheat' : null; break;
-      case 'steppe': tl.res = p < 0.18 ? 'horses' : p < 0.26 ? 'fruit' : null; break;
-      case 'desert': tl.res = p < 0.09 ? 'oasis' : p < 0.13 ? 'fruit' : null; break;
-      case 'forest': tl.res = p < 0.22 ? 'game' : null; break;
+      case 'steppe': tl.res = p < 0.16 ? 'horses' : p < 0.24 ? 'sheep' : p < 0.30 ? 'fruit' : null; break;
+      case 'desert': tl.res = p < 0.09 ? 'oasis' : p < 0.16 ? 'spices' : p < 0.19 ? 'fruit' : null; break;
+      case 'forest': tl.res = p < 0.2 ? 'game' : p < 0.24 ? 'spices' : null; break;
       case 'marsh': tl.res = p < 0.16 ? 'fruit' : null; break;
-      case 'hills': tl.res = metalAt(i, 0.3, 0.3, p) || (p > 0.92 ? 'fruit' : null); break;
+      case 'hills': tl.res = metalAt(i, 0.3, 0.3, p) || (p > 0.9 ? 'sheep' : p > 0.85 ? 'fruit' : null); break;
       case 'mountain': tl.res = metalAt(i, 0.35, 0.35, p); break;
       case 'shallows': tl.res = p < 0.22 ? 'fish' : null; break;
       case 'ocean': tl.res = p < 0.04 ? 'whales' : null; break;

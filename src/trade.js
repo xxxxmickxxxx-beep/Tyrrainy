@@ -10,7 +10,7 @@ import { TERRAIN, STRATEGIC, GOOD_KEYS, INPUT_GOODS } from './data.js';
 
 export const ROUTE_CAP = 3;
 // bronze trades at a markup over its inputs (copper 3 + tin 4)
-export const PRICE = { copper: 3, tin: 4, bronze: 10, horses: 4, timber: 2, stone: 2 };
+export const PRICE = { food: 1, copper: 3, tin: 4, bronze: 10, horses: 4, timber: 2, stone: 2, wool: 2, cloth: 5, spice: 6 };
 export const TOLL = 1;
 export const MAX_ROUTE_LEN = 40;
 
@@ -30,7 +30,9 @@ export const tradeMethods = {
   // Raw inputs are only worth keeping with a workshop to feed: otherwise every unit is for sale.
   reserve(pid, k) {
     if (INPUT_GOODS.has(k)) return 2 * this.inputDemand(pid, k);
-    return 4 + 3 * (this.supplyNeed(pid)[k] || 0);
+    const d = this.goodDemand(pid, k);
+    if (STRATEGIC[k].kind === 'sustenance' || STRATEGIC[k].kind === 'luxury') return 2 + 2 * d; // eaten every turn: a thinner buffer
+    return 4 + 3 * d;
   },
   surplus(pid, k) { return Math.max(0, this.stock(pid)[k] - this.reserve(pid, k)); },
   deficit(pid, k) {

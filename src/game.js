@@ -214,7 +214,7 @@ export class Game {
   addPop(city, n) {
     city.pop += n;
     let leveled = false;
-    while (city.pop >= city.level + 1) {
+    while (city.pop >= city.level + 1 && !(city.hunger > 0.3)) {
       city.pop -= city.level + 1;
       city.level++;
       leveled = true;
@@ -423,12 +423,15 @@ export class Game {
     if (raw && adj) pressure.push([`Cultural sensitivity ×${sens.toFixed(2).replace(/0$/, '')}`, adj]);
     if (aff >= 2) pressure.push([AFFINITY[aff].name, aff - 1]);
     if (city.riotUntil != null && this.turn <= city.riotUntil) pressure.push(['Festival riot', 2]);
+    if (city.hunger > 0) pressure.push(['Hunger', Math.ceil(2 * city.hunger)]);
+    if (city.level >= 6 && !(city.lux?.length)) pressure.push(['Wants luxuries', 1]);
     if (city.capital) calm.push(['Capital', 3]);
     if (aff === 0) calm.push(['Homeland', 1]);
     const gar = this.unitAt(city.idx);
     if (gar && gar.owner === pid && gar.type !== 'settler') calm.push(['Garrison', 1]);
     for (const b of city.buildings) if (BUILDINGS[b].calm) calm.push([BUILDINGS[b].name, BUILDINGS[b].calm]);
     if (city.subsidy) calm.push([SUBSIDIES[city.subsidy].name, SUBSIDIES[city.subsidy].calm]);
+    if (city.lux?.length) calm.push(['Luxuries (' + city.lux.join(', ') + ')', city.lux.length]);
     const fest = city.festivalUntil != null && this.turn <= city.festivalUntil;
     if (fest) calm.push(['Festival', 2]);
     const P = pressure.reduce((a, x) => a + x[1], 0), C = calm.reduce((a, x) => a + x[1], 0);
@@ -973,7 +976,7 @@ export class Game {
     const out = [];
     for (const [k, I] of Object.entries(IMPROVEMENTS)) {
       if (!I.terrain.includes(tl.t)) continue;
-      if (I.consume && !resMatches(I, tl.res)) continue;
+      if ((I.consume || I.requires) && !resMatches(I, tl.res)) continue;
       if (k === 'irrigate' && !(tl.river || tl.res === 'oasis' || this.neighbors(i).some(n => this.tiles[n].river || this.tiles[n].res === 'oasis'))) continue;
       if (k === 'gather' && tl.res !== 'fruit') continue;
       out.push(k);
@@ -1010,7 +1013,7 @@ export class Game {
     const tl = this.tiles[i];
     const pop = this.improvePop(i, k);
     this.players[pid].gold -= this.improveCost(pid, k);
-    if (I.consume) { tl.res = null; if (k === 'fishery' || k === 'whaling') tl.imp = k; } else { tl.imp = k; }
+    if (I.consume) tl.res = null; else tl.imp = k;
     tl.impPop = pop;
     const city = this.cityById(tl.ownerCity);
     if (city) this.addPop(city, pop);

@@ -6,7 +6,7 @@ import { MAP_SIZES, MAP_TYPES } from './mapgen.js';
 import { ROOTS } from './culture.js';
 import {
   TERRAIN, SPECIALTY, SPECIALTY_KEYS, KIN_DIST, AFFINITY, UNITS, IMPROVEMENTS, BUILDINGS, WONDERS, TECHS, RESOURCES, TEMPERAMENTS, SUBSIDIES, SENSITIVITY,
-  STRATEGIC, GOOD_KEYS, GOOD_DOUBLER, RECIPES, impYield,
+  STRATEGIC, GOOD_KEYS, GOOD_DOUBLER, RECIPES, LUXURIES, impYield,
 } from './data.js';
 
 const $ = (id) => document.getElementById(id);
@@ -467,8 +467,9 @@ function refreshAll() { updateTopbar(); refreshPanel(); R.dirty = true; }
 function goodsBarHTML(pid) {
   const pl = game.players[pid];
   const st = game.stock(pid), prod = pl.lastProd || game.production(pid), need = game.supplyNeed(pid), un = pl.unsupplied || {};
-  return GOOD_KEYS.map(k => {
-    const net = (prod[k] || 0) + (pl.lastMade?.[k] || 0) - (pl.lastUsed?.[k] || 0) - (need[k] || 0);
+  return GOOD_KEYS.filter(k => st[k] || prod[k] || pl.lastMade?.[k] || game.goodDemand(pid, k) || un[k]).map(k => {
+    const ate = k === 'food' ? (pl.lastEaten || 0) : (pl.lastLux?.[k] || 0);
+    const net = (prod[k] || 0) + (pl.lastMade?.[k] || 0) - (pl.lastUsed?.[k] || 0) - (need[k] || 0) - ate;
     return `<span class="g ${un[k] ? 'short' : ''}" title="${STRATEGIC[k].name}: ${st[k]} in stock, ${net >= 0 ? '+' : ''}${net} per turn"><i style="background:${STRATEGIC[k].color}"></i>${STRATEGIC[k].short} <b>${st[k]}</b><span class="dim">${net >= 0 ? '+' : ''}${net}</span></span>`;
   }).join('');
 }
@@ -570,6 +571,9 @@ function cityPanel(c) {
     }
     h += `<div class="desc">${affNote}</div>`;
     h += `<div class="row"><span>Income</span><b>+${game.cityIncome(c)} gold</b></div>`;
+    const fd = game.foodDemand(c);
+    if (fd) h += `<div class="row"><span>Food</span><span>eats ${fd}/turn${c.hunger > 0 ? ` · <b style="color:${c.hunger > 0.3 ? '#ff7050' : '#e0c050'}">${Math.round(c.hunger * 100)}% unfed${c.hunger > 0.3 ? ', not growing' : ''}</b>` : ' · fed'}</span></div>`;
+    if (c.level >= 4) h += `<div class="row"><span>Luxuries</span><span>${c.lux?.length ? c.lux.map(k => STRATEGIC[k].name).join(', ') : '<span class="dim">none</span>'}</span></div>`;
     const cp = game.cityProduction(c);
     if (Object.keys(cp).length) h += `<div class="row"><span>Goods</span><span>${Object.entries(cp).map(([k, n]) => `+${n} ${STRATEGIC[k].name.toLowerCase()}`).join(', ')}</span></div>`;
     if (!game.isConnected(c)) h += `<div class="desc" style="color:#ff9a60"><b>Cut off from the capital.</b> Its goods can't reach your stockpile, and it can't use the stockpile to train or build. Clear the enemies or hostile land between them.</div>`;
@@ -900,13 +904,15 @@ function showGoods() {
   if (!game) return;
   const pid = R.viewer, pl = game.players[pid];
   const st = game.stock(pid), prod = game.production(pid), need = game.supplyNeed(pid), lost = game.stranded(pid), cap = game.stockCap(pid);
-  let h = `<h2>Strategic goods</h2><p class="dim">Goods come from deposits worked by improvements (at most 2 of a good per city, doubled by its specialty building) and flow into one national stockpile (cap ${cap}: 8 + 2 per city), but only from cities connected to your capital. They are spent to train advanced units and raise buildings, and every 4 units that needed a good keep consuming 1 per turn as supply.</p>`;
-  h += `<table class="tribes"><tr><th>Good</th><th>Stock</th><th>Produced</th><th>Smelted</th><th>Army supply</th><th>Stranded</th><th>Comes from</th><th>Used by</th></tr>`;
+  let h = `<h2>Strategic goods</h2><p class="dim">Goods come from deposits worked by improvements (at most 2 of a good per city, doubled by its specialty building) and flow into one national stockpile (cap ${cap}: 8 + 2 per city), but only from cities connected to your capital. They are spent to train advanced units and raise buildings, and every 4 units that needed a good keep consuming 1 per turn as supply. Cities of level 3+ <b>eat</b> food (level − 2 each). Hungry cities stop growing and grow restless, and cut-off cities eat only what they grow. Cities of level 4+ take one of each <b>luxury</b> (cloth, spice), largest first, and each calms them by 1. Cities of level 6+ with none grumble.</p>`;
+  h += `<table class="tribes"><tr><th>Good</th><th>Stock</th><th>Produced</th><th>Made / used</th><th>Army supply</th><th>Cities eat</th><th>Stranded</th><th>Comes from</th><th>Used by</th></tr>`;
   for (const k of GOOD_KEYS) {
     const G = STRATEGIC[k];
-    const users = [...Object.entries(UNITS).filter(([, U]) => U.needs?.[k]).map(([, U]) => U.name), ...Object.entries(BUILDINGS).filter(([, B]) => B.needs?.[k]).map(([, B]) => B.name)];
+    const users = [...Object.entries(UNITS).filter(([, U]) => U.needs?.[k]).map(([, U]) => U.name), ...Object.entries(BUILDINGS).filter(([, B]) => B.needs?.[k]).map(([, B]) => B.name), ...Object.entries(RECIPES).filter(([, R]) => R.inputs[k]).map(([p]) => '→ ' + STRATEGIC[p].name)];
+    if (k === 'food') users.unshift('cities of level 3+ (level − 2 each)');
+    if (LUXURIES.includes(k)) users.unshift('cities of level 4+ (1 each, −1 unrest)');
     const srcCities = game.cities.filter(c => c.owner === pid && game.cityProduction(c)[k]).map(c => `${esc(c.name)}${game.isConnected(c) ? '' : ' ⚠'}`);
-    h += `<tr><td><i style="display:inline-block;width:10px;height:10px;background:${G.color};border:1px solid #111;margin-right:5px"></i><b>${G.name}</b></td><td>${st[k]}</td><td>+${prod[k]}</td><td>${pl.lastMade?.[k] ? '+' + pl.lastMade[k] : pl.lastUsed?.[k] ? '−' + pl.lastUsed[k] : '—'}</td><td>${need[k] ? '−' + need[k] : '—'}${pl.unsupplied?.[k] ? ' <b style="color:#ff8060">short!</b>' : ''}</td><td>${lost[k] ? `<span style="color:#ff9a60">${lost[k]} lost</span>` : '—'}</td><td class="dim">${srcCities.join(', ') || G.from}</td><td class="dim">${users.join(', ')}</td></tr>`;
+    h += `<tr><td><i style="display:inline-block;width:10px;height:10px;background:${G.color};border:1px solid #111;margin-right:5px"></i><b>${G.name}</b></td><td>${st[k]}</td><td>+${prod[k]}</td><td>${pl.lastMade?.[k] ? '+' + pl.lastMade[k] : pl.lastUsed?.[k] ? '−' + pl.lastUsed[k] : '—'}</td><td>${need[k] ? '−' + need[k] : '—'}${pl.unsupplied?.[k] ? ' <b style="color:#ff8060">short!</b>' : ''}</td><td>${k === 'food' ? `−${pl.lastEaten || 0} <span class="dim">of ${game.goodDemand(pid, 'food') - (need.food || 0)} wanted</span>` : LUXURIES.includes(k) ? `−${pl.lastLux?.[k] || 0} <span class="dim">of ${game.cities.filter(c => c.owner === pid && c.level >= 4).length} wanted</span>` : '—'}</td><td>${lost[k] ? `<span style="color:#ff9a60">${lost[k]} lost</span>` : '—'}</td><td class="dim">${srcCities.join(', ') || G.from}</td><td class="dim">${users.join(', ')}</td></tr>`;
   }
   const flows = {};
   for (const r of game.routesOf(pid)) {
@@ -1091,6 +1097,9 @@ function showHelp() {
   <p>Tribes are at <b>war</b> until they make peace. Peace begins with a 10-turn <b>truce</b>. Units can't attack or enter the land of tribes they aren't at war with; allies share vision, may pass through each other's land, and defend each other when attacked. Declaring war on a partner earns grudges from the victim and from everyone who knows you. AI tribes use their temperament and their view of you to decide on war, peace, trade and alliances. Open <b>Diplomacy (D)</b> to deal with tribes you have met. Offers between humans wait for the other player's turn.</p>
   <h3>Strategic goods</h3>
   <p>Copper, tin, horses, timber and stone come from <b>deposits</b>: a Mine on a copper or tin deposit (the two metals lie in different regions), a Pasture on a horse herd, a Lumber Camp in a forest, a Quarry on hills. Each yields 1 per turn into your national stockpile, but only if its city is <b>connected</b> to your capital through land that isn't hostile or blocked by enemies. Advanced units and many buildings <b>require</b> goods, e.g. a Swordsman needs 1 bronze and Walls need 2 stone. Basic units and buildings never do. Armies also need <b>supply</b>: every 4 units that needed a good consume 1 of it per turn. Unsupplied units fight weaker and don't heal. Deposits are scarce and regional, so they're worth settling, conquering, raiding and protecting. <b>Bronze</b> is made from 1 copper + 1 tin at a Bronze Workshop, and trades at a markup. Press <b>G</b> for details.</p>
+  <h3>Food & luxuries</h3>
+  <p><b>Food</b> comes from Farms, Irrigation, Fisheries, Whaling and Reed Beds: up to 4 per city, doubled by a Granary. Cities of level 3+ eat (level − 2) food a turn from the national stockpile. Hungry cities stop leveling up and gain unrest. A city cut off from the capital eats only what it grows, so <b>sieges starve cities</b>.</p>
+  <p><b>Luxuries</b>: wool from Pastures on sheep becomes <b>cloth</b> at a Weaver, and <b>spice</b> comes from Plantations on rare spice deposits (doubled by a Caravanserai). Each city of level 4+ takes one of each, and each calms it by 1. Cities of level 6+ with none grumble. Luxuries are scarce and regional, so they're worth trading for.</p>
   <h3>Trade routes</h3>
   <p>Open a <b>trade route</b> with a tribe at peace from the Diplomacy screen. It's a real path between your nearest connected cities, by sea once both of you know Sailing. Each turn goods flow automatically from surplus to deficit, up to 3 each way. Buyers pay the seller, plus a toll to every tribe whose land is crossed, so middlemen profit. Any tribe can close its land to another's trade. <b>Enemy units standing on a route seize its shipments</b>: raid your enemies' supply lines and guard your own. AI tribes take up arms against those who attack their suppliers, and covet cities that sit on goods they lack.</p>
   <h3>Map modes</h3><p>Press <b>M</b> or use the Map menu: Terrain, Political (tribe colours only), Culture (stripes mark peoples under foreign rule), Specialty (and what unclaimed land would become), and Unrest.</p>

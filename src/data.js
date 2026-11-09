@@ -127,14 +127,15 @@ export const EMBARKED = { name: 'Boat', atk: 1, def: 1, mv: 2, rng: 1 };
 export const IMPROVEMENTS = {
   farm:     { name: 'Farm',        terrain: ['plains', 'steppe'], tech: 'agriculture', cost: 4, pop: 1 },
   irrigate: { name: 'Irrigation',  terrain: ['desert'], tech: 'irrigation', cost: 4, pop: 1, needRiverOrOasis: true },
-  pasture:  { name: 'Pasture',     terrain: ['steppe', 'plains'], tech: 'husbandry', cost: 4, pop: 1, resource: 'horses' },
+  pasture:  { name: 'Pasture',     terrain: ['steppe', 'plains', 'hills'], tech: 'husbandry', cost: 4, pop: 1, resource: ['horses', 'sheep'] },
+  plantation: { name: 'Plantation', terrain: ['desert', 'forest'], tech: 'irrigation', cost: 5, pop: 1, resource: 'spices', requires: true },
   lumber:   { name: 'Lumber Camp', terrain: ['forest'], tech: 'forestry', cost: 4, pop: 1 },
   hunt:     { name: 'Hunting Lodge', terrain: ['forest'], tech: null, cost: 2, pop: 1, resource: 'game', consume: true },
   gather:   { name: 'Forage',      terrain: ['plains', 'steppe', 'desert', 'marsh', 'hills'], tech: null, cost: 2, pop: 1, resource: 'fruit', consume: true },
   mine:     { name: 'Mine',        terrain: ['hills', 'mountain'], tech: 'mining', cost: 5, pop: 2, resource: ['copper', 'tin'] },
   quarry:   { name: 'Quarry',      terrain: ['hills'], tech: 'mining', cost: 4, pop: 1 },
-  fishery:  { name: 'Fishery',     terrain: ['shallows'], tech: 'fishing', cost: 3, pop: 1, resource: 'fish', consume: true },
-  whaling:  { name: 'Whaling',     terrain: ['ocean'], tech: 'navigation', cost: 5, pop: 2, resource: 'whales', consume: true },
+  fishery:  { name: 'Fishery',     terrain: ['shallows'], tech: 'fishing', cost: 3, pop: 1, resource: 'fish', requires: true },
+  whaling:  { name: 'Whaling',     terrain: ['ocean'], tech: 'navigation', cost: 5, pop: 2, resource: 'whales', requires: true },
   reedbeds: { name: 'Reed Beds',   terrain: ['marsh'], tech: 'drainage', cost: 4, pop: 1 },
 };
 
@@ -143,6 +144,8 @@ export const RESOURCES = {
   game:   { name: 'Game',       color: '#a0673a' },
   horses: { name: 'Horses',     color: '#6a4a2a' },
   copper: { name: 'Copper',     color: '#d07a3a' },
+  sheep:  { name: 'Sheep',      color: '#f4f0e0' },
+  spices: { name: 'Spices',     color: '#c03050' },
   tin:    { name: 'Tin',        color: '#a8b8c4' },
   fish:   { name: 'Fish',       color: '#e0f0ff' },
   whales: { name: 'Whales',     color: '#b0c8e0' },
@@ -153,16 +156,17 @@ export const RESOURCES = {
 // ---------------- Buildings ----------------
 export const BUILDINGS = {
   walls:        { name: 'Walls', cost: 6, tech: 'masonry', desc: 'City defense x2 (stacks with specialty).', needs: { stone: 2 } },
+  weaver:       { name: 'Weaver', cost: 6, tech: 'husbandry', needs: { timber: 1 }, desc: 'Weaves up to 2 wool into 2 cloth each turn.' },
   bronzeworks:  { name: 'Bronze Workshop', cost: 8, tech: 'bronze', needs: { stone: 1 }, desc: 'Smelts up to 2 copper + 2 tin into 2 bronze each turn.' },
   courthouse:   { name: 'Courthouse', cost: 5, calm: 1, desc: '-1 unrest pressure.' },
   amphitheater: { name: 'Amphitheater', cost: 9, tech: 'masonry', calm: 2, desc: '-2 unrest pressure.', needs: { stone: 2 } },
   temple:       { name: 'Shrine', cost: 8, tech: 'philosophy', calm: 2, desc: '+1 pop, +1 gold, -2 unrest. Integration twice as fast.', needs: { stone: 1 } },
-  granary:      { name: 'Granary', cost: 6, special: 'plains', desc: '+2 pop.' , pop: 2, needs: { timber: 1 } },
+  granary:      { name: 'Granary', cost: 6, special: 'plains', desc: '+2 pop; doubles the city\'s food.' , pop: 2, needs: { timber: 1 } },
   watchtower:   { name: 'Watchtower', cost: 5, special: 'hilltop', desc: '+2 vision, city defense +50%; doubles the city\'s stone.', needs: { stone: 1 } },
   harbor:       { name: 'Harbor', cost: 7, special: 'coastal', desc: '+2 gold per turn.', gold: 2, needs: { timber: 2 } },
   market:       { name: 'Market', cost: 8, special: 'riverside', desc: '+1 gold per 2 city levels.', needs: { stone: 1 } },
   sawmill:      { name: 'Sawmill', cost: 6, special: 'forest', desc: '+1 gold per lumber camp; doubles the city\'s timber.' },
-  caravanserai: { name: 'Caravanserai', cost: 7, special: 'desert', desc: '+2 gold, +1 pop.', gold: 2, pop: 1 },
+  caravanserai: { name: 'Caravanserai', cost: 7, special: 'desert', desc: '+2 gold, +1 pop; doubles the city\'s spice.', gold: 2, pop: 1 },
   stables:      { name: 'Stables', cost: 6, special: 'steppe', desc: 'Mounted units cost -1, +1 pop; doubles the city\'s horses.', pop: 1, needs: { timber: 1 } },
   peatworks:    { name: 'Peat Works', cost: 6, special: 'marsh', desc: '+1 gold per marsh tile in territory (max 3).' },
   deepmine:     { name: 'Deep Mine', cost: 8, special: 'mountain', desc: '+3 gold per turn; doubles the city\'s copper and tin.', gold: 3, needs: { timber: 1 } },
@@ -174,22 +178,32 @@ export const BUILDINGS = {
 // train advanced units and raise buildings (hard requirements; basic units and buildings
 // never need goods). Stockpiles are capped; surplus beyond the cap is lost.
 export const STRATEGIC = {
-  copper: { name: 'Copper', short: 'Cu', color: '#d07a3a', from: 'a Mine on a copper deposit (hills, mountains)' },
-  tin:    { name: 'Tin',    short: 'Sn', color: '#a8b8c4', from: 'a Mine on a tin deposit (hills, mountains), rarer and far from copper' },
-  bronze: { name: 'Bronze', short: 'Br', color: '#c89a3a', from: 'a Bronze Workshop smelting copper + tin' },
-  horses: { name: 'Horses', short: 'Hr', color: '#9a6a3a', from: 'a Pasture on a horse herd (steppe)' },
-  timber: { name: 'Timber', short: 'Tb', color: '#4f9a4a', from: 'a Lumber Camp in a forest' },
-  stone:  { name: 'Stone',  short: 'St', color: '#d8c8a0', from: 'a Quarry on hills' },
+  food:   { name: 'Food',   short: 'Fd', color: '#e8c84a', cityCap: 4, kind: 'sustenance', from: 'Farms, Irrigation, Fisheries, Whaling and Reed Beds' },
+  copper: { name: 'Copper', short: 'Cu', color: '#d07a3a', kind: 'arms', from: 'a Mine on a copper deposit (hills, mountains)' },
+  tin:    { name: 'Tin',    short: 'Sn', color: '#a8b8c4', kind: 'arms', from: 'a Mine on a tin deposit (hills, mountains), rarer and far from copper' },
+  bronze: { name: 'Bronze', short: 'Br', color: '#c89a3a', kind: 'arms', from: 'a Bronze Workshop smelting copper + tin' },
+  horses: { name: 'Horses', short: 'Hr', color: '#9a6a3a', kind: 'arms', from: 'a Pasture on a horse herd (steppe)' },
+  timber: { name: 'Timber', short: 'Tb', color: '#4f9a4a', kind: 'build', from: 'a Lumber Camp in a forest' },
+  stone:  { name: 'Stone',  short: 'St', color: '#d8c8a0', kind: 'build', from: 'a Quarry on hills' },
+  wool:   { name: 'Wool',   short: 'Wo', color: '#efe6cf', kind: 'luxury', from: 'a Pasture on sheep (hills, steppe)' },
+  cloth:  { name: 'Cloth',  short: 'Cl', color: '#8a6ad0', kind: 'luxury', from: 'a Weaver weaving wool' },
+  spice:  { name: 'Spice',  short: 'Sp', color: '#d0405a', kind: 'luxury', from: 'a Plantation on rare spice deposits (desert, forest)' },
 };
+export const LUXURIES = ['cloth', 'spice'];
 export const GOOD_KEYS = Object.keys(STRATEGIC);
 // Processing: a building in a connected city turns inputs from the stockpile into a product.
 // Add entries here to extend production chains.
 export const RECIPES = {
   bronze: { inputs: { copper: 1, tin: 1 }, building: 'bronzeworks', rate: 2 },
+  cloth:  { inputs: { wool: 1 }, building: 'weaver', rate: 2 },
 };
 export const INPUT_GOODS = new Set(Object.values(RECIPES).flatMap(r => Object.keys(r.inputs)));
 // improvement -> good it yields: fixed, or chosen by the tile's resource
-export const IMP_YIELD = { mine: { byRes: { copper: 'copper', tin: 'tin' } }, pasture: { good: 'horses', res: 'horses' }, lumber: { good: 'timber' }, quarry: { good: 'stone' } };
+export const IMP_YIELD = {
+  mine: { byRes: { copper: 'copper', tin: 'tin' } }, pasture: { byRes: { horses: 'horses', sheep: 'wool' } },
+  lumber: { good: 'timber' }, quarry: { good: 'stone' }, plantation: { good: 'spice', res: 'spices' },
+  farm: { good: 'food' }, irrigate: { good: 'food' }, fishery: { good: 'food' }, whaling: { good: 'food' }, reedbeds: { good: 'food' },
+};
 export function impYield(imp, res) {
   const y = IMP_YIELD[imp];
   if (!y) return null;
@@ -198,7 +212,7 @@ export function impYield(imp, res) {
   return y.good;
 }
 // specialty buildings that double goods produced in their city
-export const GOOD_DOUBLER = { deepmine: ['copper', 'tin'], stables: ['horses'], sawmill: ['timber'], watchtower: ['stone'] };
+export const GOOD_DOUBLER = { deepmine: ['copper', 'tin'], stables: ['horses'], sawmill: ['timber'], watchtower: ['stone'], granary: ['food'], caravanserai: ['spice'] };
 export function resMatches(I, res) { return Array.isArray(I.resource) ? I.resource.includes(res) : I.resource === res; }
 
 // ---------------- Subsidies ----------------

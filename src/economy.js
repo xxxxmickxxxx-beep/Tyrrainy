@@ -1,6 +1,6 @@
 // Strategic goods: production at deposits, a capped national stockpile, connectivity to the
 // capital, and hard requirements for advanced units and buildings. Mixed into Game.prototype.
-import { TERRAIN, STRATEGIC, GOOD_KEYS, GOOD_DOUBLER, UNITS, RECIPES, INPUT_GOODS, impYield } from './data.js';
+import { TERRAIN, STRATEGIC, GOOD_KEYS, GOOD_DOUBLER, UNITS, RECIPES, INPUT_GOODS, LUXURIES, impYield } from './data.js';
 
 export const CITY_GOOD_CAP = 2; // per good per city, before its specialty building doubles it
 export const SUPPLY_PER = 4; // each 4 units needing a good consume 1 of it per turn
@@ -8,7 +8,8 @@ export const SUPPLY_PER = 4; // each 4 units needing a good consume 1 of it per 
 export const economyMethods = {
   stock(pid) {
     const pl = this.players[pid];
-    if (!pl.stock) pl.stock = Object.fromEntries(GOOD_KEYS.map(k => [k, 0]));
+    if (!pl.stock) pl.stock = {};
+    for (const k of GOOD_KEYS) if (pl.stock[k] == null) pl.stock[k] = 0;
     return pl.stock;
   },
   stockCap(pid) { return 8 + 2 * this.cities.filter(c => c.owner === pid).length; },
@@ -45,7 +46,7 @@ export const economyMethods = {
       if (g) out[g] = (out[g] || 0) + 1;
     }
     // a city can only work so much of one good: supply depends on how many places produce it
-    for (const g in out) out[g] = Math.min(CITY_GOOD_CAP, out[g]);
+    for (const g in out) out[g] = Math.min(STRATEGIC[g].cityCap || CITY_GOOD_CAP, out[g]);
     for (const b of city.buildings) for (const g of GOOD_DOUBLER[b] || []) if (out[g]) out[g] *= 2;
     return out;
   },
@@ -116,12 +117,64 @@ export const economyMethods = {
     for (const k of GOOD_KEYS) {
       let v = st[k] - (need[k] || 0);
       if (v < 0) { pl.unsupplied[k] = true; v = 0; }
-      st[k] = Math.min(cap, v);
+      st[k] = v;
       if (pl.unsupplied[k] && !was[k]) this.addLog(`${pl.name} has run out of ${STRATEGIC[k].name.toLowerCase()}: units that need it are unsupplied.`, pid);
     }
+    const eaten = this.feedCities(pid);
+    const lux = this.supplyLuxuries(pid);
+    for (const k of GOOD_KEYS) st[k] = Math.min(cap, st[k]);
     pl.lastProd = prod;
     pl.lastMade = made;
     pl.lastNeed = need;
+    pl.lastEaten = eaten;
+    pl.lastLux = lux;
+  },
+
+  // ---- sustenance: cities of level 3+ eat (level - 2) food a turn. Connected cities eat from
+  // the stockpile; cut-off cities only what they grow themselves. Hungry cities stop growing
+  // and grow restless.
+  foodDemand(city) { return Math.max(0, city.level - 2); },
+  feedCities(pid) {
+    const st = this.stock(pid);
+    const conn = this.connectedCities(pid);
+    const mine = this.cities.filter(c => c.owner === pid);
+    let demand = 0;
+    for (const c of mine) if (conn.has(c.id)) demand += this.foodDemand(c);
+    const eaten = Math.min(st.food, demand);
+    st.food -= eaten;
+    const fed = demand ? eaten / demand : 1;
+    for (const c of mine) {
+      const d = this.foodDemand(c);
+      const was = c.hunger || 0;
+      if (!d) c.hunger = 0;
+      else if (conn.has(c.id)) c.hunger = 1 - fed;
+      else c.hunger = Math.max(0, 1 - (this.cityProduction(c).food || 0) / d);
+      if (c.hunger > 0.3 && was <= 0.3) this.addLog(`${c.name} is going hungry.`, pid, c.idx);
+      if (c.hunger <= 0.3 && was > 0.3) this.addPop(c, 0); // growth resumes
+    }
+    return eaten;
+  },
+  // ---- luxuries: each city of level 4+ takes up to 1 of each luxury; each calms it (-1).
+  // Larger cities are served first. Level 6+ cities with none grumble.
+  supplyLuxuries(pid) {
+    const st = this.stock(pid);
+    const conn = this.connectedCities(pid);
+    const used = {};
+    const mine = this.cities.filter(c => c.owner === pid).sort((a, b) => b.level - a.level);
+    for (const c of mine) {
+      c.lux = [];
+      if (c.level < 4 || !conn.has(c.id)) continue;
+      for (const k of LUXURIES) if (st[k] > 0) { st[k]--; c.lux.push(k); used[k] = (used[k] || 0) + 1; }
+    }
+    return used;
+  },
+  // Everything a tribe uses of a good per turn: army supply, food, luxuries, workshop inputs.
+  goodDemand(pid, k) {
+    let d = this.supplyNeed(pid)[k] || 0;
+    if (k === 'food') for (const c of this.cities) if (c.owner === pid) d += this.foodDemand(c);
+    if (LUXURIES.includes(k)) d += this.cities.filter(c => c.owner === pid && c.level >= 4).length;
+    d += this.inputDemand(pid, k);
+    return d;
   },
   // Workshop capacity per product for a tribe (connected cities only).
   workshops(pid) {
