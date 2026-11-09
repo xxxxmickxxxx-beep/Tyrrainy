@@ -966,7 +966,9 @@ export class Game {
     this.history = this.history || [];
     const pw = {};
     for (const p of this.players) if (p.alive) { const v = this.power(p.id); if (v > 0) pw[p.id] = Math.round(v * 10) / 10; }
-    this.history.push({ t: this.turn, pw });
+    const lord = {};
+    for (const p of this.players) if (p.alive && this.overlordOf?.(p.id) != null) lord[p.id] = this.overlordOf(p.id);
+    this.history.push({ t: this.turn, pw, lord });
     // remember who has met whom, so fallen tribes stay identifiable in the records
     for (const h of this.players) {
       if (!h.human || !h.alive) continue;

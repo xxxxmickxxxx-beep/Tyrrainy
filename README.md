@@ -174,6 +174,9 @@ Goods are rival and come from places. Infinite goods shared freely made "ally wi
   - it values enemy cities 40% more for each good they produce that it is starving for.
 - **Effect in sims (8 tribes, large map, 100 turns):** 10–13 wars per game, against 5–7 with infinite goods, plus 19–65 raids and more alliances.
 
+### Production-chain view
+Press **P** (or use the button in the goods table, **G**) for a live diagram built entirely from the data: raw goods → workshops (`RECIPES`) → products → uses (units grouped by the good they need, construction, city food, city luxuries). Edge thickness and labels show last turn's flows. Dashed lines mark one-off costs or a fallback member of a group (bronze standing in for iron). Red outlines flag shortages, and goods nodes show stock, output and route imports and exports. New goods and recipes appear in it automatically.
+
 ### Tributaries (`src/vassals.js`)
 - **Forming:**
   - **Submission:** a tribe at war demands it (`offer 'vassal'`). The AI demands it after 5+ turns of war at 2× the enemy's power. A target accepts below 45% of the demander's power (60% for appeasers), or when it has lost 40% of its peak cities and is below 75%.
@@ -214,7 +217,7 @@ Peoples are separate from polities (`src/culture.js`), as in CK3, and names neve
 - **Colours:** founding peoples take palette pairs. Offshoots get a 15–40° hue shift of the parent's fill, kept as far as possible from every other living people, plus their own border colour. Tribes wear their people's colours.
 - **Map modes** (M): Terrain, Political, Culture (each people's colour; thick stripes show a people under foreign rule; thin lines show own people on foreign land), Specialty (unclaimed land shows what it would become), and Unrest. **Labels** (L, or the checkbox) name connected regions on every non-terrain mode.
 - **Tribes screen:** sortable, with Peak cities, Founded and Fell columns, plus a **Peoples** table (word for "people", origin, cities, rulers).
-- **Histomap:** each turn's power share, drawn as a classic Histomap with rebellions beside their parent. It's reachable from the Tribes screen, the leave dialog and the victory screen.
+- **Histomap:** each turn's power share, drawn as a classic Histomap. Rebellions sit beside their parent and tributaries beside their usual overlord. Periods of vassalage are striped in the overlord's colour. It's reachable from the Tribes screen, the leave dialog and the victory screen.
 
 ### Combat
 Attack and defense forces are scaled by HP and terrain or city defense, and the formula is deterministic. Defenders that survive and are in range retaliate.

@@ -2572,7 +2572,9 @@ class Game {
     this.history = this.history || [];
     const pw = {};
     for (const p of this.players) if (p.alive) { const v = this.power(p.id); if (v > 0) pw[p.id] = Math.round(v * 10) / 10; }
-    this.history.push({ t: this.turn, pw });
+    const lord = {};
+    for (const p of this.players) if (p.alive && this.overlordOf?.(p.id) != null) lord[p.id] = this.overlordOf(p.id);
+    this.history.push({ t: this.turn, pw, lord });
     // remember who has met whom, so fallen tribes stay identifiable in the records
     for (const h of this.players) {
       if (!h.human || !h.alive) continue;
@@ -4903,6 +4905,7 @@ function initInput() {
     else if (e.key === 't' || e.key === 'T') showTech();
     else if (e.key === 'd' || e.key === 'D') showDiplomacy();
     else if (e.key === 'g' || e.key === 'G') showGoods();
+    else if (e.key === 'p' || e.key === 'P') showChains();
     else if (e.key === 'l' || e.key === 'L') { $('mapLabels').checked = !$('mapLabels').checked; R.showLabels = $('mapLabels').checked; R.dirty = true; }
     else if (e.key === 'm' || e.key === 'M') { const o = [...$('mapMode').options].map(x => x.value); setMapMode(o[(o.indexOf(R.mapMode) + 1) % o.length]); }
     else if (e.key === 's' || e.key === 'S') { const u = selUnit(); if (u && u.type === 'settler') doSettle(u); }
@@ -5526,7 +5529,7 @@ function showGoods() {
   const pid = R.viewer, pl = game.players[pid];
   const st = game.stock(pid), prod = game.production(pid), need = { ...game.supplyNeed(pid) }, lost = game.stranded(pid), cap = game.stockCap(pid);
   for (const gk of Object.keys(GROUPS)) if (need[gk]) { const m = game.preferredMember(pid, gk); need[m] = (need[m] || 0) + need[gk]; }
-  let h = `<h2>Strategic goods</h2><p class="dim">Goods come from deposits worked by improvements (at most 2 of a good per city, doubled by its specialty building) and flow into one national stockpile (cap ${cap}: 8 + 2 per city), but only from cities connected to your capital. They are spent to train advanced units and raise buildings, and every 4 units that needed a good keep consuming 1 per turn as supply. Cities of level 3+ <b>eat</b> food (level − 2 each). Hungry cities stop growing and grow restless, and cut-off cities eat only what they grow. Cities of level 4+ take one of each <b>luxury</b> (cloth, spice), largest first, and each calms them by 1. Cities of level 6+ with none grumble.</p>`;
+  let h = `<h2>Strategic goods <button id="btnChains" style="float:right;margin-right:40px;font-size:13px">Production chains (P)</button></h2><p class="dim">Goods come from deposits worked by improvements (at most 2 of a good per city, doubled by its specialty building) and flow into one national stockpile (cap ${cap}: 8 + 2 per city), but only from cities connected to your capital. They are spent to train advanced units and raise buildings, and every 4 units that needed a good keep consuming 1 per turn as supply. Cities of level 3+ <b>eat</b> food (level − 2 each). Hungry cities stop growing and grow restless, and cut-off cities eat only what they grow. Cities of level 4+ take one of each <b>luxury</b> (cloth, spice), largest first, and each calms them by 1. Cities of level 6+ with none grumble.</p>`;
   h += `<table class="tribes"><tr><th>Good</th><th>Stock</th><th>Produced</th><th>Made / used</th><th>Army supply</th><th>Cities eat</th><th>Stranded</th><th>Comes from</th><th>Used by</th></tr>`;
   for (const k of GOOD_KEYS) {
     const G = STRATEGIC[k];
@@ -5546,6 +5549,118 @@ function showGoods() {
   h += `</table><p class="dim">* uses any metal: iron first, then bronze.${game.has(pid, 'ironworking') ? '' : ' Iron ore deposits yield nothing until you know Iron Working.'}</p><p>Last turn's trade: ${GOOD_KEYS.filter(k => flows[k]).map(k => `${STRATEGIC[k].name} +${flows[k].in}/−${flows[k].out}`).join(', ') || 'none'}.</p><p class="dim">⚠ = cut off from the capital. Specialty buildings double goods in their city: ${Object.entries(GOOD_DOUBLER).map(([b, ks]) => `${BUILDINGS[b].name} → ${ks.map(k => STRATEGIC[k].name.toLowerCase()).join(' & ')}`).join(', ')}.</p>
   <h3>Production chains</h3>${Object.entries(RECIPES).map(([prod, R]) => `<p><b>${STRATEGIC[prod].name}</b> = ${Object.entries(R.inputs).map(([k, q]) => `${q} ${STRATEGIC[k].name.toLowerCase()}`).join(' + ')}, made at a ${BUILDINGS[R.building].name} (up to ${R.rate}/turn each, in connected cities). Your capacity: ${game.workshops(pid)[prod] || 0}/turn. Last turn: made ${pl.lastMade?.[prod] || 0}. Raw inputs are only kept in reserve if you have a workshop to feed; otherwise they are sold along trade routes.</p>`).join('')}`;
   openModal(h);
+  $('btnChains').onclick = showChains;
+}
+
+// ------------------------------------------------------------ production chains
+// A live diagram built from the data: raw goods -> workshops -> products -> what consumes them.
+// Edge width shows last turn's flow; red outlines mark shortages.
+function chainModel(pid) {
+  const pl = game.players[pid];
+  const produced = new Set(Object.keys(RECIPES));
+  const raw = GOOD_KEYS.filter(k => !produced.has(k));
+  const shops = Object.entries(RECIPES).map(([prod, R]) => ({ id: 'w:' + prod, prod, R }));
+  const prods = Object.keys(RECIPES);
+  // consumers, grouped by the good (or group) they need
+  const cons = [], edges = [];
+  const sn = game.supplyNeed(pid);
+  const unitsBy = {};
+  for (const U of Object.values(UNITS)) for (const k of Object.keys(U.needs || {})) (unitsBy[k] ||= []).push(U.name);
+  for (const [k, names] of Object.entries(unitsBy)) {
+    const id = 'u:' + k;
+    cons.push({ id, title: `Units needing ${GROUPS[k] ? 'metal' : STRATEGIC[k].name.toLowerCase()}`, sub: `${pl.unsupplied?.[k] ? 'SHORT · ' : ''}supply ${sn[k] || 0}/turn · ${names.join(', ')}`, short: !!pl.unsupplied?.[k] });
+    const from = GROUPS[k] || [k];
+    for (const m of from) edges.push({ from: 'g:' + m, to: id, flow: GROUPS[k] ? (game.preferredMember(pid, k) === m ? sn[k] || 0 : 0) : sn[k] || 0, color: STRATEGIC[m].color, alt: GROUPS[k] && game.preferredMember(pid, k) !== m });
+  }
+  const bldBy = {};
+  for (const B of [...Object.values(BUILDINGS), ...Object.values(WONDERS)]) for (const k of Object.keys(B.needs || {})) (bldBy[k] ||= []).push(B.name);
+  if (Object.keys(bldBy).length) {
+    cons.push({ id: 'b', title: 'Construction', sub: 'one-off costs: ' + Object.keys(bldBy).map(k => STRATEGIC[k].name.toLowerCase()).join(', ') });
+    for (const k of Object.keys(bldBy)) edges.push({ from: 'g:' + k, to: 'b', flow: 0, color: STRATEGIC[k].color, dashed: true });
+  }
+  const fd = game.goodDemand(pid, 'food') - (sn.food || 0);
+  const hungry = game.cities.filter(c => c.owner === pid && c.hunger > 0.3).length;
+  cons.push({ id: 'c:food', title: 'Cities: food', sub: `eat ${pl.lastEaten || 0} of ${fd} wanted${hungry ? ` — ${hungry} hungry` : ''}`, short: hungry > 0 });
+  edges.push({ from: 'g:food', to: 'c:food', flow: pl.lastEaten || 0, color: STRATEGIC.food.color });
+  const big = game.cities.filter(c => c.owner === pid && c.level >= 4).length;
+  const served = game.cities.filter(c => c.owner === pid && c.lux?.length).length;
+  cons.push({ id: 'c:lux', title: 'Cities: luxuries', sub: `${served} of ${big} large cities served` });
+  for (const k of LUXURIES) edges.push({ from: 'g:' + k, to: 'c:lux', flow: pl.lastLux?.[k] || 0, color: STRATEGIC[k].color });
+  for (const sp of shops) {
+    for (const k of Object.keys(sp.R.inputs)) edges.push({ from: 'g:' + k, to: sp.id, flow: pl.lastUsed?.[k] || 0, color: STRATEGIC[k].color });
+    edges.push({ from: sp.id, to: 'g:' + sp.prod, flow: pl.lastMade?.[sp.prod] || 0, color: STRATEGIC[sp.prod].color });
+  }
+  return { raw, shops, prods, cons, edges };
+}
+
+function fit(t, n) { n = Math.floor(n); return t.length > n ? t.slice(0, n - 1) + '…' : t; }
+
+function showChains() {
+  if (!game) return;
+  const pid = R.viewer, pl = game.players[pid];
+  const M = chainModel(pid);
+  const st = game.stock(pid), prod = pl.lastProd || {};
+  const flows = {};
+  for (const r of game.routesOf(pid)) {
+    const inc = r.a === pid ? r.last?.ba : r.last?.ab, out = r.a === pid ? r.last?.ab : r.last?.ba;
+    for (const [k, n] of Object.entries(inc || {})) (flows[k] ||= { in: 0, out: 0 }).in += n;
+    for (const [k, n] of Object.entries(out || {})) (flows[k] ||= { in: 0, out: 0 }).out += n;
+  }
+  const W = 1040, NH = 50, GAP = 10, X = [10, 300, 520, 770], NW = [210, 170, 190, 260];
+  const pos = {};
+  const place = (col, ids) => ids.forEach((id, k) => { pos[id] = { x: X[col], y: 40 + k * (NH + GAP), w: NW[col] }; });
+  place(0, M.raw.map(k => 'g:' + k));
+  // workshops and products line up with their first input
+  const used = new Set();
+  M.shops.forEach((sp, k) => {
+    const firstIn = Object.keys(sp.R.inputs)[0];
+    let y = pos['g:' + firstIn]?.y ?? 40 + k * (NH + GAP);
+    while (used.has(y)) y += NH + GAP;
+    used.add(y);
+    pos[sp.id] = { x: X[1], y, w: NW[1] };
+    pos['g:' + sp.prod] = { x: X[2], y, w: NW[2] };
+  });
+  place(3, M.cons.map(c => c.id));
+  const H = Math.max(...Object.values(pos).map(p => p.y)) + NH + 20;
+  const goodNode = (k) => {
+    const G = STRATEGIC[k], f = flows[k];
+    const net = (prod[k] || 0) + (pl.lastMade?.[k] || 0);
+    const short = pl.unsupplied?.[k] || (game.goodDemand(pid, k) > net && st[k] < game.goodDemand(pid, k));
+    return { title: G.name, sub: `stock ${st[k]} · +${net}/turn${f ? ` · trade +${f.in}/−${f.out}` : ''}`, color: G.color, short };
+  };
+  let svg = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;background:#0e1620;border-radius:8px;font-family:system-ui,sans-serif">`;
+  svg += [['Raw goods', 0], ['Workshops', 1], ['Products', 2], ['Uses', 3]].map(([t, c]) => `<text x="${X[c]}" y="22" fill="#8a96a8" font-size="13" font-weight="700">${t}</text>`).join('');
+  // edges under nodes
+  for (const e of M.edges) {
+    const a = pos[e.from], b = pos[e.to];
+    if (!a || !b) continue;
+    const x1 = a.x + a.w, y1 = a.y + NH / 2, x2 = b.x, y2 = b.y + NH / 2, mx = (x1 + x2) / 2;
+    const w = e.flow ? 2 + Math.min(9, e.flow * 1.3) : 1.5;
+    svg += `<path d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}" fill="none" stroke="${e.color}" stroke-width="${w}" stroke-opacity="${e.flow ? 0.85 : 0.35}" ${e.dashed || e.alt ? 'stroke-dasharray="5 4"' : ''}/>`;
+    if (e.flow) svg += `<text x="${mx}" y="${(y1 + y2) / 2 - 4}" fill="#e8e6df" font-size="11" text-anchor="middle" stroke="#0e1620" stroke-width="3" paint-order="stroke">${e.flow}</text>`;
+  }
+  const node = (id, n) => {
+    const p = pos[id];
+    if (!p) return '';
+    return `<g><rect x="${p.x}" y="${p.y}" width="${p.w}" height="${NH}" rx="7" fill="#1a2635" stroke="${n.short ? '#ff5a40' : '#3a4a60'}" stroke-width="${n.short ? 2.5 : 1}"/>`
+      + (n.color ? `<rect x="${p.x}" y="${p.y}" width="7" height="${NH}" rx="3" fill="${n.color}"/>` : '')
+      + `<text x="${p.x + 14}" y="${p.y + 20}" fill="#fff" font-size="13" font-weight="700">${esc(fit(n.title, (p.w - 20) / 7.8))}</text>`
+      + `<text x="${p.x + 14}" y="${p.y + 38}" fill="${n.short ? '#ff9a80' : '#9aa6b8'}" font-size="11"><title>${esc(n.sub)}</title>${esc(fit(n.sub, (p.w - 20) / 5.9))}</text></g>`;
+  };
+  for (const k of M.raw) svg += node('g:' + k, goodNode(k));
+  for (const sp of M.shops) {
+    const n = game.cities.filter(c => c.owner === pid && c.buildings.includes(sp.R.building)).length;
+    const cap = game.workshops(pid)[sp.prod] || 0;
+    svg += node(sp.id, { title: BUILDINGS[sp.R.building].name, sub: `${n} built · capacity ${cap}/turn`, short: n > 0 && !cap });
+    svg += node('g:' + sp.prod, goodNode(sp.prod));
+  }
+  for (const c of M.cons) svg += node(c.id, c);
+  svg += `</svg>`;
+  let h = `<h2>Production chains <span class="dim">— ${esc(pl.name)}, last turn</span></h2>`;
+  h += `<p class="dim">Lines run from raw goods through workshops to what uses them; thickness and numbers show last turn's flow. Dashed lines are one-off costs or a fallback (bronze stands in for iron). Red outlines mark shortages. Trade figures are what moved along your routes.</p>${svg}`;
+  h += `<p><button id="btnBackGoods">Goods table (G)</button></p>`;
+  openModal(h);
+  $('btnBackGoods').onclick = showGoods;
 }
 
 // ------------------------------------------------------------ histomap
@@ -5554,10 +5669,29 @@ function showGoods() {
 // Rebellions are drawn next to the tribe they broke from.
 function histomapOrder() {
   const kids = {}, order = [];
-  for (const p of game.players) if (p.rebel && p.rebelFrom != null) (kids[p.rebelFrom] ||= []).push(p.id);
+  // rebellions sit beside the tribe they rose against; tributaries beside their usual overlord
+  const lordCount = {};
+  for (const row of game.history || []) for (const [v, o] of Object.entries(row.lord || {})) ((lordCount[v] ||= {})[o] = (lordCount[v][o] || 0) + 1);
+  const parentOf = {};
+  for (const p of game.players) {
+    if (p.rebel && p.rebelFrom != null) parentOf[p.id] = p.rebelFrom;
+    else if (lordCount[p.id]) parentOf[p.id] = +Object.entries(lordCount[p.id]).sort((a, b) => b[1] - a[1])[0][0];
+  }
+  // avoid cycles (a vassal that later ruled its overlord)
+  for (const id of Object.keys(parentOf)) { let x = parentOf[id], guard = 0; while (x != null && guard++ < 50) { if (x == id) { delete parentOf[id]; break; } x = parentOf[x]; } }
+  for (const [c, par] of Object.entries(parentOf)) (kids[par] ||= []).push(+c);
   const visit = (id) => { order.push(id); for (const k of kids[id] || []) visit(k); };
-  for (const p of game.players) if (!(p.rebel && p.rebelFrom != null)) visit(p.id);
+  for (const p of game.players) if (parentOf[p.id] == null) visit(p.id);
   return order;
+}
+
+function histoHatch(ctx, color) {
+  const c = document.createElement('canvas');
+  c.width = c.height = 8;
+  const x = c.getContext('2d');
+  x.strokeStyle = color; x.lineWidth = 2.4;
+  x.beginPath(); for (const o of [-8, 0, 8]) { x.moveTo(o, 8); x.lineTo(o + 8, 0); } x.stroke();
+  return ctx.createPattern(c, 'repeat');
 }
 
 function drawHistomap(cv) {
@@ -5594,6 +5728,17 @@ function drawHistomap(cv) {
     ctx.fillStyle = game.players[id].color; ctx.fill();
     ctx.strokeStyle = game.players[id].color2 || 'rgba(0,0,0,0.55)'; ctx.lineWidth = 1.2; ctx.stroke();
   }
+  // tributary periods: the vassal's stream is striped in its overlord's colour
+  for (let k = 0; k < hist.length - 1; k++) {
+    for (const [v, o] of Object.entries(hist[k].lord || {})) {
+      const e = edges[v];
+      if (!e || !e[k] || !e[k + 1] || !game.players[o]) continue;
+      ctx.beginPath();
+      ctx.moveTo(e[k][0], y(k)); ctx.lineTo(e[k][1], y(k)); ctx.lineTo(e[k + 1][1], y(k + 1)); ctx.lineTo(e[k + 1][0], y(k + 1));
+      ctx.closePath();
+      ctx.fillStyle = histoHatch(ctx, game.players[o].color); ctx.fill();
+    }
+  }
   // time axis
   ctx.font = '11px sans-serif'; ctx.textAlign = 'right';
   const step = hist.length > 120 ? 20 : 10;
@@ -5623,7 +5768,7 @@ function drawHistomap(cv) {
 }
 
 function histomapHTML() {
-  return `<canvas id="histo" style="width:100%;height:480px;border-radius:8px"></canvas><p class="dim">Time flows downward. Each stream's width is that tribe's share of world power (cities, city levels, armies). Rebellions appear beside the tribe they rose against.</p>`;
+  return `<canvas id="histo" style="width:100%;height:480px;border-radius:8px"></canvas><p class="dim">Time flows downward. Each stream's width is that tribe's share of world power (cities, city levels, armies). Rebellions appear beside the tribe they rose against, and tributaries beside their overlord. A stream striped in another tribe's colour was that tribe's vassal at the time.</p>`;
 }
 
 function showHistomap(fromWin) {
@@ -5721,7 +5866,7 @@ function showHelp() {
   <h3>Tributaries</h3>
   <p>Instead of conquering a beaten enemy, <b>demand its submission</b>, or ask a stronger neighbour for <b>protection</b> when you are outmatched. A tributary keeps its cities, its people and its own unrest. It pays its overlord 25% of its gold income, ships surplus goods the overlord lacks along a raidable tribute route, and follows its overlord's wars and peace; the two share vision and passage. <b>Liberty desire</b> builds from distance, a foreign overlord, tribute and an overlord too weak to inspire awe, and eases with kinship and shared enemies. At 100 the vassal breaks free. An overlord can release a vassal, or <b>annex</b> it peacefully if their peoples are related, or after 30 turns of low liberty desire. An overlord whose only remaining rivals are its own vassals wins by conquest.</p>
   <h3>Strategic goods</h3>
-  <p>Copper, tin, horses, timber and stone come from <b>deposits</b>: a Mine on a copper or tin deposit (the two metals lie in different regions), a Pasture on a horse herd, a Lumber Camp in a forest, a Quarry on hills. Each yields 1 per turn into your national stockpile, but only if its city is <b>connected</b> to your capital through land that isn't hostile or blocked by enemies. Advanced units and many buildings <b>require</b> goods, e.g. a Swordsman needs 1 bronze and Walls need 2 stone. Basic units and buildings never do. Armies also need <b>supply</b>: every 4 units that needed a good consume 1 of it per turn. Unsupplied units fight weaker and don't heal. Deposits are scarce and regional, so they're worth settling, conquering, raiding and protecting. <b>Bronze</b> is made from 1 copper + 1 tin at a Bronze Workshop, and trades at a markup. Press <b>G</b> for details.</p>
+  <p>Copper, tin, horses, timber and stone come from <b>deposits</b>: a Mine on a copper or tin deposit (the two metals lie in different regions), a Pasture on a horse herd, a Lumber Camp in a forest, a Quarry on hills. Each yields 1 per turn into your national stockpile, but only if its city is <b>connected</b> to your capital through land that isn't hostile or blocked by enemies. Advanced units and many buildings <b>require</b> goods, e.g. a Swordsman needs 1 bronze and Walls need 2 stone. Basic units and buildings never do. Armies also need <b>supply</b>: every 4 units that needed a good consume 1 of it per turn. Unsupplied units fight weaker and don't heal. Deposits are scarce and regional, so they're worth settling, conquering, raiding and protecting. <b>Bronze</b> is made from 1 copper + 1 tin at a Bronze Workshop, and trades at a markup. Press <b>G</b> for details, or <b>P</b> for the production-chain diagram.</p>
   <h3>The iron age</h3>
   <p><b>Iron Working</b> makes iron ore minable: it's common between the copper and tin regions, and lies in marsh bogs (Bog Iron Pit). A <b>Bloomery</b> smelts 1 iron ore with 1 timber (charcoal) into 1 iron. Every unit that needed bronze now takes any <b>metal</b>, iron first, so tin loses its grip and forests gain one. Iron alone arms the <b>Legionary</b>.</p>
   <h3>Food & luxuries</h3>
