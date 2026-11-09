@@ -10,6 +10,7 @@ import { diplomacyMethods } from './diplomacy.js';
 import { economyMethods } from './economy.js';
 import { tradeMethods } from './trade.js';
 import { vassalMethods } from './vassals.js';
+import { upkeepMethods } from './upkeep.js';
 import { ROOTS, LAND_BASE, joinName, combining, cleanBase, pickColors, offshootColors } from './culture.js';
 
 const INTEGRATION_TURNS = 10;
@@ -107,9 +108,13 @@ export class Game {
   // ------------------------------------------------------------ helpers
   idx(c, r) { return r * this.W + c; }
   cr(i) { return [i % this.W, (i / this.W) | 0]; }
+  // neighbour lists never change: build them once (this is the hottest call in the game)
   neighbors(i) {
-    const [c, r] = this.cr(i);
-    return neighborsOf(c, r, this.W, this.H).map(([nc, nr]) => nr * this.W + nc);
+    if (!this._nb) {
+      this._nb = new Array(this.W * this.H);
+      for (let k = 0; k < this._nb.length; k++) { const [c, r] = this.cr(k); this._nb[k] = neighborsOf(c, r, this.W, this.H).map(([nc, nr]) => nr * this.W + nc); }
+    }
+    return this._nb[i];
   }
   dist(a, b) { const [c1, r1] = this.cr(a); const [c2, r2] = this.cr(b); return hexDist(c1, r1, c2, r2); }
   within(i, rad) {
@@ -969,7 +974,8 @@ export class Game {
     for (const p of this.players) if (p.alive) { const v = this.power(p.id); if (v > 0) pw[p.id] = Math.round(v * 10) / 10; }
     const lord = {};
     for (const p of this.players) if (p.alive && this.overlordOf?.(p.id) != null) lord[p.id] = this.overlordOf(p.id);
-    this.history.push({ t: this.turn, pw, lord });
+    const dark = this.players.filter(p => p.alive && p.darkAge).map(p => p.id);
+    this.history.push({ t: this.turn, pw, lord, dark });
     // remember who has met whom, so fallen tribes stay identifiable in the records
     for (const h of this.players) {
       if (!h.human || !h.alive) continue;
@@ -1046,7 +1052,7 @@ export class Game {
   techPrice(pid, t) {
     const n = this.cities.filter(c => c.owner === pid).length;
     const tier = TECHS[t].tier;
-    return Math.round(KNOWLEDGE_PRICE * (1 + 0.3 * (tier - 1)) * techCost(tier, n, false, this.hasWonder(pid, 'sunpyramid')));
+    return Math.round(KNOWLEDGE_PRICE * (1 + 0.3 * (tier - 1)) * techCost(tier, n, false, this.hasWonder(pid, 'sunpyramid')) * this.rediscoveryFactor(pid, t));
   }
   // Knowledge per turn, with its sources: cities, Shrines and Markets, and ideas carried by
   // trade (more from unrelated peoples). Philosophy amplifies it; vassals pass a quarter upward.
@@ -1082,6 +1088,7 @@ export class Game {
     if (!chk.ok) return chk;
     const pl = this.players[pid];
     pl.knowledge -= chk.cost;
+    if (pl.forgotten?.includes(t)) { pl.forgotten = pl.forgotten.filter(x => x !== t); this.addLog(`${pl.name} rediscovers ${TECHS[t].name}.`, pid); }
     pl.techs.push(t);
     this.addLog(`${pl.name} learned ${TECHS[t].name}`, pid);
     return { ok: true };
@@ -1126,8 +1133,10 @@ export class Game {
     }
     if (u.type === 'settler' && false) return Infinity;
     if (T.water) {
-      if (T.deep && !this.has(pid, 'navigation')) return Infinity;
-      if (!this.has(pid, 'sailing')) return Infinity;
+      // units already at sea when their realm forgot seafaring may still sail home
+      const lost = (t) => this.isWater(from) && this.players[pid].forgotten?.includes(t);
+      if (T.deep && !this.has(pid, 'navigation') && !lost('navigation')) return Infinity;
+      if (!this.has(pid, 'sailing') && !lost('sailing')) return Infinity;
       // embarking ends movement unless already at sea or coastal homeland
       if (!this.isWater(from) && this.players[pid].home !== 'coastal') return 99;
       return 1;
@@ -1539,6 +1548,7 @@ export class Game {
     this.collectGoods(pl.id);
     pl.lastKnowledge = this.knowledgeRate(pl.id).total;
     pl.knowledge = (pl.knowledge || 0) + pl.lastKnowledge;
+    this.upkeepTick(pl.id);
     const inc = this.income(pl.id);
     pl.gold += inc;
     this.payTribute(pl.id, inc);
@@ -1703,4 +1713,4 @@ export class Game {
   }
 }
 
-Object.assign(Game.prototype, diplomacyMethods, economyMethods, tradeMethods, vassalMethods);
+Object.assign(Game.prototype, diplomacyMethods, economyMethods, tradeMethods, vassalMethods, upkeepMethods);

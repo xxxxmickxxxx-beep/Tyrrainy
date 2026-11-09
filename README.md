@@ -153,6 +153,14 @@ Research is paid in **knowledge** (✦), not gold. This is phase 1 of the gold-r
 - **Costs:** `2.2 × (1 + 0.3×(tier−1)) × techCost`, so costs still rise with city count, and higher tiers cost proportionally more. This is calibrated so the AI tech pace matches the old gold-based curve: about 4 techs by turn 20, 8–9 by 40, 12–13 by 60, 15–16 by 80.
 - **Effects:** wealth no longer turns directly into technology, and contact and trade speed learning.
 
+### Technology upkeep & dark ages (`src/upkeep.js`; game option, on by default)
+- **Upkeep:** each known tech costs 1/2/3/4 knowledge per turn by tier. It's halved if a trade partner, vassal or overlord knows the tech, and cut a further 25% if any tribe at peace with you does: contact keeps ideas alive.
+- **Buffer and decline:** the knowledge stock is capped at 30 + 2× the price of your dearest tech. When it runs dry, **decline** accumulates the shortfall; at 10 a tech must be forgotten. Humans choose (with a 3-turn grace before the least-used fades); the AI drops its least-used leaf. You can also let a tech fade voluntarily from the tech screen.
+- **What can be lost:** only leaf techs (nothing known depends on them), so the most advanced knowledge goes first. Existing units, buildings and improvements keep working; you just can't make new things that need the lost tech. Units at sea when Sailing or Navigation is lost may still sail home.
+- **Rediscovery** costs 50%, or 25% if a trade partner, vassal or overlord knows the tech.
+- **Dark Ages:** two losses within 10 turns start a Dark Age, logged and shown as a darkened stretch in the Histomap. It lifts after 15 turns without further losses.
+- **In sims:** upkeep runs at 20–35% of a healthy realm's knowledge income. Forgetting falls almost entirely on young 1–2 city rebellions that inherited an empire's tech tree (about 25–40 lost techs and 4–5 dark ages per 140-turn large game), while healthy realms keep their knowledge.
+
 ### Strategic goods (`src/economy.js`)
 Goods are rival and come from places. Infinite goods shared freely made "ally with everyone" the dominant strategy, so they were replaced.
 - **Deposits:** a Mine on a copper or tin deposit gives that metal, a Pasture on a horse herd gives horses, a Lumber Camp gives timber, and a Quarry on hills gives stone.

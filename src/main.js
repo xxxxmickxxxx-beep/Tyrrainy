@@ -46,6 +46,7 @@ function startNew(watch) {
     humans: watch ? 0 : Math.min(+$('optHumans').value, +$('optPlayers').value),
     turnLimit: +$('optTurns').value,
     rebelControl: watch ? 'ai' : $('optRebels').value,
+    techUpkeep: $('optUpkeep').value !== 'off',
     seed: $('optSeed').value.trim() || undefined,
   };
   const g = Game.create(opts);
@@ -188,6 +189,20 @@ function stepGoto(u) {
   if (u.idx === u.goto) u.goto = null;
 }
 
+function forgetOptions(pid) {
+  return game.forgettable(pid).map(t => ({ t, up: game.techUpkeepOf(pid, t), use: game.techUse(pid, t) })).sort((a, b) => a.use - b.use || b.up - a.up);
+}
+function showForget(pl) {
+  const opts = forgetOptions(pl.id);
+  const left = 3 - (game.turn - pl.mustForget.since);
+  let h = `<h2>Learning is in decline</h2><p>Your scholars can't sustain everything ${esc(pl.name)} knows. Choose one technology to let go. Only knowledge nothing else depends on can be dropped. What you've already built keeps working; you just can't make new things that need it. A forgotten tech is cheaper to relearn (50%, or 25% if a trade partner knows it). ${left > 0 ? `If you don't choose within ${left} turn${left > 1 ? 's' : ''}, the least-used one fades on its own.` : ''}</p><div class="opts" style="display:grid;grid-template-columns:1fr 1fr;gap:6px">`;
+  for (const o of opts) h += `<button data-forget="${o.t}">${TECHS[o.t].name}<small>saves ${o.up.toFixed(1)} ✦/turn · ${o.use ? 'in use' : 'unused'}</small></button>`;
+  h += `</div><p><button id="btnLater">Decide later</button></p>`;
+  openModal(h);
+  $('modalBody').querySelectorAll('[data-forget]').forEach(b => b.onclick = () => { game.forgetTech(pl.id, b.dataset.forget, true); closeModal(); refreshAll(); setTimeout(() => showOffers(pl), 50); });
+  $('btnLater').onclick = () => { closeModal(); setTimeout(() => showOffers(pl), 50); };
+}
+
 function showOffers(pl) {
   const o = (game.offers || []).find(x => x.to === pl.id);
   if (!o) return;
@@ -208,7 +223,7 @@ function showOffers(pl) {
 
 function focusTurn(pl) {
   sel = null;
-  setTimeout(() => showOffers(pl), 300);
+  setTimeout(() => { if (pl.mustForget) showForget(pl); else showOffers(pl); }, 300);
   for (const u of game.units.filter(u => u.owner === pl.id && u.goto != null)) stepGoto(u);
   const cap = game.cities.find(c => c.owner === pl.id && c.capital) || game.cities.find(c => c.owner === pl.id);
   if (game.turn === 1 || !R._centered?.[pl.id]) {
@@ -483,7 +498,9 @@ function updateTopbar() {
   const pl = game.players[R.viewer];
   $('goodsBar').innerHTML = goodsBarHTML(pl.id);
   $('know').textContent = Math.floor(pl.knowledge || 0);
-  $('knowRate').textContent = `(+${(pl.lastKnowledge ?? game.knowledgeRate(pl.id).total).toFixed(1)})`;
+  const kNet = (pl.lastKnowledge ?? game.knowledgeRate(pl.id).total) - game.techUpkeep(pl.id);
+  $('knowRate').textContent = `(${kNet >= 0 ? '+' : ''}${kNet.toFixed(1)}${pl.decline > 0 ? `, decline ${Math.round(pl.decline)}/10` : ''}${pl.darkAge ? ', DARK AGE' : ''})`;
+  $('knowRate').style.color = pl.darkAge || pl.decline > 0 ? '#ff8a70' : '';
   $('tribeChip').style.background = pl.color;
   $('tribeChip').style.borderColor = pl.color2 || '#111';
   $('tribeName').textContent = pl.name;
@@ -736,6 +753,10 @@ function showTech() {
   const pl = game.players[pid];
   const kr = game.knowledgeRate(pid);
   let h = `<h2>Technology <span class="dim">— ✦ ${Math.floor(pl.knowledge || 0)} knowledge, +${kr.total.toFixed(1)}/turn. Costs grow with tier and with your number of cities.</span></h2>`;
+  if (game.upkeepOn()) {
+    const up = game.techUpkeep(pid);
+    h += `<p class="dim">Upkeep: <b>−${up.toFixed(1)} ✦/turn</b> for what you know (tiers cost 1/2/3/4; halved if a trade partner, vassal or overlord knows the tech, −25% more if any tribe at peace with you does). Stock is capped at ${Math.floor(game.knowledgeCap(pid))}. When it runs dry, <b>decline</b> builds${pl.decline ? ` (now ${Math.round(pl.decline)}/10)` : ''}; at 10 a technology is lost.${pl.darkAge ? ` <b style="color:#ff8a70">${esc(pl.name)} is in a Dark Age (since turn ${pl.darkAge.since}).</b>` : ''}</p>`;
+  }
   h += `<p class="dim">Knowledge comes from: ${kr.parts.map(([n, v]) => `${esc(n)} ${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(1)}`).join(', ') || 'nothing yet'}. Research no longer costs gold. Trade routes carry ideas, more so between unrelated peoples.</p><div class="techtree">`;
   for (let tier = 1; tier <= 4; tier++) {
     h += `<div class="col"><h4>Tier ${tier}</h4>`;
@@ -744,12 +765,18 @@ function showTech() {
       const known = pl.techs.includes(k);
       const avail = !known && T.req.every(r => pl.techs.includes(r));
       const cost = game.techPrice(pid, k);
-      h += `<div class="tech ${known ? 'known' : avail ? 'avail' : 'locked'}" data-tech="${k}"><b>${T.name}</b>${known ? ' ✓' : `<span class="cost">✦${cost}</span>`}<br>${T.desc}${T.req.length ? `<br><span class="dim">needs ${T.req.map(r => TECHS[r].name).join(', ')}</span>` : ''}</div>`;
+      h += `<div class="tech ${known ? 'known' : avail ? 'avail' : 'locked'}" data-tech="${k}"><b>${T.name}</b>${known ? ` ✓${game.upkeepOn() ? ` <span class="dim">−${game.techUpkeepOf(pid, k).toFixed(1)}/turn</span>${game.forgettable(pid).includes(k) ? ` <button data-forgetk="${k}" style="padding:0 5px;font-size:11px;float:right">Forget</button>` : ''}` : ''}` : `<span class="cost">✦${cost}</span>${pl.forgotten?.includes(k) ? ' <span class="dim">(forgotten)</span>' : ''}`}<br>${T.desc}${T.req.length ? `<br><span class="dim">needs ${T.req.map(r => TECHS[r].name).join(', ')}</span>` : ''}</div>`;
     }
     h += `</div>`;
   }
   h += `</div>`;
   openModal(h);
+  $('modalBody').querySelectorAll('[data-forgetk]').forEach(b => b.onclick = (e) => {
+    e.stopPropagation();
+    if (!myTurn()) return;
+    if (!confirm(`Let the knowledge of ${TECHS[b.dataset.forgetk].name} fade to save upkeep?`)) return;
+    const r = game.forgetTech(pid, b.dataset.forgetk); if (!r.ok) toast(r.why); refreshAll(); showTech();
+  });
   $('modalBody').querySelectorAll('.tech.avail').forEach(el => el.onclick = () => {
     if (!myTurn()) { toast('Not your turn'); return; }
     const r = game.research(pid, el.dataset.tech);
@@ -1137,6 +1164,17 @@ function drawHistomap(cv) {
     ctx.fillStyle = game.players[id].color; ctx.fill();
     ctx.strokeStyle = game.players[id].color2 || 'rgba(0,0,0,0.55)'; ctx.lineWidth = 1.2; ctx.stroke();
   }
+  // dark ages: a grey veil over the stream
+  for (let k = 0; k < hist.length - 1; k++) {
+    for (const id of hist[k].dark || []) {
+      const e = edges[id];
+      if (!e || !e[k] || !e[k + 1]) continue;
+      ctx.beginPath();
+      ctx.moveTo(e[k][0], y(k)); ctx.lineTo(e[k][1], y(k)); ctx.lineTo(e[k + 1][1], y(k + 1)); ctx.lineTo(e[k + 1][0], y(k + 1));
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(20,24,30,0.55)'; ctx.fill();
+    }
+  }
   // tributary periods: the vassal's stream is striped in its overlord's colour
   for (let k = 0; k < hist.length - 1; k++) {
     for (const [v, o] of Object.entries(hist[k].lord || {})) {
@@ -1177,7 +1215,7 @@ function drawHistomap(cv) {
 }
 
 function histomapHTML() {
-  return `<canvas id="histo" style="width:100%;height:480px;border-radius:8px"></canvas><p class="dim">Time flows downward. Each stream's width is that tribe's share of world power (cities, city levels, armies). Rebellions appear beside the tribe they rose against, and tributaries beside their overlord. A stream striped in another tribe's colour was that tribe's vassal at the time.</p>`;
+  return `<canvas id="histo" style="width:100%;height:480px;border-radius:8px"></canvas><p class="dim">Time flows downward. Each stream's width is that tribe's share of world power (cities, city levels, armies). Rebellions appear beside the tribe they rose against, and tributaries beside their overlord. A stream striped in another tribe's colour was that tribe's vassal at the time; a darkened stretch is a Dark Age.</p>`;
 }
 
 function showHistomap(fromWin) {
@@ -1226,6 +1264,8 @@ function showHelp() {
   <li>Your unit cap is the sum of (city level + 1). Each city feeds 2 units for free; every extra unit costs 1 gold of upkeep per turn.</li></ul>
   <h3>Knowledge</h3>
   <p>Research is paid in <b>knowledge</b> (✦), not gold. Each city gives 0.5 + 0.5 per level, the capital +1, each Shrine and Market +2, and each active trade route +1 (+2 with an unrelated people: ideas travel with goods). Philosophy adds 25%. Vassals pass a quarter of theirs to their overlord. Tech costs rise with tier and with your number of cities.</p>
+  <h3>Technology upkeep & dark ages</h3>
+  <p>(Game option, on by default.) Everything you know costs knowledge every turn: 1, 2, 3 or 4 per tech by tier. Upkeep halves if a trade partner, vassal or overlord also knows it, and drops a further 25% if any tribe at peace with you does: <b>contact keeps ideas alive, isolation is expensive</b>. Your knowledge stock is the buffer. When it runs dry, decline builds; at 10 you must let a technology go, and you choose which. Only knowledge nothing else depends on can be lost, so the most advanced goes first. What you've built keeps working. Forgotten techs are cheaper to relearn. Two losses within 10 turns bring on a <b>Dark Age</b>, which lifts after 15 turns without further losses. You may also let a tech fade on purpose from the tech screen.</p>
   <h3>Unrest</h3>
   <p>Every city feels <b>pressure</b>:</p>
   <ul><li>a sprawling realm (+1 per 2 cities past 4);</li>
