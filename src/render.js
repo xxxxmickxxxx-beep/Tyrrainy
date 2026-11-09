@@ -163,6 +163,25 @@ export class Renderer {
         ctx.fillRect(x - S * 0.3, y + S * 0.15, S * 0.6, S * 0.07);
       }
     }
+    // roads: lines between neighbouring road tiles (cities count as road)
+    if (terrainMode || this.mapMode === 'political') {
+      ctx.strokeStyle = this.mapMode === 'political' ? 'rgba(255,255,255,0.35)' : '#9a7448';
+      ctx.lineWidth = Math.max(1.5, S * 0.13); ctx.lineCap = 'round';
+      ctx.beginPath();
+      for (const i of list) {
+        if (explored && !explored[i]) continue;
+        if (!g.isRoad(i)) continue;
+        const [x, y] = this.tileCenter(i);
+        for (const n of g.neighbors(i)) {
+          // each segment once, and only where at least one end is a real road (not city to city)
+          if (n < i || !g.isRoad(n) || !(g.tiles[i].road || g.tiles[n].road)) continue;
+          if (explored && !explored[n]) continue;
+          const [x2, y2] = this.tileCenter(n);
+          ctx.moveTo(x, y); ctx.lineTo(x2, y2);
+        }
+      }
+      ctx.stroke();
+    }
     // borders
     for (const i of list) {
       if (explored && !explored[i]) continue;

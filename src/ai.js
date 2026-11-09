@@ -96,6 +96,7 @@ export function runAI(g, pid) {
 
   // ---------------- spending
   spend(g, pid, prof);
+  projectsAct(g, pid);
 }
 
 // ---------------- diplomacy
@@ -495,9 +496,29 @@ function upgradeAct(g, pid) {
     if (!opts.length) continue;
     const c = g.cityAt(u.idx);
     if (!c || c.owner !== pid) continue;
-    if (!atWar && (c.labor || 0) < g.laborCap(c) * 0.6) continue;
+    if (!atWar && (c.labor || 0) < g.laborCap(c) * 0.35) continue;
     for (const to of opts.slice().reverse()) if (g.canUpgrade(u, to).ok) { g.upgrade(u, to); break; }
   }
+}
+
+// Labor left after spending: join cities by road, drill threatened garrisons, and turn what
+// would otherwise overflow into knowledge.
+function projectsAct(g, pid) {
+  const cities = g.cities.filter(c => c.owner === pid).sort((a, b) => b.level - a.level);
+  let roads = 1 + Math.floor(cities.length / 3);
+  const pl = g.players[pid];
+  const wasHurry = pl.allowHurry; pl.allowHurry = false; // projects use banked labor only
+  for (const c of cities) {
+    if (roads <= 0) break;
+    if ((c.labor || 0) < g.laborCap(c) * 0.4) continue;
+    const plan = g.roadPlan(c);
+    if (plan && g.buildRoad(pid, plan.next).ok) roads--;
+  }
+  for (const c of cities) {
+    if (enemiesNear(g, pid, c.idx, 4) > 0 && g.canDrill(c).ok) g.drill(c);
+    if ((c.labor || 0) >= g.laborCap(c) - g.laborRate(c)) g.scholars(c); // about to overflow
+  }
+  pl.allowHurry = wasHurry;
 }
 
 function spend(g, pid, prof) {
@@ -540,7 +561,11 @@ function spend(g, pid, prof) {
       // festivals are a gamble: only take long odds when revolt is imminent
       const pc = g.canPlacate(c);
       const urgent = cur + Math.max(0, un.net) >= REVOLT_AT - 1;
-      if (pc.ok && cur + Math.max(0, un.net) >= REVOLT_AT - 3 && (pc.risk < 0.35 || urgent && pc.risk < 0.5)) { g.placate(c); acted = true; break; }
+      if (pc.ok && cur + Math.max(0, un.net) >= REVOLT_AT - 3 && (pc.risk < 0.35 || urgent && pc.risk < 0.5)) {
+        // prefer public games paid in labor; fall back to gold
+        if (g.canPlacate(c, 'labor').ok && !g.canPlacate(c, 'labor').work.hurried) g.placate(c, 'labor'); else g.placate(c);
+        acted = true; break;
+      }
       const t = c.subsidy || 0;
       if (t < SUBSIDIES.length - 1 && un.net > 0 && (cur >= 4 || urgent)) {
         const extra = SUBSIDIES[t + 1].cost - SUBSIDIES[t].cost;

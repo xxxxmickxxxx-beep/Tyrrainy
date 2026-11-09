@@ -43,7 +43,7 @@ for (let k = 0; k < games; k++) {
   const goods = g.contenders().map(p => `${p.name.slice(0, 8)}:${Object.entries(g.stock(p.id)).map(([k, v]) => k.slice(0, 2) + v).join(' ')}`).join(' | ');
   const units = {}; for (const u of g.units) units[u.type] = (units[u.type] || 0) + 1;
   console.log(`  stockpiles: ${goods}`);
-  console.log(`  upgrades ${st.upgrades || 0}`);
+  console.log(`  upgrades ${st.upgrades || 0}, road tiles ${g.tiles.filter(t => t.road).length}, cities at labor cap ${g.cities.filter(c => (c.labor || 0) >= g.laborCap(c) - 0.5).length}/${g.cities.length}`);
   console.log(`  unit mix: ${Object.entries(units).sort((a, b) => b[1] - a[1]).map(([k, v]) => k + ':' + v).join(' ')}`);
   console.log(`  diplomacy events: war ${st.war || 0}, peace ${st.peace || 0}, alliance ${st.alliance || 0}, routes opened ${st.route || 0} (active ${(g.routes || []).length}), raids ${st.raids || 0}, vassalages ${st.vassal || 0}, annexed ${st.annex || 0}, independence ${st.independence || 0} (vassals now ${g.contenders().filter(p => g.isVassal(p.id)).length}) | final relations among met pairs: ${JSON.stringify(rel)}`);
   const known = g.contenders().filter(p => !p.rebel).map(p => p.techs.length);

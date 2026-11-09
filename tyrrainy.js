@@ -1367,7 +1367,7 @@ const tradeMethods = {
           if (tl.city >= 0) continue; // through land, not through foreign cities
         }
         if (o >= 0 && (o === a || o === b) && this.atWar(a, b)) continue;
-        const step = T.water ? 0.8 : tl.t === 'mountain' ? 3 : (tl.t === 'forest' || tl.t === 'hills' || tl.t === 'marsh') ? 1.5 : 1;
+        const step = this.isRoad(n) && this.isRoad(cur) ? 0.4 : T.water ? 0.8 : tl.t === 'mountain' ? 3 : (tl.t === 'forest' || tl.t === 'hills' || tl.t === 'marsh') ? 1.5 : 1;
         const nd = d + step;
         if (nd < dist[n]) { dist[n] = nd; prev[n] = cur; open.push([nd, n]); }
       }
@@ -1378,7 +1378,8 @@ const tradeMethods = {
     path.reverse();
     const transit = new Set();
     for (const t of path) { const o = this.tiles[t].owner; if (o >= 0 && o !== a && o !== b) transit.add(o); }
-    return { path, len: path.length - 1, transit: [...transit] };
+    // upkeep follows the effort of the journey: roads and sea lanes are cheap
+    return { path, len: path.length - 1, effort: dist[end], transit: [...transit] };
   },
   routeUpkeep(len) { return Math.ceil(len / 8); },
 
@@ -1437,7 +1438,7 @@ const tradeMethods = {
       r.last = { ab: {}, ba: {}, raided: null, blocked: !p, gold: { [r.a]: 0, [r.b]: 0 }, tolls: {} };
       if (!p) continue;
       r.path = p.path; r.transit = p.transit;
-      const up = this.routeUpkeep(p.len);
+      const up = this.routeUpkeep(p.effort ?? p.len);
       for (const pid of [r.a, r.b]) { this.players[pid].gold = Math.max(0, this.players[pid].gold - up); r.last.gold[pid] -= up; }
       for (const [from, to, rec] of [[r.a, r.b, r.last.ab], [r.b, r.a, r.last.ba]]) {
         let cap = ROUTE_CAP;
@@ -1747,8 +1748,145 @@ const upkeepMethods = {
   },
 };
 
+// ---- src/projects.js ----
+// Roads and repeatable city projects: things worth making once a city has built everything.
+// Mixed into Game.prototype.
+//
+// Roads: any land tile in your territory (or next to your road network / a city of yours) can
+// carry a road, paid in labor by your nearest city. Moving from road to road costs 1/2 (cities
+// count as road), for anyone, enemies included. Trade routes prefer roads and cost less upkeep
+// along them.
+//
+// Projects (repeatable, paid in the city's labor):
+//   Public games — a festival paid in labor instead of gold (same effect and riot risk).
+//   Scholars     — turn spare labor into knowledge, 4 : 1.
+//   Drill        — make the unit garrisoned in the city a veteran.
+
+
+const SCHOLAR_RATE = 4; // labor per knowledge
+const DRILL_COST = 8;
+
+const projectMethods = {
+  isRoad(i) { const t = this.tiles[i]; return !!t.road || t.city >= 0; },
+  roadCost(i) {
+    const t = this.tiles[i].t;
+    return t === 'mountain' ? 4 : (t === 'forest' || t === 'hills' || t === 'marsh') ? 3 : 2;
+  },
+  // the city that would pay for a road on tile i: the owning city, or your nearest within 4
+  roadCity(pid, i) {
+    const tl = this.tiles[i];
+    if (tl.owner === pid && tl.ownerCity != null) return this.cityById(tl.ownerCity);
+    let best = null, bd = 5;
+    for (const c of this.cities) if (c.owner === pid) { const d = this.dist(c.idx, i); if (d < bd) { bd = d; best = c; } }
+    return best;
+  },
+  canBuildRoad(pid, i) {
+    const tl = this.tiles[i];
+    if (TERRAIN[tl.t].water) return { ok: false, why: 'No roads on water' };
+    if (this.isRoad(i)) return { ok: false, why: 'Already a road' };
+    if (tl.t === 'mountain' && !this.has(pid, 'climbing')) return { ok: false, why: 'Requires Climbing' };
+    if (tl.owner >= 0 && tl.owner !== pid) return { ok: false, why: 'Foreign land' };
+    if (tl.owner < 0 && !this.neighbors(i).some(n => this.isRoad(n) && (this.tiles[n].owner === pid || this.cityAt(n)?.owner === pid))) return { ok: false, why: 'Must extend your own road network' };
+    const u = this.unitAt(i);
+    if (u && u.owner !== pid && this.atWar(u.owner, pid)) return { ok: false, why: 'Enemy on the tile' };
+    const city = this.roadCity(pid, i);
+    if (!city) return { ok: false, why: 'No city of yours close enough' };
+    const w = this.workCheck(city, this.roadCost(i));
+    if (!w.ok) return w;
+    return { ...w, city };
+  },
+  buildRoad(pid, i) {
+    const chk = this.canBuildRoad(pid, i);
+    if (!chk.ok) return chk;
+    this.payWork(chk.city, chk);
+    this.tiles[i].road = true;
+    this._moves = (this._moves || 0) + 1;
+    this.emit('road', { pid, idx: i });
+    return { ok: true };
+  },
+  // Next tile to build on the cheapest path from `city` to the nearest of the owner's cities not
+  // yet joined to it by road. Returns null when the city's road links are complete.
+  roadPlan(city, maxDist = 7) {
+    const pid = city.owner;
+    const targets = this.cities.filter(c => c.owner === pid && c !== city && this.dist(c.idx, city.idx) <= maxDist)
+      .sort((a, b) => this.dist(a.idx, city.idx) - this.dist(b.idx, city.idx));
+    for (const t of targets) {
+      const path = this.roadPath(pid, city.idx, t.idx);
+      if (!path) continue;
+      const missing = path.filter(i => !this.isRoad(i));
+      if (!missing.length) continue; // already joined
+      // build outward from our end so the network stays connected
+      return { next: missing[0], target: t, left: missing.length };
+    }
+    return null;
+  },
+  // cheapest land path over own or unclaimed tiles, where existing road is cheap
+  roadPath(pid, from, to) {
+    const N = this.tiles.length;
+    const dist = new Float32Array(N).fill(Infinity), prev = new Int32Array(N).fill(-1);
+    dist[from] = 0;
+    const open = [[0, from]];
+    while (open.length) {
+      let bi = 0;
+      for (let k = 1; k < open.length; k++) if (open[k][0] < open[bi][0]) bi = k;
+      const [d, cur] = open[bi]; open[bi] = open[open.length - 1]; open.pop();
+      if (d > dist[cur]) continue;
+      if (cur === to) break;
+      if (d > 20) break;
+      for (const n of this.neighbors(cur)) {
+        const tl = this.tiles[n];
+        if (TERRAIN[tl.t].water) continue;
+        if (tl.owner >= 0 && tl.owner !== pid) continue;
+        if (tl.t === 'mountain' && !this.has(pid, 'climbing')) continue;
+        const nd = d + (this.isRoad(n) ? 0.3 : this.roadCost(n));
+        if (nd < dist[n]) { dist[n] = nd; prev[n] = cur; open.push([nd, n]); }
+      }
+    }
+    if (dist[to] === Infinity) return null;
+    const path = [];
+    for (let t = to; t >= 0; t = prev[t]) path.push(t);
+    return path.reverse();
+  },
+  extendRoads(city) {
+    const plan = this.roadPlan(city);
+    if (!plan) return { ok: false, why: 'This city is already joined by road to its neighbours' };
+    return this.buildRoad(city.owner, plan.next);
+  },
+
+  // ---- repeatable projects
+  canScholars(city) {
+    const have = Math.floor(city.labor || 0);
+    if (have < SCHOLAR_RATE) return { ok: false, why: `Needs at least ${SCHOLAR_RATE} labor` };
+    return { ok: true, labor: have - (have % SCHOLAR_RATE), gain: Math.floor(have / SCHOLAR_RATE) };
+  },
+  scholars(city) {
+    const chk = this.canScholars(city);
+    if (!chk.ok) return chk;
+    city.labor -= chk.labor;
+    this.players[city.owner].knowledge = (this.players[city.owner].knowledge || 0) + chk.gain;
+    return { ok: true, gain: chk.gain };
+  },
+  canDrill(city) {
+    const u = this.unitAt(city.idx);
+    if (!u || u.owner !== city.owner || u.type === 'settler') return { ok: false, why: 'No garrison to drill' };
+    if (u.vet) return { ok: false, why: 'Already veteran' };
+    const w = this.workCheck(city, DRILL_COST);
+    if (!w.ok) return w;
+    return { ...w, unit: u };
+  },
+  drill(city) {
+    const chk = this.canDrill(city);
+    if (!chk.ok) return chk;
+    this.payWork(city, chk);
+    chk.unit.vet = true; chk.unit.hp = this.maxHp(chk.unit);
+    this.addLog(`The garrison of ${city.name} has been drilled into veterans.`, city.owner, city.idx);
+    return { ok: true };
+  },
+};
+
 // ---- src/game.js ----
 // Core rules. Pure logic, no DOM — runs in the browser and in node (for sims).
+
 
 
 
@@ -2245,18 +2383,23 @@ class Game {
   // problem. Building compliance or staying content on its own restores trust.
   festivalRisk(city) { return Math.min(0.7, 0.05 + 0.12 * (city.festivals || 0)); }
   placateCost(city) { return 4 + city.level * 2 + Math.floor((city.unrest || 0) / 2); }
-  canPlacate(city) {
+  canPlacate(city, mode = 'gold') {
     if ((city.unrest || 0) <= 0 && this.unrest(city).net <= 0) return { ok: false, why: 'City is content' };
     if (city.festivalUntil != null && this.turn <= city.festivalUntil) return { ok: false, why: 'Festival under way' };
     if (city.riotUntil != null && this.turn <= city.riotUntil) return { ok: false, why: 'Still rioting after the last festival' };
     const cost = this.placateCost(city);
+    if (mode === 'labor') {
+      const w = this.workCheck(city, cost);
+      if (!w.ok) return w;
+      return { ok: true, cost, work: w, risk: this.festivalRisk(city) };
+    }
     if (this.players[city.owner].gold < cost) return { ok: false, why: `Need ${cost} gold` };
     return { ok: true, cost, risk: this.festivalRisk(city) };
   }
-  placate(city) {
-    const chk = this.canPlacate(city);
+  placate(city, mode = 'gold') {
+    const chk = this.canPlacate(city, mode);
     if (!chk.ok) return chk;
-    this.players[city.owner].gold -= chk.cost;
+    if (mode === 'labor') this.payWork(city, chk.work); else this.players[city.owner].gold -= chk.cost;
     city.festivals = (city.festivals || 0) + 1;
     city.calmStreak = 0;
     if (this.rng() < chk.risk) {
@@ -2932,6 +3075,7 @@ class Game {
     if (tl.t === 'mountain') {
       if (!this.has(pid, 'climbing') && !this.has_(u, 'mountainwalk') && home !== 'mountain') return Infinity;
       if (this.has_(u, 'mountainwalk') || home === 'mountain') return 1;
+      if (this.isRoad(i) && this.isRoad(from)) return 1;
       return 3;
     }
     let cost = T.move;
@@ -2941,6 +3085,7 @@ class Game {
     if (tl.t === 'marsh' && (this.has_(u, 'marshwalk') || this.has(pid, 'drainage'))) cost = 1;
     if ((tl.t === 'desert' || tl.t === 'steppe') && this.has_(u, 'desertwalk')) cost = 0.5;
     if (home === 'riverside' && tl.river && this.tiles[from].river) cost = Math.min(cost, 0.5);
+    if (this.isRoad(i) && this.isRoad(from)) cost = Math.min(cost, this.hasGrand?.(pid, 'royalroad') ? 1 / 3 : 0.5); // roads serve anyone
     return cost;
   }
 
@@ -3529,7 +3674,7 @@ class Game {
   }
 }
 
-Object.assign(Game.prototype, diplomacyMethods, economyMethods, tradeMethods, vassalMethods, upkeepMethods);
+Object.assign(Game.prototype, diplomacyMethods, economyMethods, tradeMethods, vassalMethods, upkeepMethods, projectMethods);
 
 // ---- src/ai.js ----
 // Computer opponents. Greedy heuristics, fast enough for 8 tribes on huge maps.
@@ -3630,6 +3775,7 @@ function runAI(g, pid) {
 
   // ---------------- spending
   spend(g, pid, prof);
+  projectsAct(g, pid);
 }
 
 // ---------------- diplomacy
@@ -4029,9 +4175,29 @@ function upgradeAct(g, pid) {
     if (!opts.length) continue;
     const c = g.cityAt(u.idx);
     if (!c || c.owner !== pid) continue;
-    if (!atWar && (c.labor || 0) < g.laborCap(c) * 0.6) continue;
+    if (!atWar && (c.labor || 0) < g.laborCap(c) * 0.35) continue;
     for (const to of opts.slice().reverse()) if (g.canUpgrade(u, to).ok) { g.upgrade(u, to); break; }
   }
+}
+
+// Labor left after spending: join cities by road, drill threatened garrisons, and turn what
+// would otherwise overflow into knowledge.
+function projectsAct(g, pid) {
+  const cities = g.cities.filter(c => c.owner === pid).sort((a, b) => b.level - a.level);
+  let roads = 1 + Math.floor(cities.length / 3);
+  const pl = g.players[pid];
+  const wasHurry = pl.allowHurry; pl.allowHurry = false; // projects use banked labor only
+  for (const c of cities) {
+    if (roads <= 0) break;
+    if ((c.labor || 0) < g.laborCap(c) * 0.4) continue;
+    const plan = g.roadPlan(c);
+    if (plan && g.buildRoad(pid, plan.next).ok) roads--;
+  }
+  for (const c of cities) {
+    if (enemiesNear(g, pid, c.idx, 4) > 0 && g.canDrill(c).ok) g.drill(c);
+    if ((c.labor || 0) >= g.laborCap(c) - g.laborRate(c)) g.scholars(c); // about to overflow
+  }
+  pl.allowHurry = wasHurry;
 }
 
 function spend(g, pid, prof) {
@@ -4074,7 +4240,11 @@ function spend(g, pid, prof) {
       // festivals are a gamble: only take long odds when revolt is imminent
       const pc = g.canPlacate(c);
       const urgent = cur + Math.max(0, un.net) >= REVOLT_AT - 1;
-      if (pc.ok && cur + Math.max(0, un.net) >= REVOLT_AT - 3 && (pc.risk < 0.35 || urgent && pc.risk < 0.5)) { g.placate(c); acted = true; break; }
+      if (pc.ok && cur + Math.max(0, un.net) >= REVOLT_AT - 3 && (pc.risk < 0.35 || urgent && pc.risk < 0.5)) {
+        // prefer public games paid in labor; fall back to gold
+        if (g.canPlacate(c, 'labor').ok && !g.canPlacate(c, 'labor').work.hurried) g.placate(c, 'labor'); else g.placate(c);
+        acted = true; break;
+      }
       const t = c.subsidy || 0;
       if (t < SUBSIDIES.length - 1 && un.net > 0 && (cur >= 4 || urgent)) {
         const extra = SUBSIDIES[t + 1].cost - SUBSIDIES[t].cost;
@@ -4333,6 +4503,25 @@ class Renderer {
         }
         ctx.fillRect(x - S * 0.3, y + S * 0.15, S * 0.6, S * 0.07);
       }
+    }
+    // roads: lines between neighbouring road tiles (cities count as road)
+    if (terrainMode || this.mapMode === 'political') {
+      ctx.strokeStyle = this.mapMode === 'political' ? 'rgba(255,255,255,0.35)' : '#9a7448';
+      ctx.lineWidth = Math.max(1.5, S * 0.13); ctx.lineCap = 'round';
+      ctx.beginPath();
+      for (const i of list) {
+        if (explored && !explored[i]) continue;
+        if (!g.isRoad(i)) continue;
+        const [x, y] = this.tileCenter(i);
+        for (const n of g.neighbors(i)) {
+          // each segment once, and only where at least one end is a real road (not city to city)
+          if (n < i || !g.isRoad(n) || !(g.tiles[i].road || g.tiles[n].road)) continue;
+          if (explored && !explored[n]) continue;
+          const [x2, y2] = this.tileCenter(n);
+          ctx.moveTo(x, y); ctx.lineTo(x2, y2);
+        }
+      }
+      ctx.stroke();
     }
     // borders
     for (const i of list) {
@@ -5544,6 +5733,15 @@ function cityPanel(c) {
       const owner = game.wonderOwner(w);
       h += `<h4>Wonder</h4><button data-act="wonder" data-k="${w}" ${chk.ok ? '' : 'disabled'} style="width:100%;text-align:left">${W.name} ${workLabel(W.cost, chk)}${W.needs ? ` <span class="needs">+ ${game.goodsText(W.needs)}</span>` : ''}<br><small>${W.desc}${chk.ok ? '' : ' — ' + esc(chk.why)}</small></button>`;
     }
+    // repeatable projects
+    const plan = game.roadPlan(c);
+    const sc = game.canScholars(c), dr = game.canDrill(c), pg = game.canPlacate(c, 'labor');
+    h += `<h4>Projects</h4><div class="opts">`;
+    h += `<button data-act="extendroads" ${plan ? '' : 'disabled'} title="${plan ? '' : 'Joined by road to its neighbours'}">Extend roads ${plan ? workLabel(game.roadCost(plan.next), game.canBuildRoad(c.owner, plan.next)) : ''}<small>${plan ? `toward ${esc(plan.target.name)}, ${plan.left} tile${plan.left > 1 ? 's' : ''} to go` : 'connected to nearby cities'}</small></button>`;
+    h += `<button data-act="scholars" ${sc.ok ? '' : 'disabled'} title="${esc(sc.why || '')}">Scholars ⚒${sc.labor || 4}<small>turn labor into ${sc.gain || 1} knowledge (4 : 1)</small></button>`;
+    h += `<button data-act="games" ${pg.ok ? '' : 'disabled'} title="${esc(pg.why || '')}">Public games ${workLabel(game.placateCost(c), pg.work || pg)}<small>a festival paid in labor (${Math.round(game.festivalRisk(c) * 100)}% riot risk)</small></button>`;
+    h += `<button data-act="drill" ${dr.ok ? '' : 'disabled'} title="${esc(dr.why || '')}">Drill garrison ${workLabel(8, dr)}<small>the unit here becomes a veteran</small></button>`;
+    h += `</div>`;
     if (c.buildings.length) h += `<div class="desc">Built: ${c.buildings.map(b => BUILDINGS[b].name).join(', ')}</div>`;
     if (c.wonders?.length) h += `<div class="desc">Wonders: <b>${c.wonders.map(w => WONDERS[w].name).join(', ')}</b></div>`;
     // workable tiles summary
@@ -5607,6 +5805,10 @@ function tilePanel(i) {
     const kd = Math.min(3, KIN_DIST[game.players[pid].home][spec]);
     h += `<div class="desc">A city here would be <b>${SPECIALTY[spec].name}</b> ${affBadge(kd)}</div>`;
   }
+  if (myTurn() && !TERRAIN[tl.t].water && !game.isRoad(i) && (tl.owner === pid || tl.owner < 0)) {
+    const chk = game.canBuildRoad(pid, i);
+    if (chk.ok || tl.owner === pid) h += `<h4>Road</h4><button data-act="road" ${chk.ok ? '' : 'disabled'} title="${esc(chk.why || '')}">Build road ${workLabel(game.roadCost(i), chk)}<small>${chk.ok ? `paid by ${esc(chk.city.name)}; road-to-road moves cost ½ for anyone, and trade routes along roads are cheaper` : esc(chk.why)}</small></button>`;
+  } else if (game.tiles[i].road) h += `<div class="desc">A road runs here.</div>`;
   if (tl.damaged) {
     h += `<div class="desc" style="color:#ff8a70">This ${IMPROVEMENTS[tl.imp].name} is damaged and yields nothing. Another round of pillage will destroy it, and the city will lose the pop it gave.</div>`;
     if (tl.owner === pid && myTurn()) {
@@ -5634,6 +5836,11 @@ function panelAction(d) {
   let res = { ok: true };
   if (d.act === 'settle') { doSettle(selUnit()); return; }
   if (d.act === 'disband') { const u = selUnit(); if (u && confirm('Disband this unit?')) { game.disband(u); deselect(); refreshAll(); } return; }
+  if (d.act === 'road') { const r = game.buildRoad(R.viewer, sel.idx); if (!r.ok) toast(r.why); refreshAll(); return; }
+  if (d.act === 'extendroads') { const r = game.extendRoads(game.cityById(sel.id)); if (!r.ok) toast(r.why); refreshAll(); return; }
+  if (d.act === 'scholars') { const r = game.scholars(game.cityById(sel.id)); toast(r.ok ? `+${r.gain} knowledge` : r.why); refreshAll(); return; }
+  if (d.act === 'drill') { const r = game.drill(game.cityById(sel.id)); if (!r.ok) toast(r.why); refreshAll(); return; }
+  if (d.act === 'games') { const r = game.placate(game.cityById(sel.id), 'labor'); toast(r.ok ? (r.backfired ? 'The games turned into a riot!' : 'Public games held: unrest quelled') : r.why); refreshAll(); return; }
   if (d.act === 'upgrade') { const u = selUnit(); const r = game.upgrade(u, d.k); if (!r.ok) toast(r.why); else select({ kind: 'unit', id: u.id, idx: u.idx }); refreshAll(); return; }
   if (d.act === 'cancelgoto') { const u = selUnit(); if (u) u.goto = null; select(sel); return; }
   if (d.act === 'train') {
@@ -6183,6 +6390,9 @@ function showHelp() {
   <h3>Labor</h3>
   <p>Every city has its own <b>labor</b> (⚒): 2 + its level per turn, +1 for the capital, +1 with its specialty building, halved while hungry, and it stores up to 4 turns' worth. Units, buildings and wonders cost the city's labor, tile improvements and repairs cost the labor of the city that works the tile, and nothing is built with gold any more. A city may complete as many projects in a turn as its labor allows. If it's short, you can <b>hurry</b> the work: each missing labor point costs 3 gold, and each project already completed in that city this turn makes hurrying 50% dearer. The button shows the price. So big, developed cities build armies and wonders, frontier towns develop slowly unless you pay, and losing a core city costs you making power, not just taxes.</p>
   <h3>Upgrades</h3><p>A unit standing in one of your cities can be re-equipped as a later type (Warrior → Swordsman → Legionary, Defender → Legionary, Rider → Knight, Slinger → Archer). It costs the difference in labor (at least 2) from that city plus the new type's goods, keeps veteran status and its share of health, and uses the unit's turn.</p>
+  <h3>Roads & projects</h3>
+  <p><b>Roads</b>: any land tile in your territory, or next to your road network, can carry a road, paid in labor (2, or 3 in rough land, 4 on mountains) by your nearest city. Moving from road to road costs half a move for <i>anyone</i>, enemies included, and trade routes along roads are cheaper to run. A city's <b>Extend roads</b> project builds the next stretch toward its nearest unconnected neighbour.</p>
+  <p>Other <b>projects</b> soak up spare labor: <b>Scholars</b> turn labor into knowledge (4 : 1), <b>Public games</b> are a festival paid in labor rather than gold, and <b>Drill</b> makes the city's garrison veteran.</p>
   <h3>Knowledge</h3>
   <p>Research is paid in <b>knowledge</b> (✦), not gold. Each city gives 0.5 + 0.5 per level, the capital +1, each Shrine and Market +2, and each active trade route +1 (+2 with an unrelated people: ideas travel with goods). Philosophy adds 25%. Vassals pass a quarter of theirs to their overlord. Tech costs rise with tier and with your number of cities.</p>
   <h3>Technology upkeep & dark ages</h3>

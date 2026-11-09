@@ -165,6 +165,20 @@ If the city survives that roll, the **conqueror chooses** whether to keep it or 
 - **How:** a unit in one of its own cities pays max(2, cost difference + 2) labor from that city plus the new type's goods. It keeps veteran status and its health ratio, and the upgrade uses its turn.
 - **AI:** upgrades units standing in cities whose labor is above 60% of the cap, or any time it's at war. In sims that's about 35 upgrades per large 120-turn game, limited mostly by iron.
 
+### Roads & projects (`src/projects.js`)
+- **Roads:**
+  - **Where:** any land tile in your territory, or unclaimed land next to your road network.
+  - **Cost:** 2 labor (3 on forest/hills/marsh, 4 on mountains with Climbing), paid by the owning city or your nearest city within 4 tiles.
+  - **Effect:** moving from road to road costs ½ for *anyone*, enemies included, and cities count as road. Trade routes prefer roads, and route upkeep now follows the journey's effort, so roads and sea lanes are cheap.
+  - **Building them:** the AI joins each city to its neighbours within 7 tiles using banked labor. Humans use a tile's **Build road** or a city's **Extend roads** project.
+- **Repeatable projects:**
+  - **Scholars:** spare labor → knowledge at 4 : 1.
+  - **Public games:** a festival paid in labor, with the same effect and riot risk.
+  - **Drill:** 8 labor makes the city's garrison a veteran.
+
+  The AI turns labor that's about to overflow into knowledge and drills threatened garrisons.
+- **Sims (8 tribes, large map, 120 turns):** about 450–500 road tiles per game, zero cities idling at their labor cap (was 60–70%), gold medians under about 250, and the tech pace a little faster late (about 19 by turn 120).
+
 ### Knowledge (research)
 Research is paid in **knowledge** (✦), not gold. This is phase 1 of the gold-role pass (`docs/GOLD-PROPOSAL.md`).
 - **Sources per turn:** each city 0.5 + 0.5×level, capital +1, each Shrine and Market +2, each active trade route +1 (+2 with an unrelated people). Philosophy multiplies the total by 1.25. Vassals pass 25% to their overlord.

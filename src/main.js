@@ -651,6 +651,15 @@ function cityPanel(c) {
       const owner = game.wonderOwner(w);
       h += `<h4>Wonder</h4><button data-act="wonder" data-k="${w}" ${chk.ok ? '' : 'disabled'} style="width:100%;text-align:left">${W.name} ${workLabel(W.cost, chk)}${W.needs ? ` <span class="needs">+ ${game.goodsText(W.needs)}</span>` : ''}<br><small>${W.desc}${chk.ok ? '' : ' — ' + esc(chk.why)}</small></button>`;
     }
+    // repeatable projects
+    const plan = game.roadPlan(c);
+    const sc = game.canScholars(c), dr = game.canDrill(c), pg = game.canPlacate(c, 'labor');
+    h += `<h4>Projects</h4><div class="opts">`;
+    h += `<button data-act="extendroads" ${plan ? '' : 'disabled'} title="${plan ? '' : 'Joined by road to its neighbours'}">Extend roads ${plan ? workLabel(game.roadCost(plan.next), game.canBuildRoad(c.owner, plan.next)) : ''}<small>${plan ? `toward ${esc(plan.target.name)}, ${plan.left} tile${plan.left > 1 ? 's' : ''} to go` : 'connected to nearby cities'}</small></button>`;
+    h += `<button data-act="scholars" ${sc.ok ? '' : 'disabled'} title="${esc(sc.why || '')}">Scholars ⚒${sc.labor || 4}<small>turn labor into ${sc.gain || 1} knowledge (4 : 1)</small></button>`;
+    h += `<button data-act="games" ${pg.ok ? '' : 'disabled'} title="${esc(pg.why || '')}">Public games ${workLabel(game.placateCost(c), pg.work || pg)}<small>a festival paid in labor (${Math.round(game.festivalRisk(c) * 100)}% riot risk)</small></button>`;
+    h += `<button data-act="drill" ${dr.ok ? '' : 'disabled'} title="${esc(dr.why || '')}">Drill garrison ${workLabel(8, dr)}<small>the unit here becomes a veteran</small></button>`;
+    h += `</div>`;
     if (c.buildings.length) h += `<div class="desc">Built: ${c.buildings.map(b => BUILDINGS[b].name).join(', ')}</div>`;
     if (c.wonders?.length) h += `<div class="desc">Wonders: <b>${c.wonders.map(w => WONDERS[w].name).join(', ')}</b></div>`;
     // workable tiles summary
@@ -714,6 +723,10 @@ function tilePanel(i) {
     const kd = Math.min(3, KIN_DIST[game.players[pid].home][spec]);
     h += `<div class="desc">A city here would be <b>${SPECIALTY[spec].name}</b> ${affBadge(kd)}</div>`;
   }
+  if (myTurn() && !TERRAIN[tl.t].water && !game.isRoad(i) && (tl.owner === pid || tl.owner < 0)) {
+    const chk = game.canBuildRoad(pid, i);
+    if (chk.ok || tl.owner === pid) h += `<h4>Road</h4><button data-act="road" ${chk.ok ? '' : 'disabled'} title="${esc(chk.why || '')}">Build road ${workLabel(game.roadCost(i), chk)}<small>${chk.ok ? `paid by ${esc(chk.city.name)}; road-to-road moves cost ½ for anyone, and trade routes along roads are cheaper` : esc(chk.why)}</small></button>`;
+  } else if (game.tiles[i].road) h += `<div class="desc">A road runs here.</div>`;
   if (tl.damaged) {
     h += `<div class="desc" style="color:#ff8a70">This ${IMPROVEMENTS[tl.imp].name} is damaged and yields nothing. Another round of pillage will destroy it, and the city will lose the pop it gave.</div>`;
     if (tl.owner === pid && myTurn()) {
@@ -741,6 +754,11 @@ function panelAction(d) {
   let res = { ok: true };
   if (d.act === 'settle') { doSettle(selUnit()); return; }
   if (d.act === 'disband') { const u = selUnit(); if (u && confirm('Disband this unit?')) { game.disband(u); deselect(); refreshAll(); } return; }
+  if (d.act === 'road') { const r = game.buildRoad(R.viewer, sel.idx); if (!r.ok) toast(r.why); refreshAll(); return; }
+  if (d.act === 'extendroads') { const r = game.extendRoads(game.cityById(sel.id)); if (!r.ok) toast(r.why); refreshAll(); return; }
+  if (d.act === 'scholars') { const r = game.scholars(game.cityById(sel.id)); toast(r.ok ? `+${r.gain} knowledge` : r.why); refreshAll(); return; }
+  if (d.act === 'drill') { const r = game.drill(game.cityById(sel.id)); if (!r.ok) toast(r.why); refreshAll(); return; }
+  if (d.act === 'games') { const r = game.placate(game.cityById(sel.id), 'labor'); toast(r.ok ? (r.backfired ? 'The games turned into a riot!' : 'Public games held: unrest quelled') : r.why); refreshAll(); return; }
   if (d.act === 'upgrade') { const u = selUnit(); const r = game.upgrade(u, d.k); if (!r.ok) toast(r.why); else select({ kind: 'unit', id: u.id, idx: u.idx }); refreshAll(); return; }
   if (d.act === 'cancelgoto') { const u = selUnit(); if (u) u.goto = null; select(sel); return; }
   if (d.act === 'train') {
@@ -1290,6 +1308,9 @@ function showHelp() {
   <h3>Labor</h3>
   <p>Every city has its own <b>labor</b> (⚒): 2 + its level per turn, +1 for the capital, +1 with its specialty building, halved while hungry, and it stores up to 4 turns' worth. Units, buildings and wonders cost the city's labor, tile improvements and repairs cost the labor of the city that works the tile, and nothing is built with gold any more. A city may complete as many projects in a turn as its labor allows. If it's short, you can <b>hurry</b> the work: each missing labor point costs 3 gold, and each project already completed in that city this turn makes hurrying 50% dearer. The button shows the price. So big, developed cities build armies and wonders, frontier towns develop slowly unless you pay, and losing a core city costs you making power, not just taxes.</p>
   <h3>Upgrades</h3><p>A unit standing in one of your cities can be re-equipped as a later type (Warrior → Swordsman → Legionary, Defender → Legionary, Rider → Knight, Slinger → Archer). It costs the difference in labor (at least 2) from that city plus the new type's goods, keeps veteran status and its share of health, and uses the unit's turn.</p>
+  <h3>Roads & projects</h3>
+  <p><b>Roads</b>: any land tile in your territory, or next to your road network, can carry a road, paid in labor (2, or 3 in rough land, 4 on mountains) by your nearest city. Moving from road to road costs half a move for <i>anyone</i>, enemies included, and trade routes along roads are cheaper to run. A city's <b>Extend roads</b> project builds the next stretch toward its nearest unconnected neighbour.</p>
+  <p>Other <b>projects</b> soak up spare labor: <b>Scholars</b> turn labor into knowledge (4 : 1), <b>Public games</b> are a festival paid in labor rather than gold, and <b>Drill</b> makes the city's garrison veteran.</p>
   <h3>Knowledge</h3>
   <p>Research is paid in <b>knowledge</b> (✦), not gold. Each city gives 0.5 + 0.5 per level, the capital +1, each Shrine and Market +2, and each active trade route +1 (+2 with an unrelated people: ideas travel with goods). Philosophy adds 25%. Vassals pass a quarter of theirs to their overlord. Tech costs rise with tier and with your number of cities.</p>
   <h3>Technology upkeep & dark ages</h3>

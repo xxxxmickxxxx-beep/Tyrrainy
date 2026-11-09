@@ -68,7 +68,7 @@ export const tradeMethods = {
           if (tl.city >= 0) continue; // through land, not through foreign cities
         }
         if (o >= 0 && (o === a || o === b) && this.atWar(a, b)) continue;
-        const step = T.water ? 0.8 : tl.t === 'mountain' ? 3 : (tl.t === 'forest' || tl.t === 'hills' || tl.t === 'marsh') ? 1.5 : 1;
+        const step = this.isRoad(n) && this.isRoad(cur) ? 0.4 : T.water ? 0.8 : tl.t === 'mountain' ? 3 : (tl.t === 'forest' || tl.t === 'hills' || tl.t === 'marsh') ? 1.5 : 1;
         const nd = d + step;
         if (nd < dist[n]) { dist[n] = nd; prev[n] = cur; open.push([nd, n]); }
       }
@@ -79,7 +79,8 @@ export const tradeMethods = {
     path.reverse();
     const transit = new Set();
     for (const t of path) { const o = this.tiles[t].owner; if (o >= 0 && o !== a && o !== b) transit.add(o); }
-    return { path, len: path.length - 1, transit: [...transit] };
+    // upkeep follows the effort of the journey: roads and sea lanes are cheap
+    return { path, len: path.length - 1, effort: dist[end], transit: [...transit] };
   },
   routeUpkeep(len) { return Math.ceil(len / 8); },
 
@@ -138,7 +139,7 @@ export const tradeMethods = {
       r.last = { ab: {}, ba: {}, raided: null, blocked: !p, gold: { [r.a]: 0, [r.b]: 0 }, tolls: {} };
       if (!p) continue;
       r.path = p.path; r.transit = p.transit;
-      const up = this.routeUpkeep(p.len);
+      const up = this.routeUpkeep(p.effort ?? p.len);
       for (const pid of [r.a, r.b]) { this.players[pid].gold = Math.max(0, this.players[pid].gold - up); r.last.gold[pid] -= up; }
       for (const [from, to, rec] of [[r.a, r.b, r.last.ab], [r.b, r.a, r.last.ba]]) {
         let cap = ROUTE_CAP;

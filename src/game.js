@@ -11,6 +11,7 @@ import { economyMethods } from './economy.js';
 import { tradeMethods } from './trade.js';
 import { vassalMethods } from './vassals.js';
 import { upkeepMethods } from './upkeep.js';
+import { projectMethods } from './projects.js';
 import { ROOTS, LAND_BASE, joinName, combining, cleanBase, pickColors, offshootColors } from './culture.js';
 
 const INTEGRATION_TURNS = 10;
@@ -498,18 +499,23 @@ export class Game {
   // problem. Building compliance or staying content on its own restores trust.
   festivalRisk(city) { return Math.min(0.7, 0.05 + 0.12 * (city.festivals || 0)); }
   placateCost(city) { return 4 + city.level * 2 + Math.floor((city.unrest || 0) / 2); }
-  canPlacate(city) {
+  canPlacate(city, mode = 'gold') {
     if ((city.unrest || 0) <= 0 && this.unrest(city).net <= 0) return { ok: false, why: 'City is content' };
     if (city.festivalUntil != null && this.turn <= city.festivalUntil) return { ok: false, why: 'Festival under way' };
     if (city.riotUntil != null && this.turn <= city.riotUntil) return { ok: false, why: 'Still rioting after the last festival' };
     const cost = this.placateCost(city);
+    if (mode === 'labor') {
+      const w = this.workCheck(city, cost);
+      if (!w.ok) return w;
+      return { ok: true, cost, work: w, risk: this.festivalRisk(city) };
+    }
     if (this.players[city.owner].gold < cost) return { ok: false, why: `Need ${cost} gold` };
     return { ok: true, cost, risk: this.festivalRisk(city) };
   }
-  placate(city) {
-    const chk = this.canPlacate(city);
+  placate(city, mode = 'gold') {
+    const chk = this.canPlacate(city, mode);
     if (!chk.ok) return chk;
-    this.players[city.owner].gold -= chk.cost;
+    if (mode === 'labor') this.payWork(city, chk.work); else this.players[city.owner].gold -= chk.cost;
     city.festivals = (city.festivals || 0) + 1;
     city.calmStreak = 0;
     if (this.rng() < chk.risk) {
@@ -1185,6 +1191,7 @@ export class Game {
     if (tl.t === 'mountain') {
       if (!this.has(pid, 'climbing') && !this.has_(u, 'mountainwalk') && home !== 'mountain') return Infinity;
       if (this.has_(u, 'mountainwalk') || home === 'mountain') return 1;
+      if (this.isRoad(i) && this.isRoad(from)) return 1;
       return 3;
     }
     let cost = T.move;
@@ -1194,6 +1201,7 @@ export class Game {
     if (tl.t === 'marsh' && (this.has_(u, 'marshwalk') || this.has(pid, 'drainage'))) cost = 1;
     if ((tl.t === 'desert' || tl.t === 'steppe') && this.has_(u, 'desertwalk')) cost = 0.5;
     if (home === 'riverside' && tl.river && this.tiles[from].river) cost = Math.min(cost, 0.5);
+    if (this.isRoad(i) && this.isRoad(from)) cost = Math.min(cost, this.hasGrand?.(pid, 'royalroad') ? 1 / 3 : 0.5); // roads serve anyone
     return cost;
   }
 
@@ -1782,4 +1790,4 @@ export class Game {
   }
 }
 
-Object.assign(Game.prototype, diplomacyMethods, economyMethods, tradeMethods, vassalMethods, upkeepMethods);
+Object.assign(Game.prototype, diplomacyMethods, economyMethods, tradeMethods, vassalMethods, upkeepMethods, projectMethods);
