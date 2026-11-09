@@ -6,10 +6,11 @@
 //  - Each turn up to ROUTE_CAP units per direction move, surplus -> deficit. The buyer pays
 //    PRICE per unit to the seller and TOLL per unit to every tribe whose land is crossed.
 //  - An enemy unit standing on the route seizes the shipment (raiding). Upkeep scales with length.
-import { TERRAIN, STRATEGIC, GOOD_KEYS } from './data.js';
+import { TERRAIN, STRATEGIC, GOOD_KEYS, INPUT_GOODS } from './data.js';
 
 export const ROUTE_CAP = 3;
-export const PRICE = { ore: 4, horses: 4, timber: 2, stone: 2 };
+// bronze trades at a markup over its inputs (copper 3 + tin 4)
+export const PRICE = { copper: 3, tin: 4, bronze: 10, horses: 4, timber: 2, stone: 2 };
 export const TOLL = 1;
 export const MAX_ROUTE_LEN = 40;
 
@@ -26,9 +27,16 @@ export const tradeMethods = {
   },
 
   // reserve: what a tribe keeps for itself before exporting; it imports up to reserve + 2
-  reserve(pid, k) { return 4 + 3 * (this.supplyNeed(pid)[k] || 0); },
+  // Raw inputs are only worth keeping with a workshop to feed: otherwise every unit is for sale.
+  reserve(pid, k) {
+    if (INPUT_GOODS.has(k)) return 2 * this.inputDemand(pid, k);
+    return 4 + 3 * (this.supplyNeed(pid)[k] || 0);
+  },
   surplus(pid, k) { return Math.max(0, this.stock(pid)[k] - this.reserve(pid, k)); },
-  deficit(pid, k) { return Math.max(0, this.reserve(pid, k) + 2 - this.stock(pid)[k]); },
+  deficit(pid, k) {
+    if (INPUT_GOODS.has(k) && !this.inputDemand(pid, k)) return 0;
+    return Math.max(0, this.reserve(pid, k) + 2 - this.stock(pid)[k]);
+  },
 
   // Cheapest path between any connected city of a and any connected city of b.
   routePath(a, b) {

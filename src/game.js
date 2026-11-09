@@ -3,7 +3,7 @@ import { neighborsOf, hexDist } from './hex.js';
 import { makeRng } from './rng.js';
 import {
   TERRAIN, SPECIALTY, KIN_DIST, AFFINITY, UNITS, EMBARKED, IMPROVEMENTS,
-  BUILDINGS, WONDERS, TECHS, TEMPERAMENTS, TRIBE_PALETTE, SUBSIDIES, SENSITIVITY, FOREIGN_PEOPLE_SENSITIVITY, techCost, TERRAIN_TO_SPECIALTY, TRIBE_NAMES, CITY_NAMES, PLAYER_COLORS,
+  BUILDINGS, WONDERS, TECHS, TEMPERAMENTS, resMatches, TRIBE_PALETTE, SUBSIDIES, SENSITIVITY, FOREIGN_PEOPLE_SENSITIVITY, techCost, TERRAIN_TO_SPECIALTY, TRIBE_NAMES, CITY_NAMES, PLAYER_COLORS,
 } from './data.js';
 import { generateMap, pickStarts, MAP_SIZES } from './mapgen.js';
 import { diplomacyMethods } from './diplomacy.js';
@@ -973,7 +973,7 @@ export class Game {
     const out = [];
     for (const [k, I] of Object.entries(IMPROVEMENTS)) {
       if (!I.terrain.includes(tl.t)) continue;
-      if (I.consume && tl.res !== I.resource) continue;
+      if (I.consume && !resMatches(I, tl.res)) continue;
       if (k === 'irrigate' && !(tl.river || tl.res === 'oasis' || this.neighbors(i).some(n => this.tiles[n].river || this.tiles[n].res === 'oasis'))) continue;
       if (k === 'gather' && tl.res !== 'fruit') continue;
       out.push(k);
@@ -992,7 +992,7 @@ export class Game {
     const tl = this.tiles[i];
     const city = this.cityById(tl.ownerCity);
     let pop = I.pop;
-    if (!I.consume && I.resource && tl.res === I.resource) pop += 1;
+    if (!I.consume && I.resource && resMatches(I, tl.res)) pop += 1;
     if (k === 'farm' && tl.river) pop += 1;
     if (city) {
       if (k === 'farm' && city.specialty === 'plains') pop += 1;
@@ -1622,6 +1622,8 @@ export class Game {
     g.rng = makeRng(1); g.rng.setState(o.rng);
     if (g.coalition == null) g.coalition = -1;
     g.history = g.history || [];
+    for (const t of g.tiles) if (t.res === 'ore') t.res = 'copper'; // ore split into copper and tin
+    for (const p of g.players) if (p.stock && p.stock.ore != null) { p.stock.bronze = (p.stock.bronze || 0) + p.stock.ore; delete p.stock.ore; }
     for (const p of g.players) if (!p.color2) [p.color, p.color2] = pickColors(g.players.filter(q => q.color2 && q.alive));
     if (!g.cultures) { // older saves: one people per tribe, ids shared with tribes
       g.cultures = g.players.map(p => ({ id: p.id, base: p.name, root: '', parent: null, influence: null, core: p.id, home: p.home, name: p.name, color: p.color, color2: p.color2, born: p.founded ?? 1 }));

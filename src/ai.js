@@ -1,5 +1,5 @@
 // Computer opponents. Greedy heuristics, fast enough for 8 tribes on huge maps.
-import { UNITS, TECHS, IMPROVEMENTS, BUILDINGS, WONDERS, KIN_DIST, TERRAIN, SPECIALTY, IMP_YIELD } from './data.js';
+import { UNITS, TECHS, IMPROVEMENTS, BUILDINGS, WONDERS, KIN_DIST, TERRAIN, SPECIALTY, impYield, INPUT_GOODS, RECIPES } from './data.js';
 import { REVOLT_AT } from './game.js';
 import { SUBSIDIES } from './data.js';
 
@@ -330,7 +330,7 @@ function siteScore(g, pid, i) {
     if (TERRAIN[tl.t].water) s += 0.4;
     else if (tl.t !== 'mountain') s += 1;
     if (tl.res) s += 1.3;
-    if (tl.res === 'ore' || tl.res === 'horses') s += 1.2; // strategic deposits draw settlers
+    if (tl.res === 'copper' || tl.res === 'tin' || tl.res === 'horses') s += 1.2; // strategic deposits draw settlers
     if (tl.river) s += 0.4;
   }
   const spec = g.specialtyAt(i);
@@ -400,7 +400,8 @@ function techValue(g, pid, t) {
 
 // How badly a tribe wants more of a good: high when its stockpile is low and it isn't producing any.
 function goodHunger(g, pid, good) {
-  const st = g.stock(pid)[good], prod = g.players[pid].lastProd?.[good] || 0;
+  if (INPUT_GOODS.has(good)) return g.inputDemand(pid, good) && g.stock(pid)[good] < g.inputDemand(pid, good) ? 1.2 : 0.1;
+  const st = g.stock(pid)[good], prod = (g.players[pid].lastProd?.[good] || 0) + (g.players[pid].lastMade?.[good] || 0);
   if (prod === 0 && st < 4) return 1.2;
   if (st < 6) return 0.6;
   return 0.15;
@@ -498,8 +499,8 @@ function spend(g, pid, prof) {
           const chk = g.canImprove(pid, t, k);
           if (!chk.ok) continue;
           let v = g.improvePop(t, k) / IMPROVEMENTS[k].cost;
-          const y = IMP_YIELD[k];
-          if (y && (!y.res || g.tiles[t].res === y.res)) v += goodHunger(g, pid, y.good) / IMPROVEMENTS[k].cost;
+          const yg = impYield(k, g.tiles[t].res);
+          if (yg) v += Math.max(goodHunger(g, pid, yg), INPUT_GOODS.has(yg) ? 0.5 : 0) / IMPROVEMENTS[k].cost; // raw metal sells even unused
           if (v > bestV) { bestV = v; bestImp = [t, k]; }
         }
       }
@@ -523,8 +524,18 @@ function spend(g, pid, prof) {
       if (c) { const k = bestMilitary(g, c, pl.gold); if (k && g.train(c, k).ok) continue; }
     }
 
-    // f) wonders, then buildings
+    // f0) processing: one workshop per recipe once we can feed it (own metal or a trade partner's)
     let built = false;
+    for (const [prod, R] of Object.entries(RECIPES)) {
+      const have = cities.filter(c => c.buildings.includes(R.building)).length;
+      const st = g.stock(pid);
+      const canFeed = Object.keys(R.inputs).some(k => st[k] > 0 || (pl.lastProd?.[k] || 0) > 0) || g.routesOf(pid).length > 0;
+      if (have >= Math.max(1, Math.ceil(cities.length / 6)) || !canFeed) continue;
+      const c = cities.filter(c => g.isConnected(c) && g.canBuild(c, R.building).ok).sort((a, b) => b.level - a.level)[0];
+      if (c) { g.build(c, R.building); built = true; break; }
+    }
+    if (built) continue;
+    // f) wonders, then buildings
     for (const c of cities) {
       for (const w of Object.keys(WONDERS)) if (g.canBuildWonder(c, w).ok) { g.buildWonder(c, w); built = true; break; }
       if (built) break;
@@ -532,6 +543,7 @@ function spend(g, pid, prof) {
     if (built) continue;
     for (const c of cities) {
       for (const b of g.buildable(c)) {
+        if (Object.values(RECIPES).some(R => R.building === b)) continue; // workshops are placed deliberately above
         if (g.canBuild(c, b).ok && pl.gold - BUILDINGS[b].cost >= 2) { g.build(c, b); built = true; break; }
       }
       if (built) break;

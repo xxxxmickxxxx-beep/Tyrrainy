@@ -1,6 +1,6 @@
 // Strategic goods: production at deposits, a capped national stockpile, connectivity to the
 // capital, and hard requirements for advanced units and buildings. Mixed into Game.prototype.
-import { TERRAIN, STRATEGIC, GOOD_KEYS, IMP_YIELD, GOOD_DOUBLER, UNITS } from './data.js';
+import { TERRAIN, STRATEGIC, GOOD_KEYS, GOOD_DOUBLER, UNITS, RECIPES, INPUT_GOODS, impYield } from './data.js';
 
 export const CITY_GOOD_CAP = 2; // per good per city, before its specialty building doubles it
 export const SUPPLY_PER = 4; // each 4 units needing a good consume 1 of it per turn
@@ -32,12 +32,11 @@ export const economyMethods = {
   // The good a tile yields this turn, or null. Damaged or enemy-held tiles yield nothing.
   tileYield(i) {
     const tl = this.tiles[i];
-    const y = IMP_YIELD[tl.imp];
-    if (!y || tl.damaged || tl.owner < 0) return null;
-    if (y.res && tl.res !== y.res) return null;
+    const good = impYield(tl.imp, tl.res);
+    if (!good || tl.damaged || tl.owner < 0) return null;
     const u = this.unitAt(i);
     if (u && u.owner !== tl.owner && this.atWar(u.owner, tl.owner)) return null;
-    return y.good;
+    return good;
   },
   cityProduction(city) {
     const out = {};
@@ -47,7 +46,7 @@ export const economyMethods = {
     }
     // a city can only work so much of one good: supply depends on how many places produce it
     for (const g in out) out[g] = Math.min(CITY_GOOD_CAP, out[g]);
-    for (const b of city.buildings) { const g = GOOD_DOUBLER[b]; if (g && out[g]) out[g] *= 2; }
+    for (const b of city.buildings) for (const g of GOOD_DOUBLER[b] || []) if (out[g]) out[g] *= 2;
     return out;
   },
 
@@ -111,14 +110,48 @@ export const economyMethods = {
     const st = this.stock(pid), prod = this.production(pid), cap = this.stockCap(pid), need = this.supplyNeed(pid);
     const was = pl.unsupplied || {};
     pl.unsupplied = {};
+    for (const k of GOOD_KEYS) st[k] += prod[k];
+    // processing: workshops in connected cities turn inputs into products
+    const made = this.process(pid);
     for (const k of GOOD_KEYS) {
-      let v = st[k] + prod[k] - (need[k] || 0);
+      let v = st[k] - (need[k] || 0);
       if (v < 0) { pl.unsupplied[k] = true; v = 0; }
       st[k] = Math.min(cap, v);
       if (pl.unsupplied[k] && !was[k]) this.addLog(`${pl.name} has run out of ${STRATEGIC[k].name.toLowerCase()}: units that need it are unsupplied.`, pid);
     }
     pl.lastProd = prod;
+    pl.lastMade = made;
     pl.lastNeed = need;
+  },
+  // Workshop capacity per product for a tribe (connected cities only).
+  workshops(pid) {
+    const out = {};
+    const conn = this.connectedCities(pid);
+    for (const [prod, R] of Object.entries(RECIPES)) {
+      const n = this.cities.filter(c => c.owner === pid && conn.has(c.id) && c.buildings.includes(R.building)).length;
+      if (n) out[prod] = n * R.rate;
+    }
+    return out;
+  },
+  process(pid) {
+    const st = this.stock(pid), made = {}, used = {};
+    for (const [prod, cap] of Object.entries(this.workshops(pid))) {
+      const R = RECIPES[prod];
+      let n = cap;
+      for (const [k, q] of Object.entries(R.inputs)) n = Math.min(n, Math.floor(st[k] / q));
+      if (n <= 0) continue;
+      for (const [k, q] of Object.entries(R.inputs)) { st[k] -= n * q; used[k] = (used[k] || 0) + n * q; }
+      st[prod] += n;
+      made[prod] = n;
+    }
+    this.players[pid].lastUsed = used;
+    return made;
+  },
+  // How much of a raw input a tribe can use per turn (0 without a workshop).
+  inputDemand(pid, k) {
+    let d = 0;
+    for (const [prod, cap] of Object.entries(this.workshops(pid))) d += cap * (RECIPES[prod].inputs[k] || 0);
+    return d;
   },
   goodsText(needs) { return Object.entries(needs || {}).map(([k, n]) => `${n} ${STRATEGIC[k].name.toLowerCase()}`).join(', '); },
   canPay(pid, needs, city) {

@@ -129,6 +129,20 @@ export function generateMap(W, H, seed, type = 'continents') {
   }
 
   // resources
+  // Metals follow a low-frequency "geology" field: copper and tin come from opposite ends of
+  // it, so the two rarely sit near each other and bronze needs trade or conquest.
+  const nMetal = makeNoise(rng.int(1e9));
+  const metal = new Float32Array(N);
+  const rocky = [];
+  for (let i = 0; i < N; i++) {
+    if (tiles[i].t !== 'hills' && tiles[i].t !== 'mountain') continue;
+    const c = i % W, r = (i / W) | 0;
+    metal[i] = nMetal((c + 0.5 * (r & 1)) * scale * 0.5, r * scale * 0.55, 2);
+    rocky.push(metal[i]);
+  }
+  rocky.sort((a, b) => a - b);
+  const copperAbove = quantile(rocky, 0.58), tinBelow = quantile(rocky, 0.25);
+  const metalAt = (i, pCopper, pTin, p) => metal[i] >= copperAbove ? (p < pCopper ? 'copper' : null) : metal[i] <= tinBelow ? (p < pTin ? 'tin' : null) : null;
   for (let i = 0; i < N; i++) {
     const tl = tiles[i];
     const p = rng();
@@ -138,8 +152,8 @@ export function generateMap(W, H, seed, type = 'continents') {
       case 'desert': tl.res = p < 0.09 ? 'oasis' : p < 0.13 ? 'fruit' : null; break;
       case 'forest': tl.res = p < 0.22 ? 'game' : null; break;
       case 'marsh': tl.res = p < 0.16 ? 'fruit' : null; break;
-      case 'hills': tl.res = p < 0.22 ? 'ore' : p < 0.28 ? 'fruit' : null; break;
-      case 'mountain': tl.res = p < 0.25 ? 'ore' : null; break;
+      case 'hills': tl.res = metalAt(i, 0.3, 0.3, p) || (p > 0.92 ? 'fruit' : null); break;
+      case 'mountain': tl.res = metalAt(i, 0.35, 0.35, p); break;
       case 'shallows': tl.res = p < 0.22 ? 'fish' : null; break;
       case 'ocean': tl.res = p < 0.04 ? 'whales' : null; break;
     }
