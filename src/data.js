@@ -285,6 +285,16 @@ export const TEMPERAMENTS = {
   steadfast:   { name: 'Steadfast',   desc: 'Slow to commit, slower to give up.', balance: [0.8, 1.1], caution: [0.8, 1.1], vengeance: [0.6, 1.0], appease: [0, 0.1], bully: [0.1, 0.3], opportunism: [0.6, 0.8], threshold: [0.25, 0.35], patience: [0.15, 0.3] },
 };
 
+// ---------------- Grand projects ----------------
+// Once per tribe. Begun in a site city (goods paid up front); any city connected to the site
+// contributes labor until it is done. The effect belongs to whoever holds the site city.
+export const GRAND = {
+  library:   { name: 'Great Library', tech: 'philosophy', labor: 120, needs: { stone: 6, cloth: 4 }, desc: '+25% knowledge; technology upkeep −25%.' },
+  royalroad: { name: 'Royal Road', tech: 'roads', labor: 90, needs: { stone: 8 }, desc: 'Road-to-road moves cost ⅓; trade route upkeep halved; +1 trade route.' },
+  arsenal:   { name: 'Grand Arsenal', tech: 'ironworking', labor: 110, needs: { iron: 6, timber: 6 }, desc: 'Units cost 1 less labor; upgrades at half price; army supply 1 per 5 units instead of 4.' },
+  granaries: { name: 'Imperial Granaries', tech: 'irrigation', labor: 100, needs: { stone: 4, timber: 4 }, desc: 'Cities eat 1 less food (level − 3).' },
+};
+
 // ---------------- Techs ----------------
 export const TECHS = {
   agriculture: { name: 'Agriculture', tier: 1, req: [], desc: 'Farms on plains & steppe.' },

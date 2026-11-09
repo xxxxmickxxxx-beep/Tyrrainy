@@ -414,6 +414,16 @@ const TEMPERAMENTS = {
   steadfast:   { name: 'Steadfast',   desc: 'Slow to commit, slower to give up.', balance: [0.8, 1.1], caution: [0.8, 1.1], vengeance: [0.6, 1.0], appease: [0, 0.1], bully: [0.1, 0.3], opportunism: [0.6, 0.8], threshold: [0.25, 0.35], patience: [0.15, 0.3] },
 };
 
+// ---------------- Grand projects ----------------
+// Once per tribe. Begun in a site city (goods paid up front); any city connected to the site
+// contributes labor until it is done. The effect belongs to whoever holds the site city.
+const GRAND = {
+  library:   { name: 'Great Library', tech: 'philosophy', labor: 120, needs: { stone: 6, cloth: 4 }, desc: '+25% knowledge; technology upkeep −25%.' },
+  royalroad: { name: 'Royal Road', tech: 'roads', labor: 90, needs: { stone: 8 }, desc: 'Road-to-road moves cost ⅓; trade route upkeep halved; +1 trade route.' },
+  arsenal:   { name: 'Grand Arsenal', tech: 'ironworking', labor: 110, needs: { iron: 6, timber: 6 }, desc: 'Units cost 1 less labor; upgrades at half price; army supply 1 per 5 units instead of 4.' },
+  granaries: { name: 'Imperial Granaries', tech: 'irrigation', labor: 100, needs: { stone: 4, timber: 4 }, desc: 'Cities eat 1 less food (level − 3).' },
+};
+
 // ---------------- Techs ----------------
 const TECHS = {
   agriculture: { name: 'Agriculture', tier: 1, req: [], desc: 'Farms on plains & steppe.' },
@@ -1080,7 +1090,8 @@ const economyMethods = {
       if (u.owner !== pid) continue;
       for (const k of Object.keys(UNITS[u.type].needs || {})) n[k] = (n[k] || 0) + 1;
     }
-    for (const k in n) n[k] = Math.ceil(n[k] / SUPPLY_PER);
+    const per = this.hasGrand?.(pid, 'arsenal') ? SUPPLY_PER + 1 : SUPPLY_PER;
+    for (const k in n) n[k] = Math.ceil(n[k] / per);
     return n;
   },
   unsupplied(u) {
@@ -1200,7 +1211,7 @@ const economyMethods = {
   // ---- sustenance: cities of level 3+ eat (level - 2) food a turn. Connected cities eat from
   // the stockpile; cut-off cities only what they grow themselves. Hungry cities stop growing
   // and grow restless.
-  foodDemand(city) { return Math.max(0, city.level - 2); },
+  foodDemand(city) { return Math.max(0, city.level - (this.hasGrand?.(city.owner, 'granaries') ? 3 : 2)); },
   feedCities(pid) {
     const st = this.stock(pid);
     const conn = this.connectedCities(pid);
@@ -1316,7 +1327,7 @@ const MAX_ROUTE_LEN = 40;
 const tradeMethods = {
   routesOf(pid) { return (this.routes || []).filter(r => r.a === pid || r.b === pid); },
   routeBetween(a, b) { return (this.routes || []).find(r => (r.a === a && r.b === b) || (r.a === b && r.b === a)) || null; },
-  routeLimit(pid) { return 1 + Math.floor(this.cities.filter(c => c.owner === pid).length / 4); },
+  routeLimit(pid) { return 1 + Math.floor(this.cities.filter(c => c.owner === pid).length / 4) + (this.hasGrand?.(pid, 'royalroad') ? 1 : 0); },
   transitClosed(c, p) { return !!this.players[c]?.closedTransit?.[p]; },
   setTransit(c, p, closed) {
     const pl = this.players[c];
@@ -1438,8 +1449,11 @@ const tradeMethods = {
       r.last = { ab: {}, ba: {}, raided: null, blocked: !p, gold: { [r.a]: 0, [r.b]: 0 }, tolls: {} };
       if (!p) continue;
       r.path = p.path; r.transit = p.transit;
-      const up = this.routeUpkeep(p.effort ?? p.len);
-      for (const pid of [r.a, r.b]) { this.players[pid].gold = Math.max(0, this.players[pid].gold - up); r.last.gold[pid] -= up; }
+      const up0 = this.routeUpkeep(p.effort ?? p.len);
+      for (const pid of [r.a, r.b]) {
+        const up = this.hasGrand?.(pid, 'royalroad') ? Math.ceil(up0 / 2) : up0;
+        this.players[pid].gold = Math.max(0, this.players[pid].gold - up); r.last.gold[pid] -= up;
+      }
       for (const [from, to, rec] of [[r.a, r.b, r.last.ab], [r.b, r.a, r.last.ba]]) {
         let cap = ROUTE_CAP;
         const goods = GOOD_KEYS.slice().sort((x, y) => this.deficit(to, y) - this.deficit(to, x));
@@ -1672,7 +1686,8 @@ const upkeepMethods = {
   techUpkeep(pid) {
     if (!this.upkeepOn()) return 0;
     const partners = this.knowledgePartners(pid);
-    return this.players[pid].techs.reduce((a, t) => a + this.techUpkeepOf(pid, t, partners), 0);
+    const total = this.players[pid].techs.reduce((a, t) => a + this.techUpkeepOf(pid, t, partners), 0);
+    return this.hasGrand?.(pid, 'library') ? total * 0.75 : total;
   },
   // libraries hold enough to buy the dearest tech twice over, no more: a buffer, not a hoard
   knowledgeCap(pid) {
@@ -1851,6 +1866,78 @@ const projectMethods = {
     const plan = this.roadPlan(city);
     if (!plan) return { ok: false, why: 'This city is already joined by road to its neighbours' };
     return this.buildRoad(city.owner, plan.next);
+  },
+
+  // ---- grand projects
+  hasGrand(pid, key) { return this.cities.some(c => c.owner === pid && c.grand?.includes(key)); },
+  // a project whose site has been lost is lost with it
+  grandTick(pid) {
+    const pl = this.players[pid];
+    for (const [key, gp] of Object.entries(pl.grandWork || {})) {
+      const site = this.cityById(gp.site);
+      if (site && site.owner === pid) continue;
+      delete pl.grandWork[key];
+      this.addLog(`${pl.name} has lost the half-built ${GRAND[key].name}${site ? ' at ' + site.name : ''}.`, pid);
+    }
+  },
+  grandInProgress(pid) {
+    const out = [];
+    for (const [key, gp] of Object.entries(this.players[pid].grandWork || {})) {
+      const site = this.cityById(gp.site);
+      if (site && site.owner === pid) out.push({ key, ...gp, siteCity: site });
+    }
+    return out;
+  },
+  canStartGrand(city, key) {
+    const G = GRAND[key], pid = city.owner, pl = this.players[pid];
+    if (this.hasGrand(pid, key)) return { ok: false, why: 'Already yours' };
+    if (pl.grandWork?.[key] && this.cityById(pl.grandWork[key].site)?.owner === pid) return { ok: false, why: 'Already under way' };
+    if (!this.has(pid, G.tech)) return { ok: false, why: 'Requires ' + TECHS[G.tech].name };
+    if (!this.isConnected(city)) return { ok: false, why: 'Site must be connected to the capital' };
+    return this.canPay(pid, G.needs, city);
+  },
+  startGrand(city, key) {
+    const chk = this.canStartGrand(city, key);
+    if (!chk.ok) return chk;
+    const pl = this.players[city.owner];
+    this.pay(pl.id, GRAND[key].needs);
+    pl.grandWork = pl.grandWork || {};
+    pl.grandWork[key] = { site: city.id, progress: 0, started: this.turn };
+    this.addLog(`${pl.name} begins the ${GRAND[key].name} at ${city.name}.`, pl.id, city.idx);
+    return { ok: true };
+  },
+  // the site can only take in so much work a turn: grand projects take several turns whatever
+  // the realm's size, so a half-built one can be fought over
+  grandIntake(site) { return 10 + 2 * site.level; },
+  grandRoom(gp, site) { return gp.turn === this.turn ? Math.max(0, this.grandIntake(site) - (gp.given || 0)) : this.grandIntake(site); },
+  // a city can give labor to a grand project if it is the site or connected to it
+  canContribute(city, key) {
+    const gp = this.players[city.owner].grandWork?.[key];
+    const site = gp && this.cityById(gp.site);
+    if (!site || site.owner !== city.owner) return { ok: false, why: 'Not under way' };
+    if (city !== site && !(this.isConnected(city) && this.isConnected(site))) return { ok: false, why: 'Not connected to the site' };
+    if ((city.labor || 0) < 1) return { ok: false, why: 'No labor' };
+    const room = this.grandRoom(gp, site);
+    if (room < 1) return { ok: false, why: `The site takes ${this.grandIntake(site)} labor a turn; full for this turn` };
+    return { ok: true, gp, site, room };
+  },
+  contribute(city, key, amount = Infinity) {
+    const chk = this.canContribute(city, key);
+    if (!chk.ok) return chk;
+    const G = GRAND[key];
+    const n = Math.min(Math.floor(city.labor), amount, chk.room, G.labor - chk.gp.progress);
+    city.labor -= n;
+    chk.gp.progress += n;
+    if (chk.gp.turn !== this.turn) { chk.gp.turn = this.turn; chk.gp.given = 0; }
+    chk.gp.given += n;
+    if (chk.gp.progress >= G.labor) {
+      const pl = this.players[city.owner];
+      chk.site.grand = [...(chk.site.grand || []), key];
+      delete pl.grandWork[key];
+      this.addLog(`${pl.name} completes the ${G.name} at ${chk.site.name}!`, pl.id, chk.site.idx);
+      this.emit('grand', { pid: pl.id, key, city: chk.site });
+    }
+    return { ok: true, given: n };
   },
 
   // ---- repeatable projects
@@ -2184,6 +2271,7 @@ class Game {
     if (U.unique && U.unique === city.specialty) cost += AFFINITY[this.affinity(city)].unitCost;
     else if (U.unique) cost += 1; // trained through an adopted tradition
     if (city.buildings.includes('stables') && U.traits?.includes('mounted')) cost -= 1;
+    if (type !== 'settler' && this.hasGrand(city.owner, 'arsenal')) cost -= 1;
     return Math.max(1, cost);
   }
 
@@ -3001,6 +3089,7 @@ class Game {
     if (ideas) parts.push(['Trade routes (ideas)', ideas]);
     let base = parts.reduce((a, x) => a + x[1], 0);
     if (this.has(pid, 'philosophy')) { parts.push(['Philosophy ×1.25', base * 0.25]); base *= 1.25; }
+    if (this.hasGrand(pid, 'library')) { parts.push(['Great Library ×1.25', base * 0.25]); base *= 1.25; }
     // tributaries pass a quarter of their learning to their overlord
     const lord = this.overlordOf?.(pid);
     if (lord != null) { parts.push(['Tribute to overlord', -base * 0.25]); base *= 0.75; }
@@ -3410,7 +3499,7 @@ class Game {
 
   // ---- upgrades: re-equip a unit standing in one of its own cities
   upgradeOptions(u) { return (UPGRADES[u.type] || []).filter(t => !UNITS[t].tech || this.has(u.owner, UNITS[t].tech)); }
-  upgradeCost(u, to) { return Math.max(2, UNITS[to].cost - UNITS[u.type].cost + 2); }
+  upgradeCost(u, to) { const c = Math.max(2, UNITS[to].cost - UNITS[u.type].cost + 2); return this.hasGrand(u.owner, 'arsenal') ? Math.ceil(c / 2) : c; }
   canUpgrade(u, to) {
     if (u.owner !== this.current) return { ok: false, why: 'Not your turn' };
     if (!this.upgradeOptions(u).includes(to)) return { ok: false, why: 'Not available' };
@@ -3510,6 +3599,7 @@ class Game {
     pl.lastKnowledge = this.knowledgeRate(pl.id).total;
     pl.knowledge = (pl.knowledge || 0) + pl.lastKnowledge;
     this.upkeepTick(pl.id);
+    this.grandTick(pl.id);
     const inc = this.income(pl.id);
     pl.gold += inc;
     this.payTribute(pl.id, inc);
@@ -4193,11 +4283,36 @@ function projectsAct(g, pid) {
     const plan = g.roadPlan(c);
     if (plan && g.buildRoad(pid, plan.next).ok) roads--;
   }
+  grandAct(g, pid, cities);
   for (const c of cities) {
     if (enemiesNear(g, pid, c.idx, 4) > 0 && g.canDrill(c).ok) g.drill(c);
     if ((c.labor || 0) >= g.laborCap(c) - g.laborRate(c)) g.scholars(c); // about to overflow
   }
   pl.allowHurry = wasHurry;
+}
+
+// Grand projects: a settled realm (4+ cities, not at war) begins one at a time in its safest big
+// city, then every connected city pours in labor above a third of its cap.
+function grandAct(g, pid, cities) {
+  if (cities.length < 4) return;
+  const pl = g.players[pid];
+  if (!g.grandInProgress(pid).length) {
+    const site = cities.filter(c => g.isConnected(c) && enemiesNear(g, pid, c.idx, 5) === 0)
+      .sort((a, b) => (b.capital ? 3 : 0) + b.level - (a.capital ? 3 : 0) - a.level)[0];
+    if (site) {
+      // what serves this realm best: food-short realms want granaries, scholars want the library
+      const pref = { granaries: (pl.lastEaten || 0) >= 4 ? 3 : 1, library: 2, royalroad: (g.routesOf(pid).length >= 2 ? 2.5 : 1.5), arsenal: g.units.filter(u => u.owner === pid).length >= 10 ? 2 : 1 };
+      const key = Object.keys(GRAND).filter(k => g.canStartGrand(site, k).ok).sort((a, b) => pref[b] - pref[a])[0];
+      if (key) g.startGrand(site, key);
+    }
+  }
+  for (const gp of g.grandInProgress(pid)) {
+    for (const c of cities) {
+      const spare = Math.floor((c.labor || 0) - g.laborCap(c) / 3);
+      if (spare > 0 && g.canContribute(c, gp.key).ok) g.contribute(c, gp.key, spare);
+      if (!pl.grandWork?.[gp.key] || g.grandRoom(pl.grandWork[gp.key], gp.siteCity) < 1) break; // done, or full this turn
+    }
+  }
 }
 
 function spend(g, pid, prof) {
@@ -5742,6 +5857,7 @@ function cityPanel(c) {
     h += `<button data-act="games" ${pg.ok ? '' : 'disabled'} title="${esc(pg.why || '')}">Public games ${workLabel(game.placateCost(c), pg.work || pg)}<small>a festival paid in labor (${Math.round(game.festivalRisk(c) * 100)}% riot risk)</small></button>`;
     h += `<button data-act="drill" ${dr.ok ? '' : 'disabled'} title="${esc(dr.why || '')}">Drill garrison ${workLabel(8, dr)}<small>the unit here becomes a veteran</small></button>`;
     h += `</div>`;
+    h += grandBlock(c);
     if (c.buildings.length) h += `<div class="desc">Built: ${c.buildings.map(b => BUILDINGS[b].name).join(', ')}</div>`;
     if (c.wonders?.length) h += `<div class="desc">Wonders: <b>${c.wonders.map(w => WONDERS[w].name).join(', ')}</b></div>`;
     // workable tiles summary
@@ -5749,6 +5865,30 @@ function cityPanel(c) {
     for (const t of game.cityTiles(c)) for (const k of game.improvementsFor(c.owner, t)) work.push(k);
     if (work.length) h += `<div class="desc">Tip: click tiles in this city's border to build improvements (${[...new Set(work)].map(k => IMPROVEMENTS[k].name).join(', ')}).</div>`;
   } else if (c.buildings.length) h += `<div class="desc">Buildings: ${c.buildings.map(b => BUILDINGS[b].name).join(', ')}</div>`;
+  return h;
+}
+
+// Grand projects: once per tribe, begun at a site, fed by every connected city's labor
+function grandBlock(c) {
+  const pid = c.owner;
+  let h = '';
+  const rows = [];
+  for (const [k, G] of Object.entries(GRAND)) {
+    const gp = game.players[pid].grandWork?.[k];
+    const here = c.grand?.includes(k);
+    if (here) { rows.push(`<div class="desc"><b>${G.name}</b> stands here. <small>${G.desc}</small></div>`); continue; }
+    if (game.hasGrand(pid, k)) continue;
+    if (gp && game.cityById(gp.site)?.owner === pid) {
+      const site = game.cityById(gp.site), chk = game.canContribute(c, k);
+      const pct = Math.round(gp.progress / G.labor * 100);
+      rows.push(`<button data-act="grandgive" data-k="${k}" ${chk.ok ? '' : 'disabled'} title="${esc(chk.why || '')}">${G.name} at ${esc(site.name)}: ${gp.progress}/${G.labor} ⚒<div style="height:5px;background:#2a3646;border-radius:3px;margin:3px 0"><div style="height:5px;width:${pct}%;background:#f0c060;border-radius:3px"></div></div><small>Give up to ${Math.min(Math.floor(c.labor || 0), game.grandRoom(gp, site))} of this city's labor (the site takes ${game.grandIntake(site)} a turn). ${G.desc}</small></button>`);
+      continue;
+    }
+    if (!game.has(pid, G.tech)) continue;
+    const chk = game.canStartGrand(c, k);
+    rows.push(`<button data-act="grandstart" data-k="${k}" ${chk.ok ? '' : 'disabled'} title="${esc(chk.why || '')}">Begin ${G.name} ⚒${G.labor} <span class="needs">+ ${game.goodsText(G.needs)}</span><small>${G.desc} Goods paid now; connected cities give labor. Whoever holds this city holds it.</small></button>`);
+  }
+  if (rows.length) h += `<h4>Grand projects</h4><div class="opts">${rows.join('')}</div>`;
   return h;
 }
 
@@ -5839,6 +5979,8 @@ function panelAction(d) {
   if (d.act === 'road') { const r = game.buildRoad(R.viewer, sel.idx); if (!r.ok) toast(r.why); refreshAll(); return; }
   if (d.act === 'extendroads') { const r = game.extendRoads(game.cityById(sel.id)); if (!r.ok) toast(r.why); refreshAll(); return; }
   if (d.act === 'scholars') { const r = game.scholars(game.cityById(sel.id)); toast(r.ok ? `+${r.gain} knowledge` : r.why); refreshAll(); return; }
+  if (d.act === 'grandstart') { const r = game.startGrand(game.cityById(sel.id), d.k); if (!r.ok) toast(r.why); refreshAll(); return; }
+  if (d.act === 'grandgive') { const r = game.contribute(game.cityById(sel.id), d.k); toast(r.ok ? `${r.given} labor given` : r.why); refreshAll(); return; }
   if (d.act === 'drill') { const r = game.drill(game.cityById(sel.id)); if (!r.ok) toast(r.why); refreshAll(); return; }
   if (d.act === 'games') { const r = game.placate(game.cityById(sel.id), 'labor'); toast(r.ok ? (r.backfired ? 'The games turned into a riot!' : 'Public games held: unrest quelled') : r.why); refreshAll(); return; }
   if (d.act === 'upgrade') { const u = selUnit(); const r = game.upgrade(u, d.k); if (!r.ok) toast(r.why); else select({ kind: 'unit', id: u.id, idx: u.idx }); refreshAll(); return; }
@@ -6393,6 +6535,12 @@ function showHelp() {
   <h3>Roads & projects</h3>
   <p><b>Roads</b>: any land tile in your territory, or next to your road network, can carry a road, paid in labor (2, or 3 in rough land, 4 on mountains) by your nearest city. Moving from road to road costs half a move for <i>anyone</i>, enemies included, and trade routes along roads are cheaper to run. A city's <b>Extend roads</b> project builds the next stretch toward its nearest unconnected neighbour.</p>
   <p>Other <b>projects</b> soak up spare labor: <b>Scholars</b> turn labor into knowledge (4 : 1), <b>Public games</b> are a festival paid in labor rather than gold, and <b>Drill</b> makes the city's garrison veteran.</p>
+  <h3>Grand projects</h3>
+  <p>Once you know the right technology, a connected city can <b>begin</b> a grand project, paying its goods up front. Every city connected to the site then gives labor until it's done (use the project's button in each city), but the site can only take in 10 + 2×its level a turn, so a grand project always takes several turns. Its effect belongs to <i>whoever holds the site</i>: lose the city and you lose the project, or a half-built one; take an enemy's and it's yours.</p>
+  <ul><li><b>Great Library</b> (Philosophy): +25% knowledge, tech upkeep −25%.</li>
+  <li><b>Royal Road</b> (Pathfinding): road moves cost ⅓, trade route upkeep halved, +1 trade route.</li>
+  <li><b>Grand Arsenal</b> (Iron Working): units cost 1 less labor, upgrades half price, lighter army supply.</li>
+  <li><b>Imperial Granaries</b> (Irrigation): every city eats 1 less food.</li></ul>
   <h3>Knowledge</h3>
   <p>Research is paid in <b>knowledge</b> (✦), not gold. Each city gives 0.5 + 0.5 per level, the capital +1, each Shrine and Market +2, and each active trade route +1 (+2 with an unrelated people: ideas travel with goods). Philosophy adds 25%. Vassals pass a quarter of theirs to their overlord. Tech costs rise with tier and with your number of cities.</p>
   <h3>Technology upkeep & dark ages</h3>
@@ -6495,6 +6643,6 @@ function showWin() {
 
 initMenu();
 // debug hook
-window.tyrrainy = { get game() { return game; }, get renderer() { return R; }, runAI };
+window.tyrrainy = { get game() { return game; }, get renderer() { return R; }, runAI, select: (s) => { select(s); refreshAll(); } };
 
 })();

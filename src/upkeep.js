@@ -35,7 +35,8 @@ export const upkeepMethods = {
   techUpkeep(pid) {
     if (!this.upkeepOn()) return 0;
     const partners = this.knowledgePartners(pid);
-    return this.players[pid].techs.reduce((a, t) => a + this.techUpkeepOf(pid, t, partners), 0);
+    const total = this.players[pid].techs.reduce((a, t) => a + this.techUpkeepOf(pid, t, partners), 0);
+    return this.hasGrand?.(pid, 'library') ? total * 0.75 : total;
   },
   // libraries hold enough to buy the dearest tech twice over, no more: a buffer, not a hoard
   knowledgeCap(pid) {

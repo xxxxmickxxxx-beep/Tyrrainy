@@ -10,7 +10,7 @@
 //   Public games — a festival paid in labor instead of gold (same effect and riot risk).
 //   Scholars     — turn spare labor into knowledge, 4 : 1.
 //   Drill        — make the unit garrisoned in the city a veteran.
-import { TERRAIN, UNITS } from './data.js';
+import { TERRAIN, UNITS, GRAND, TECHS } from './data.js';
 
 export const SCHOLAR_RATE = 4; // labor per knowledge
 export const DRILL_COST = 8;
@@ -100,6 +100,78 @@ export const projectMethods = {
     const plan = this.roadPlan(city);
     if (!plan) return { ok: false, why: 'This city is already joined by road to its neighbours' };
     return this.buildRoad(city.owner, plan.next);
+  },
+
+  // ---- grand projects
+  hasGrand(pid, key) { return this.cities.some(c => c.owner === pid && c.grand?.includes(key)); },
+  // a project whose site has been lost is lost with it
+  grandTick(pid) {
+    const pl = this.players[pid];
+    for (const [key, gp] of Object.entries(pl.grandWork || {})) {
+      const site = this.cityById(gp.site);
+      if (site && site.owner === pid) continue;
+      delete pl.grandWork[key];
+      this.addLog(`${pl.name} has lost the half-built ${GRAND[key].name}${site ? ' at ' + site.name : ''}.`, pid);
+    }
+  },
+  grandInProgress(pid) {
+    const out = [];
+    for (const [key, gp] of Object.entries(this.players[pid].grandWork || {})) {
+      const site = this.cityById(gp.site);
+      if (site && site.owner === pid) out.push({ key, ...gp, siteCity: site });
+    }
+    return out;
+  },
+  canStartGrand(city, key) {
+    const G = GRAND[key], pid = city.owner, pl = this.players[pid];
+    if (this.hasGrand(pid, key)) return { ok: false, why: 'Already yours' };
+    if (pl.grandWork?.[key] && this.cityById(pl.grandWork[key].site)?.owner === pid) return { ok: false, why: 'Already under way' };
+    if (!this.has(pid, G.tech)) return { ok: false, why: 'Requires ' + TECHS[G.tech].name };
+    if (!this.isConnected(city)) return { ok: false, why: 'Site must be connected to the capital' };
+    return this.canPay(pid, G.needs, city);
+  },
+  startGrand(city, key) {
+    const chk = this.canStartGrand(city, key);
+    if (!chk.ok) return chk;
+    const pl = this.players[city.owner];
+    this.pay(pl.id, GRAND[key].needs);
+    pl.grandWork = pl.grandWork || {};
+    pl.grandWork[key] = { site: city.id, progress: 0, started: this.turn };
+    this.addLog(`${pl.name} begins the ${GRAND[key].name} at ${city.name}.`, pl.id, city.idx);
+    return { ok: true };
+  },
+  // the site can only take in so much work a turn: grand projects take several turns whatever
+  // the realm's size, so a half-built one can be fought over
+  grandIntake(site) { return 10 + 2 * site.level; },
+  grandRoom(gp, site) { return gp.turn === this.turn ? Math.max(0, this.grandIntake(site) - (gp.given || 0)) : this.grandIntake(site); },
+  // a city can give labor to a grand project if it is the site or connected to it
+  canContribute(city, key) {
+    const gp = this.players[city.owner].grandWork?.[key];
+    const site = gp && this.cityById(gp.site);
+    if (!site || site.owner !== city.owner) return { ok: false, why: 'Not under way' };
+    if (city !== site && !(this.isConnected(city) && this.isConnected(site))) return { ok: false, why: 'Not connected to the site' };
+    if ((city.labor || 0) < 1) return { ok: false, why: 'No labor' };
+    const room = this.grandRoom(gp, site);
+    if (room < 1) return { ok: false, why: `The site takes ${this.grandIntake(site)} labor a turn; full for this turn` };
+    return { ok: true, gp, site, room };
+  },
+  contribute(city, key, amount = Infinity) {
+    const chk = this.canContribute(city, key);
+    if (!chk.ok) return chk;
+    const G = GRAND[key];
+    const n = Math.min(Math.floor(city.labor), amount, chk.room, G.labor - chk.gp.progress);
+    city.labor -= n;
+    chk.gp.progress += n;
+    if (chk.gp.turn !== this.turn) { chk.gp.turn = this.turn; chk.gp.given = 0; }
+    chk.gp.given += n;
+    if (chk.gp.progress >= G.labor) {
+      const pl = this.players[city.owner];
+      chk.site.grand = [...(chk.site.grand || []), key];
+      delete pl.grandWork[key];
+      this.addLog(`${pl.name} completes the ${G.name} at ${chk.site.name}!`, pl.id, chk.site.idx);
+      this.emit('grand', { pid: pl.id, key, city: chk.site });
+    }
+    return { ok: true, given: n };
   },
 
   // ---- repeatable projects

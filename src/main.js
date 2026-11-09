@@ -7,7 +7,7 @@ import { ROOTS } from './culture.js';
 import { PRICE } from './trade.js';
 import {
   TERRAIN, SPECIALTY, SPECIALTY_KEYS, KIN_DIST, AFFINITY, UNITS, IMPROVEMENTS, BUILDINGS, WONDERS, TECHS, RESOURCES, TEMPERAMENTS, SUBSIDIES, SENSITIVITY,
-  STRATEGIC, GOOD_KEYS, GOOD_DOUBLER, RECIPES, LUXURIES, GROUPS, goodName, impYield,
+  STRATEGIC, GOOD_KEYS, GOOD_DOUBLER, RECIPES, LUXURIES, GROUPS, goodName, impYield, GRAND,
 } from './data.js';
 
 const $ = (id) => document.getElementById(id);
@@ -660,6 +660,7 @@ function cityPanel(c) {
     h += `<button data-act="games" ${pg.ok ? '' : 'disabled'} title="${esc(pg.why || '')}">Public games ${workLabel(game.placateCost(c), pg.work || pg)}<small>a festival paid in labor (${Math.round(game.festivalRisk(c) * 100)}% riot risk)</small></button>`;
     h += `<button data-act="drill" ${dr.ok ? '' : 'disabled'} title="${esc(dr.why || '')}">Drill garrison ${workLabel(8, dr)}<small>the unit here becomes a veteran</small></button>`;
     h += `</div>`;
+    h += grandBlock(c);
     if (c.buildings.length) h += `<div class="desc">Built: ${c.buildings.map(b => BUILDINGS[b].name).join(', ')}</div>`;
     if (c.wonders?.length) h += `<div class="desc">Wonders: <b>${c.wonders.map(w => WONDERS[w].name).join(', ')}</b></div>`;
     // workable tiles summary
@@ -667,6 +668,30 @@ function cityPanel(c) {
     for (const t of game.cityTiles(c)) for (const k of game.improvementsFor(c.owner, t)) work.push(k);
     if (work.length) h += `<div class="desc">Tip: click tiles in this city's border to build improvements (${[...new Set(work)].map(k => IMPROVEMENTS[k].name).join(', ')}).</div>`;
   } else if (c.buildings.length) h += `<div class="desc">Buildings: ${c.buildings.map(b => BUILDINGS[b].name).join(', ')}</div>`;
+  return h;
+}
+
+// Grand projects: once per tribe, begun at a site, fed by every connected city's labor
+function grandBlock(c) {
+  const pid = c.owner;
+  let h = '';
+  const rows = [];
+  for (const [k, G] of Object.entries(GRAND)) {
+    const gp = game.players[pid].grandWork?.[k];
+    const here = c.grand?.includes(k);
+    if (here) { rows.push(`<div class="desc"><b>${G.name}</b> stands here. <small>${G.desc}</small></div>`); continue; }
+    if (game.hasGrand(pid, k)) continue;
+    if (gp && game.cityById(gp.site)?.owner === pid) {
+      const site = game.cityById(gp.site), chk = game.canContribute(c, k);
+      const pct = Math.round(gp.progress / G.labor * 100);
+      rows.push(`<button data-act="grandgive" data-k="${k}" ${chk.ok ? '' : 'disabled'} title="${esc(chk.why || '')}">${G.name} at ${esc(site.name)}: ${gp.progress}/${G.labor} ⚒<div style="height:5px;background:#2a3646;border-radius:3px;margin:3px 0"><div style="height:5px;width:${pct}%;background:#f0c060;border-radius:3px"></div></div><small>Give up to ${Math.min(Math.floor(c.labor || 0), game.grandRoom(gp, site))} of this city's labor (the site takes ${game.grandIntake(site)} a turn). ${G.desc}</small></button>`);
+      continue;
+    }
+    if (!game.has(pid, G.tech)) continue;
+    const chk = game.canStartGrand(c, k);
+    rows.push(`<button data-act="grandstart" data-k="${k}" ${chk.ok ? '' : 'disabled'} title="${esc(chk.why || '')}">Begin ${G.name} ⚒${G.labor} <span class="needs">+ ${game.goodsText(G.needs)}</span><small>${G.desc} Goods paid now; connected cities give labor. Whoever holds this city holds it.</small></button>`);
+  }
+  if (rows.length) h += `<h4>Grand projects</h4><div class="opts">${rows.join('')}</div>`;
   return h;
 }
 
@@ -757,6 +782,8 @@ function panelAction(d) {
   if (d.act === 'road') { const r = game.buildRoad(R.viewer, sel.idx); if (!r.ok) toast(r.why); refreshAll(); return; }
   if (d.act === 'extendroads') { const r = game.extendRoads(game.cityById(sel.id)); if (!r.ok) toast(r.why); refreshAll(); return; }
   if (d.act === 'scholars') { const r = game.scholars(game.cityById(sel.id)); toast(r.ok ? `+${r.gain} knowledge` : r.why); refreshAll(); return; }
+  if (d.act === 'grandstart') { const r = game.startGrand(game.cityById(sel.id), d.k); if (!r.ok) toast(r.why); refreshAll(); return; }
+  if (d.act === 'grandgive') { const r = game.contribute(game.cityById(sel.id), d.k); toast(r.ok ? `${r.given} labor given` : r.why); refreshAll(); return; }
   if (d.act === 'drill') { const r = game.drill(game.cityById(sel.id)); if (!r.ok) toast(r.why); refreshAll(); return; }
   if (d.act === 'games') { const r = game.placate(game.cityById(sel.id), 'labor'); toast(r.ok ? (r.backfired ? 'The games turned into a riot!' : 'Public games held: unrest quelled') : r.why); refreshAll(); return; }
   if (d.act === 'upgrade') { const u = selUnit(); const r = game.upgrade(u, d.k); if (!r.ok) toast(r.why); else select({ kind: 'unit', id: u.id, idx: u.idx }); refreshAll(); return; }
@@ -1311,6 +1338,12 @@ function showHelp() {
   <h3>Roads & projects</h3>
   <p><b>Roads</b>: any land tile in your territory, or next to your road network, can carry a road, paid in labor (2, or 3 in rough land, 4 on mountains) by your nearest city. Moving from road to road costs half a move for <i>anyone</i>, enemies included, and trade routes along roads are cheaper to run. A city's <b>Extend roads</b> project builds the next stretch toward its nearest unconnected neighbour.</p>
   <p>Other <b>projects</b> soak up spare labor: <b>Scholars</b> turn labor into knowledge (4 : 1), <b>Public games</b> are a festival paid in labor rather than gold, and <b>Drill</b> makes the city's garrison veteran.</p>
+  <h3>Grand projects</h3>
+  <p>Once you know the right technology, a connected city can <b>begin</b> a grand project, paying its goods up front. Every city connected to the site then gives labor until it's done (use the project's button in each city), but the site can only take in 10 + 2×its level a turn, so a grand project always takes several turns. Its effect belongs to <i>whoever holds the site</i>: lose the city and you lose the project, or a half-built one; take an enemy's and it's yours.</p>
+  <ul><li><b>Great Library</b> (Philosophy): +25% knowledge, tech upkeep −25%.</li>
+  <li><b>Royal Road</b> (Pathfinding): road moves cost ⅓, trade route upkeep halved, +1 trade route.</li>
+  <li><b>Grand Arsenal</b> (Iron Working): units cost 1 less labor, upgrades half price, lighter army supply.</li>
+  <li><b>Imperial Granaries</b> (Irrigation): every city eats 1 less food.</li></ul>
   <h3>Knowledge</h3>
   <p>Research is paid in <b>knowledge</b> (✦), not gold. Each city gives 0.5 + 0.5 per level, the capital +1, each Shrine and Market +2, and each active trade route +1 (+2 with an unrelated people: ideas travel with goods). Philosophy adds 25%. Vassals pass a quarter of theirs to their overlord. Tech costs rise with tier and with your number of cities.</p>
   <h3>Technology upkeep & dark ages</h3>
@@ -1413,4 +1446,4 @@ function showWin() {
 
 initMenu();
 // debug hook
-window.tyrrainy = { get game() { return game; }, get renderer() { return R; }, runAI };
+window.tyrrainy = { get game() { return game; }, get renderer() { return R; }, runAI, select: (s) => { select(s); refreshAll(); } };

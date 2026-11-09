@@ -20,7 +20,8 @@ export const economyMethods = {
       if (u.owner !== pid) continue;
       for (const k of Object.keys(UNITS[u.type].needs || {})) n[k] = (n[k] || 0) + 1;
     }
-    for (const k in n) n[k] = Math.ceil(n[k] / SUPPLY_PER);
+    const per = this.hasGrand?.(pid, 'arsenal') ? SUPPLY_PER + 1 : SUPPLY_PER;
+    for (const k in n) n[k] = Math.ceil(n[k] / per);
     return n;
   },
   unsupplied(u) {
@@ -140,7 +141,7 @@ export const economyMethods = {
   // ---- sustenance: cities of level 3+ eat (level - 2) food a turn. Connected cities eat from
   // the stockpile; cut-off cities only what they grow themselves. Hungry cities stop growing
   // and grow restless.
-  foodDemand(city) { return Math.max(0, city.level - 2); },
+  foodDemand(city) { return Math.max(0, city.level - (this.hasGrand?.(city.owner, 'granaries') ? 3 : 2)); },
   feedCities(pid) {
     const st = this.stock(pid);
     const conn = this.connectedCities(pid);

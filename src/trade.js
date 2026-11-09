@@ -17,7 +17,7 @@ export const MAX_ROUTE_LEN = 40;
 export const tradeMethods = {
   routesOf(pid) { return (this.routes || []).filter(r => r.a === pid || r.b === pid); },
   routeBetween(a, b) { return (this.routes || []).find(r => (r.a === a && r.b === b) || (r.a === b && r.b === a)) || null; },
-  routeLimit(pid) { return 1 + Math.floor(this.cities.filter(c => c.owner === pid).length / 4); },
+  routeLimit(pid) { return 1 + Math.floor(this.cities.filter(c => c.owner === pid).length / 4) + (this.hasGrand?.(pid, 'royalroad') ? 1 : 0); },
   transitClosed(c, p) { return !!this.players[c]?.closedTransit?.[p]; },
   setTransit(c, p, closed) {
     const pl = this.players[c];
@@ -139,8 +139,11 @@ export const tradeMethods = {
       r.last = { ab: {}, ba: {}, raided: null, blocked: !p, gold: { [r.a]: 0, [r.b]: 0 }, tolls: {} };
       if (!p) continue;
       r.path = p.path; r.transit = p.transit;
-      const up = this.routeUpkeep(p.effort ?? p.len);
-      for (const pid of [r.a, r.b]) { this.players[pid].gold = Math.max(0, this.players[pid].gold - up); r.last.gold[pid] -= up; }
+      const up0 = this.routeUpkeep(p.effort ?? p.len);
+      for (const pid of [r.a, r.b]) {
+        const up = this.hasGrand?.(pid, 'royalroad') ? Math.ceil(up0 / 2) : up0;
+        this.players[pid].gold = Math.max(0, this.players[pid].gold - up); r.last.gold[pid] -= up;
+      }
       for (const [from, to, rec] of [[r.a, r.b, r.last.ab], [r.b, r.a, r.last.ba]]) {
         let cap = ROUTE_CAP;
         const goods = GOOD_KEYS.slice().sort((x, y) => this.deficit(to, y) - this.deficit(to, x));

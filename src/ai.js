@@ -1,7 +1,7 @@
 // Computer opponents. Greedy heuristics, fast enough for 8 tribes on huge maps.
 import { UNITS, TECHS, IMPROVEMENTS, BUILDINGS, WONDERS, KIN_DIST, TERRAIN, SPECIALTY, impYield, INPUT_GOODS, RECIPES, GROUPS } from './data.js';
 import { REVOLT_AT } from './game.js';
-import { SUBSIDIES } from './data.js';
+import { SUBSIDIES, GRAND } from './data.js';
 
 const HOME_TECH_BIAS = {
   plains: { agriculture: 4, husbandry: 2, riding: 3 },
@@ -514,11 +514,36 @@ function projectsAct(g, pid) {
     const plan = g.roadPlan(c);
     if (plan && g.buildRoad(pid, plan.next).ok) roads--;
   }
+  grandAct(g, pid, cities);
   for (const c of cities) {
     if (enemiesNear(g, pid, c.idx, 4) > 0 && g.canDrill(c).ok) g.drill(c);
     if ((c.labor || 0) >= g.laborCap(c) - g.laborRate(c)) g.scholars(c); // about to overflow
   }
   pl.allowHurry = wasHurry;
+}
+
+// Grand projects: a settled realm (4+ cities, not at war) begins one at a time in its safest big
+// city, then every connected city pours in labor above a third of its cap.
+function grandAct(g, pid, cities) {
+  if (cities.length < 4) return;
+  const pl = g.players[pid];
+  if (!g.grandInProgress(pid).length) {
+    const site = cities.filter(c => g.isConnected(c) && enemiesNear(g, pid, c.idx, 5) === 0)
+      .sort((a, b) => (b.capital ? 3 : 0) + b.level - (a.capital ? 3 : 0) - a.level)[0];
+    if (site) {
+      // what serves this realm best: food-short realms want granaries, scholars want the library
+      const pref = { granaries: (pl.lastEaten || 0) >= 4 ? 3 : 1, library: 2, royalroad: (g.routesOf(pid).length >= 2 ? 2.5 : 1.5), arsenal: g.units.filter(u => u.owner === pid).length >= 10 ? 2 : 1 };
+      const key = Object.keys(GRAND).filter(k => g.canStartGrand(site, k).ok).sort((a, b) => pref[b] - pref[a])[0];
+      if (key) g.startGrand(site, key);
+    }
+  }
+  for (const gp of g.grandInProgress(pid)) {
+    for (const c of cities) {
+      const spare = Math.floor((c.labor || 0) - g.laborCap(c) / 3);
+      if (spare > 0 && g.canContribute(c, gp.key).ok) g.contribute(c, gp.key, spare);
+      if (!pl.grandWork?.[gp.key] || g.grandRoom(pl.grandWork[gp.key], gp.siteCity) < 1) break; // done, or full this turn
+    }
+  }
 }
 
 function spend(g, pid, prof) {

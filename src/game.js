@@ -300,6 +300,7 @@ export class Game {
     if (U.unique && U.unique === city.specialty) cost += AFFINITY[this.affinity(city)].unitCost;
     else if (U.unique) cost += 1; // trained through an adopted tradition
     if (city.buildings.includes('stables') && U.traits?.includes('mounted')) cost -= 1;
+    if (type !== 'settler' && this.hasGrand(city.owner, 'arsenal')) cost -= 1;
     return Math.max(1, cost);
   }
 
@@ -1117,6 +1118,7 @@ export class Game {
     if (ideas) parts.push(['Trade routes (ideas)', ideas]);
     let base = parts.reduce((a, x) => a + x[1], 0);
     if (this.has(pid, 'philosophy')) { parts.push(['Philosophy ×1.25', base * 0.25]); base *= 1.25; }
+    if (this.hasGrand(pid, 'library')) { parts.push(['Great Library ×1.25', base * 0.25]); base *= 1.25; }
     // tributaries pass a quarter of their learning to their overlord
     const lord = this.overlordOf?.(pid);
     if (lord != null) { parts.push(['Tribute to overlord', -base * 0.25]); base *= 0.75; }
@@ -1526,7 +1528,7 @@ export class Game {
 
   // ---- upgrades: re-equip a unit standing in one of its own cities
   upgradeOptions(u) { return (UPGRADES[u.type] || []).filter(t => !UNITS[t].tech || this.has(u.owner, UNITS[t].tech)); }
-  upgradeCost(u, to) { return Math.max(2, UNITS[to].cost - UNITS[u.type].cost + 2); }
+  upgradeCost(u, to) { const c = Math.max(2, UNITS[to].cost - UNITS[u.type].cost + 2); return this.hasGrand(u.owner, 'arsenal') ? Math.ceil(c / 2) : c; }
   canUpgrade(u, to) {
     if (u.owner !== this.current) return { ok: false, why: 'Not your turn' };
     if (!this.upgradeOptions(u).includes(to)) return { ok: false, why: 'Not available' };
@@ -1626,6 +1628,7 @@ export class Game {
     pl.lastKnowledge = this.knowledgeRate(pl.id).total;
     pl.knowledge = (pl.knowledge || 0) + pl.lastKnowledge;
     this.upkeepTick(pl.id);
+    this.grandTick(pl.id);
     const inc = this.income(pl.id);
     pl.gold += inc;
     this.payTribute(pl.id, inc);
