@@ -1,5 +1,5 @@
 // Computer opponents. Greedy heuristics, fast enough for 8 tribes on huge maps.
-import { UNITS, TECHS, IMPROVEMENTS, BUILDINGS, WONDERS, KIN_DIST, TERRAIN, SPECIALTY, impYield, INPUT_GOODS, RECIPES } from './data.js';
+import { UNITS, TECHS, IMPROVEMENTS, BUILDINGS, WONDERS, KIN_DIST, TERRAIN, SPECIALTY, impYield, INPUT_GOODS, RECIPES, GROUPS } from './data.js';
 import { REVOLT_AT } from './game.js';
 import { SUBSIDIES } from './data.js';
 
@@ -331,6 +331,7 @@ function siteScore(g, pid, i) {
     else if (tl.t !== 'mountain') s += 1;
     if (tl.res) s += 1.3;
     if (tl.res === 'copper' || tl.res === 'tin' || tl.res === 'horses') s += 1.2; // strategic deposits draw settlers
+    if (tl.res === 'iron') s += g.has(pid, 'ironworking') ? 1 : 0.4;
     if (tl.res === 'spices' || tl.res === 'sheep') s += 0.8;
     if (tl.river) s += 0.4;
   }
@@ -392,6 +393,10 @@ function techValue(g, pid, t) {
     const un = SPECIALTY[c.specialty].unit;
     if (UNITS[un].tech === t) v += 1.5;
   }
+  if (t === 'ironworking') {
+    const ironTiles = g.tiles.filter(tl => tl.owner === pid && tl.res === 'iron').length;
+    v += 1 + 0.4 * ironTiles + (g.avail(pid, 'metal') < 3 ? 1.5 : 0); // the way out of a tin shortage
+  }
   if (t === 'climbing') v += g.tiles.some((tl, i) => tl.owner === pid && tl.t === 'mountain') ? 1 : -1;
   if (t === 'sailing' || t === 'navigation') v += g.cities.some(c => c.owner === pid && c.specialty === 'coastal') ? 1.5 : -0.5;
   if (['masonry', 'bronze', 'engineering', 'chivalry'].includes(t)) v += 1 + g.turn / 25;
@@ -410,6 +415,13 @@ function goodHunger(g, pid, good) {
   return 0.15;
 }
 
+// per-turn inflow of a good (or group): production + workshop output
+function supplyRate(g, pid, k) {
+  const pl = g.players[pid];
+  const one = (m) => (pl.lastProd?.[m] || 0) + (pl.lastMade?.[m] || 0);
+  return GROUPS[k] ? GROUPS[k].reduce((a, m) => a + one(m), 0) : one(k);
+}
+
 function bestMilitary(g, city, gold) {
   let best = null, bestS = -Infinity;
   for (const k of g.trainable(city)) {
@@ -419,7 +431,7 @@ function bestMilitary(g, city, gold) {
     if (cost > gold) continue;
     if (!g.canPay(city.owner, U.needs, city).ok) continue;
     // don't field more of an army than our supply can feed
-    if (U.needs && Object.keys(U.needs).some(k => (g.players[city.owner].lastProd?.[k] || 0) < (g.supplyNeed(city.owner)[k] || 0) + 0.5 && g.stock(city.owner)[k] < 6)) continue;
+    if (U.needs && Object.keys(U.needs).some(k => supplyRate(g, city.owner, k) < (g.supplyNeed(city.owner)[k] || 0) + 0.5 && g.avail(city.owner, k) < 6)) continue;
     if (U.traits?.includes('naval') && g.rng() < 0.6) continue;
     const s = (U.atk * 1.1 + U.def) * U.hp / 10 + (U.mv - 1) * 0.8 + (U.rng - 1) * 0.6 + (U.unique ? 1 : 0) + g.rng() * 1.5 - cost * (gold > 30 ? 0.02 : 0.15);
     if (s > bestS) { bestS = s; best = k; }

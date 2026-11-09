@@ -67,3 +67,8 @@ Ruins and unclaimed land slowly regrow.
 1. **Hotseat diplomacy:** do humans negotiate via the pass screen, or should human-to-human deals stay manual (honour system)?
 2. **Shared victory:** should vassals share their overlord's victory, or does a vassal still "lose"? This affects whether humans would ever accept vassalage.
 3. **Rival goods:** should two tribes producing the same good compete on price? The simple version just ignores duplicates.
+
+## Production chains: status
+- Done: bronze (copper + tin), cloth (wool), the iron age (iron ore + timber → iron; metal substitution), food and luxuries.
+- Next in the agreed order: tributaries, then a production-chain view, then the gold-role pass.
+- Deferred: rations (salt + food) for armies fighting outside their own borders.

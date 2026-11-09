@@ -10,7 +10,7 @@ import { TERRAIN, STRATEGIC, GOOD_KEYS, INPUT_GOODS } from './data.js';
 
 export const ROUTE_CAP = 3;
 // bronze trades at a markup over its inputs (copper 3 + tin 4)
-export const PRICE = { food: 1, copper: 3, tin: 4, bronze: 10, horses: 4, timber: 2, stone: 2, wool: 2, cloth: 5, spice: 6 };
+export const PRICE = { food: 1, copper: 3, tin: 4, bronze: 10, ironore: 2, iron: 6, horses: 4, timber: 2, stone: 2, wool: 2, cloth: 5, spice: 6 };
 export const TOLL = 1;
 export const MAX_ROUTE_LEN = 40;
 

@@ -105,19 +105,20 @@ export const UNITS = {
   archer:    { name: 'Archer',    atk: 2, def: 1, hp: 10, mv: 1, rng: 2, cost: 3, glyph: 'A', tech: 'archery' },
   rider:     { name: 'Rider',     atk: 2, def: 1, hp: 10, mv: 2, rng: 1, cost: 3, glyph: 'R', tech: 'riding', traits: ['mounted'], needs: { horses: 1 } },
   defender:  { name: 'Defender',  atk: 1, def: 3, hp: 15, mv: 1, rng: 1, cost: 3, glyph: 'D', tech: 'masonry' },
-  swordsman: { name: 'Swordsman', atk: 3, def: 3, hp: 15, mv: 1, rng: 1, cost: 5, glyph: 'X', tech: 'bronze', needs: { bronze: 1 } },
+  swordsman: { name: 'Swordsman', atk: 3, def: 3, hp: 15, mv: 1, rng: 1, cost: 5, glyph: 'X', tech: 'bronze', needs: { metal: 1 } },
   catapult:  { name: 'Catapult',  atk: 4, def: 0, hp: 10, mv: 1, rng: 3, cost: 8, glyph: 'C', tech: 'engineering', needs: { timber: 2 } },
-  knight:    { name: 'Knight',    atk: 3.5, def: 1, hp: 15, mv: 3, rng: 1, cost: 8, glyph: 'K', tech: 'chivalry', traits: ['mounted'], needs: { bronze: 1, horses: 1 } },
+  knight:    { name: 'Knight',    atk: 3.5, def: 1, hp: 15, mv: 3, rng: 1, cost: 8, glyph: 'K', tech: 'chivalry', traits: ['mounted'], needs: { metal: 1, horses: 1 } },
   // specialty uniques
   lancer:     { name: 'Lancer',      atk: 4, def: 1, hp: 12, mv: 2, rng: 1, cost: 5, glyph: 'L', tech: 'riding', traits: ['mounted'], unique: 'plains', needs: { horses: 1 } },
   slinger:    { name: 'Slinger',     atk: 2, def: 1, hp: 8,  mv: 1, rng: 2, cost: 3, glyph: 's', unique: 'hilltop', traits: ['hillwalk'] },
   corsair:    { name: 'Corsair',     atk: 3, def: 2, hp: 12, mv: 3, rng: 1, cost: 6, glyph: 'Q', tech: 'sailing', traits: ['naval'], unique: 'coastal', needs: { timber: 2 } },
-  pikeman:    { name: 'Pikeman',     atk: 2, def: 3, hp: 12, mv: 1, rng: 1, cost: 4, glyph: 'P', tech: 'bronze', traits: ['antimount'], unique: 'riverside', needs: { bronze: 1 } },
+  pikeman:    { name: 'Pikeman',     atk: 2, def: 3, hp: 12, mv: 1, rng: 1, cost: 4, glyph: 'P', tech: 'bronze', traits: ['antimount'], unique: 'riverside', needs: { metal: 1 } },
   ranger:     { name: 'Ranger',      atk: 3, def: 1, hp: 10, mv: 1, rng: 2, cost: 5, glyph: 'G', tech: 'archery', traits: ['forestwalk'], unique: 'forest' },
   camel:      { name: 'Camel Raider',atk: 3, def: 1, hp: 12, mv: 3, rng: 1, cost: 5, glyph: 'M', tech: 'riding', traits: ['mounted', 'desertwalk'], unique: 'desert' },
   horsearcher:{ name: 'Horse Archer',atk: 2, def: 1, hp: 10, mv: 2, rng: 2, cost: 5, glyph: 'H', tech: 'riding', traits: ['mounted', 'skirmish'], unique: 'steppe', needs: { horses: 1 } },
   bogstalker: { name: 'Bog Stalker', atk: 3, def: 1, hp: 10, mv: 2, rng: 1, cost: 4, glyph: 'B', traits: ['marshwalk', 'stealth'], unique: 'marsh' },
-  highlander: { name: 'Highlander',  atk: 2, def: 4, hp: 15, mv: 1, rng: 1, cost: 5, glyph: 'U', tech: 'masonry', traits: ['mountainwalk', 'hillwalk'], unique: 'mountain', needs: { bronze: 1 } },
+  legionary:  { name: 'Legionary',   atk: 4, def: 4, hp: 16, mv: 1, rng: 1, cost: 7, glyph: 'I', tech: 'ironworking', needs: { iron: 1 } },
+  highlander: { name: 'Highlander',  atk: 2, def: 4, hp: 15, mv: 1, rng: 1, cost: 5, glyph: 'U', tech: 'masonry', traits: ['mountainwalk', 'hillwalk'], unique: 'mountain', needs: { metal: 1 } },
 };
 
 export const EMBARKED = { name: 'Boat', atk: 1, def: 1, mv: 2, rng: 1 };
@@ -132,7 +133,8 @@ export const IMPROVEMENTS = {
   lumber:   { name: 'Lumber Camp', terrain: ['forest'], tech: 'forestry', cost: 4, pop: 1 },
   hunt:     { name: 'Hunting Lodge', terrain: ['forest'], tech: null, cost: 2, pop: 1, resource: 'game', consume: true },
   gather:   { name: 'Forage',      terrain: ['plains', 'steppe', 'desert', 'marsh', 'hills'], tech: null, cost: 2, pop: 1, resource: 'fruit', consume: true },
-  mine:     { name: 'Mine',        terrain: ['hills', 'mountain'], tech: 'mining', cost: 5, pop: 2, resource: ['copper', 'tin'] },
+  mine:     { name: 'Mine',        terrain: ['hills', 'mountain'], tech: 'mining', cost: 5, pop: 2, resource: ['copper', 'tin', 'iron'] },
+  bogpit:   { name: 'Bog Iron Pit', terrain: ['marsh'], tech: 'ironworking', cost: 4, pop: 1, resource: 'iron', requires: true },
   quarry:   { name: 'Quarry',      terrain: ['hills'], tech: 'mining', cost: 4, pop: 1 },
   fishery:  { name: 'Fishery',     terrain: ['shallows'], tech: 'fishing', cost: 3, pop: 1, resource: 'fish', requires: true },
   whaling:  { name: 'Whaling',     terrain: ['ocean'], tech: 'navigation', cost: 5, pop: 2, resource: 'whales', requires: true },
@@ -145,6 +147,7 @@ export const RESOURCES = {
   horses: { name: 'Horses',     color: '#6a4a2a' },
   copper: { name: 'Copper',     color: '#d07a3a' },
   sheep:  { name: 'Sheep',      color: '#f4f0e0' },
+  iron:   { name: 'Iron ore',   color: '#8a3a2a' },
   spices: { name: 'Spices',     color: '#c03050' },
   tin:    { name: 'Tin',        color: '#a8b8c4' },
   fish:   { name: 'Fish',       color: '#e0f0ff' },
@@ -157,6 +160,7 @@ export const RESOURCES = {
 export const BUILDINGS = {
   walls:        { name: 'Walls', cost: 6, tech: 'masonry', desc: 'City defense x2 (stacks with specialty).', needs: { stone: 2 } },
   weaver:       { name: 'Weaver', cost: 6, tech: 'husbandry', needs: { timber: 1 }, desc: 'Weaves up to 2 wool into 2 cloth each turn.' },
+  bloomery:     { name: 'Bloomery', cost: 8, tech: 'ironworking', needs: { stone: 1 }, desc: 'Smelts up to 2 iron ore with 2 timber (charcoal) into 2 iron each turn.' },
   bronzeworks:  { name: 'Bronze Workshop', cost: 8, tech: 'bronze', needs: { stone: 1 }, desc: 'Smelts up to 2 copper + 2 tin into 2 bronze each turn.' },
   courthouse:   { name: 'Courthouse', cost: 5, calm: 1, desc: '-1 unrest pressure.' },
   amphitheater: { name: 'Amphitheater', cost: 9, tech: 'masonry', calm: 2, desc: '-2 unrest pressure.', needs: { stone: 2 } },
@@ -169,7 +173,7 @@ export const BUILDINGS = {
   caravanserai: { name: 'Caravanserai', cost: 7, special: 'desert', desc: '+2 gold, +1 pop; doubles the city\'s spice.', gold: 2, pop: 1 },
   stables:      { name: 'Stables', cost: 6, special: 'steppe', desc: 'Mounted units cost -1, +1 pop; doubles the city\'s horses.', pop: 1, needs: { timber: 1 } },
   peatworks:    { name: 'Peat Works', cost: 6, special: 'marsh', desc: '+1 gold per marsh tile in territory (max 3).' },
-  deepmine:     { name: 'Deep Mine', cost: 8, special: 'mountain', desc: '+3 gold per turn; doubles the city\'s copper and tin.', gold: 3, needs: { timber: 1 } },
+  deepmine:     { name: 'Deep Mine', cost: 8, special: 'mountain', desc: '+3 gold per turn; doubles the city\'s copper, tin and iron ore.', gold: 3, needs: { timber: 1 } },
 };
 
 // ---------------- Strategic goods ----------------
@@ -182,6 +186,8 @@ export const STRATEGIC = {
   copper: { name: 'Copper', short: 'Cu', color: '#d07a3a', kind: 'arms', from: 'a Mine on a copper deposit (hills, mountains)' },
   tin:    { name: 'Tin',    short: 'Sn', color: '#a8b8c4', kind: 'arms', from: 'a Mine on a tin deposit (hills, mountains), rarer and far from copper' },
   bronze: { name: 'Bronze', short: 'Br', color: '#c89a3a', kind: 'arms', from: 'a Bronze Workshop smelting copper + tin' },
+  ironore:{ name: 'Iron ore', short: 'Fe', color: '#8a3a2a', kind: 'arms', from: 'a Mine on iron ore (hills, mountains) or a Bog Iron Pit (marsh), once you know Iron Working' },
+  iron:   { name: 'Iron',   short: 'Ir', color: '#6a7480', kind: 'arms', from: 'a Bloomery smelting iron ore with timber charcoal' },
   horses: { name: 'Horses', short: 'Hr', color: '#9a6a3a', kind: 'arms', from: 'a Pasture on a horse herd (steppe)' },
   timber: { name: 'Timber', short: 'Tb', color: '#4f9a4a', kind: 'build', from: 'a Lumber Camp in a forest' },
   stone:  { name: 'Stone',  short: 'St', color: '#d8c8a0', kind: 'build', from: 'a Quarry on hills' },
@@ -196,11 +202,12 @@ export const GOOD_KEYS = Object.keys(STRATEGIC);
 export const RECIPES = {
   bronze: { inputs: { copper: 1, tin: 1 }, building: 'bronzeworks', rate: 2 },
   cloth:  { inputs: { wool: 1 }, building: 'weaver', rate: 2 },
+  iron:   { inputs: { ironore: 1, timber: 1 }, building: 'bloomery', rate: 2 },
 };
 export const INPUT_GOODS = new Set(Object.values(RECIPES).flatMap(r => Object.keys(r.inputs)));
 // improvement -> good it yields: fixed, or chosen by the tile's resource
 export const IMP_YIELD = {
-  mine: { byRes: { copper: 'copper', tin: 'tin' } }, pasture: { byRes: { horses: 'horses', sheep: 'wool' } },
+  mine: { byRes: { copper: 'copper', tin: 'tin', iron: 'ironore' } }, bogpit: { good: 'ironore', res: 'iron' }, pasture: { byRes: { horses: 'horses', sheep: 'wool' } },
   lumber: { good: 'timber' }, quarry: { good: 'stone' }, plantation: { good: 'spice', res: 'spices' },
   farm: { good: 'food' }, irrigate: { good: 'food' }, fishery: { good: 'food' }, whaling: { good: 'food' }, reedbeds: { good: 'food' },
 };
@@ -212,7 +219,13 @@ export function impYield(imp, res) {
   return y.good;
 }
 // specialty buildings that double goods produced in their city
-export const GOOD_DOUBLER = { deepmine: ['copper', 'tin'], stables: ['horses'], sawmill: ['timber'], watchtower: ['stone'], granary: ['food'], caravanserai: ['spice'] };
+// goods a tile only yields once its owner knows the tech
+export const GOOD_TECH = { ironore: 'ironworking' };
+// interchangeable goods: a need for "metal" is met by iron first, then bronze
+export const GROUPS = { metal: ['iron', 'bronze'] };
+export const GROUP_NAMES = { metal: 'Metal (iron or bronze)' };
+export function goodName(k) { return GROUP_NAMES[k] || STRATEGIC[k]?.name || k; }
+export const GOOD_DOUBLER = { deepmine: ['copper', 'tin', 'ironore'], stables: ['horses'], sawmill: ['timber'], watchtower: ['stone'], granary: ['food'], caravanserai: ['spice'] };
 export function resMatches(I, res) { return Array.isArray(I.resource) ? I.resource.includes(res) : I.resource === res; }
 
 // ---------------- Subsidies ----------------
@@ -282,6 +295,7 @@ export const TECHS = {
   trade:       { name: 'Trade', tier: 3, req: ['irrigation'], desc: '+1 gold in every city of level 3+.' },
   roads:       { name: 'Pathfinding', tier: 3, req: ['forestry', 'husbandry'], desc: 'Forest & hills move cost 1 for all units.' },
   engineering: { name: 'Engineering', tier: 4, req: ['bronze'], desc: 'Catapults.' },
+  ironworking: { name: 'Iron Working', tier: 3, req: ['bronze', 'forestry'], desc: 'Iron ore can be mined (hills, mountains, marsh bogs); Bloomeries smelt it with timber. Iron serves wherever bronze does. Legionaries.' },
   chivalry:    { name: 'Chivalry', tier: 4, req: ['riding', 'bronze'], desc: 'Knights.' },
   philosophy:  { name: 'Philosophy', tier: 4, req: ['trade'], desc: 'Shrines. Techs 25% cheaper.' },
   assimilation:{ name: 'Assimilation', tier: 4, req: ['trade'], desc: 'Foreign & alien penalties reduced by one step.' },

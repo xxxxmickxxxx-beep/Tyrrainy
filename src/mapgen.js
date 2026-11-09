@@ -142,7 +142,8 @@ export function generateMap(W, H, seed, type = 'continents') {
   }
   rocky.sort((a, b) => a - b);
   const copperAbove = quantile(rocky, 0.58), tinBelow = quantile(rocky, 0.25);
-  const metalAt = (i, pCopper, pTin, p) => metal[i] >= copperAbove ? (p < pCopper ? 'copper' : null) : metal[i] <= tinBelow ? (p < pTin ? 'tin' : null) : null;
+  // iron ore is common: it fills the band between the copper and tin regions
+  const metalAt = (i, pCopper, pTin, p) => metal[i] >= copperAbove ? (p < pCopper ? 'copper' : null) : metal[i] <= tinBelow ? (p < pTin ? 'tin' : null) : (p < pCopper * 0.9 ? 'iron' : null);
   for (let i = 0; i < N; i++) {
     const tl = tiles[i];
     const p = rng();
@@ -151,7 +152,7 @@ export function generateMap(W, H, seed, type = 'continents') {
       case 'steppe': tl.res = p < 0.16 ? 'horses' : p < 0.24 ? 'sheep' : p < 0.30 ? 'fruit' : null; break;
       case 'desert': tl.res = p < 0.09 ? 'oasis' : p < 0.16 ? 'spices' : p < 0.19 ? 'fruit' : null; break;
       case 'forest': tl.res = p < 0.2 ? 'game' : p < 0.24 ? 'spices' : null; break;
-      case 'marsh': tl.res = p < 0.16 ? 'fruit' : null; break;
+      case 'marsh': tl.res = p < 0.1 ? 'iron' : p < 0.24 ? 'fruit' : null; break; // bog iron
       case 'hills': tl.res = metalAt(i, 0.3, 0.3, p) || (p > 0.9 ? 'sheep' : p > 0.85 ? 'fruit' : null); break;
       case 'mountain': tl.res = metalAt(i, 0.35, 0.35, p); break;
       case 'shallows': tl.res = p < 0.22 ? 'fish' : null; break;

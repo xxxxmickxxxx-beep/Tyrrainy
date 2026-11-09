@@ -1,6 +1,6 @@
 // Strategic goods: production at deposits, a capped national stockpile, connectivity to the
 // capital, and hard requirements for advanced units and buildings. Mixed into Game.prototype.
-import { TERRAIN, STRATEGIC, GOOD_KEYS, GOOD_DOUBLER, UNITS, RECIPES, INPUT_GOODS, LUXURIES, impYield } from './data.js';
+import { TERRAIN, STRATEGIC, GOOD_KEYS, GOOD_DOUBLER, UNITS, RECIPES, INPUT_GOODS, LUXURIES, GROUPS, GOOD_TECH, goodName, impYield } from './data.js';
 
 export const CITY_GOOD_CAP = 2; // per good per city, before its specialty building doubles it
 export const SUPPLY_PER = 4; // each 4 units needing a good consume 1 of it per turn
@@ -35,6 +35,7 @@ export const economyMethods = {
     const tl = this.tiles[i];
     const good = impYield(tl.imp, tl.res);
     if (!good || tl.damaged || tl.owner < 0) return null;
+    if (GOOD_TECH[good] && !this.has(tl.owner, GOOD_TECH[good])) return null;
     const u = this.unitAt(i);
     if (u && u.owner !== tl.owner && this.atWar(u.owner, tl.owner)) return null;
     return good;
@@ -114,6 +115,12 @@ export const economyMethods = {
     for (const k of GOOD_KEYS) st[k] += prod[k];
     // processing: workshops in connected cities turn inputs into products
     const made = this.process(pid);
+    // group needs (e.g. metal) draw on their members in order: iron first, then bronze
+    for (const [gk, members] of Object.entries(GROUPS)) {
+      let left = need[gk] || 0;
+      for (const m of members) { const take = Math.min(left, st[m]); st[m] -= take; left -= take; }
+      if (left > 0) { pl.unsupplied[gk] = true; if (!was[gk]) this.addLog(`${pl.name} has run out of metal: units that need it are unsupplied.`, pid); }
+    }
     for (const k of GOOD_KEYS) {
       let v = st[k] - (need[k] || 0);
       if (v < 0) { pl.unsupplied[k] = true; v = 0; }
@@ -170,7 +177,9 @@ export const economyMethods = {
   },
   // Everything a tribe uses of a good per turn: army supply, food, luxuries, workshop inputs.
   goodDemand(pid, k) {
-    let d = this.supplyNeed(pid)[k] || 0;
+    const sn = this.supplyNeed(pid);
+    let d = sn[k] || 0;
+    for (const [gk, members] of Object.entries(GROUPS)) if (members.includes(k) && this.preferredMember(pid, gk) === k) d += sn[gk] || 0;
     if (k === 'food') for (const c of this.cities) if (c.owner === pid) d += this.foodDemand(c);
     if (LUXURIES.includes(k)) d += this.cities.filter(c => c.owner === pid && c.level >= 4).length;
     d += this.inputDemand(pid, k);
@@ -206,13 +215,23 @@ export const economyMethods = {
     for (const [prod, cap] of Object.entries(this.workshops(pid))) d += cap * (RECIPES[prod].inputs[k] || 0);
     return d;
   },
-  goodsText(needs) { return Object.entries(needs || {}).map(([k, n]) => `${n} ${STRATEGIC[k].name.toLowerCase()}`).join(', '); },
+  goodsText(needs) { return Object.entries(needs || {}).map(([k, n]) => `${n} ${GROUPS[k] ? 'metal' : goodName(k).toLowerCase()}`).join(', '); },
+  // stock available for a good or a group of interchangeable goods
+  avail(pid, k) { const st = this.stock(pid); return GROUPS[k] ? GROUPS[k].reduce((a, m) => a + st[m], 0) : st[k]; },
   canPay(pid, needs, city) {
     if (!needs) return { ok: true };
     if (city && !this.isConnected(city)) return { ok: false, why: 'Cut off from the capital: no access to the stockpile' };
-    const st = this.stock(pid);
-    for (const [k, n] of Object.entries(needs)) if (st[k] < n) return { ok: false, why: `Needs ${n} ${STRATEGIC[k].name.toLowerCase()} (have ${st[k]})` };
+    for (const [k, n] of Object.entries(needs)) { const a = this.avail(pid, k); if (a < n) return { ok: false, why: `Needs ${n} ${GROUPS[k] ? 'metal (iron or bronze)' : goodName(k).toLowerCase()} (have ${a})` }; }
     return { ok: true };
   },
-  pay(pid, needs) { const st = this.stock(pid); for (const [k, n] of Object.entries(needs || {})) st[k] -= n; },
+  pay(pid, needs) {
+    const st = this.stock(pid);
+    for (const [k, n] of Object.entries(needs || {})) {
+      if (!GROUPS[k]) { st[k] -= n; continue; }
+      let left = n;
+      for (const m of GROUPS[k]) { const take = Math.min(left, st[m]); st[m] -= take; left -= take; }
+    }
+  },
+  // which member of a group a tribe will lean on (for demand and trade)
+  preferredMember(pid, gk) { return gk === 'metal' && this.has(pid, 'ironworking') ? 'iron' : GROUPS[gk][GROUPS[gk].length - 1]; },
 };
