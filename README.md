@@ -153,6 +153,13 @@ If the city survives that roll, the **conqueror chooses** whether to keep it or 
 - **Hurrying:** a shortfall can be **hurried at 3 gold per labor point**. Humans hurry automatically (buttons show the price). The AI hurries only above a gold reserve (25 + 6 per city + 5× subsidies) or when one of its cities is threatened, and a city saving for a settler doesn't spend its labor on other things.
 - **Effect in sims:** tech and expansion pace are about where they were. Tribes spend roughly 900–2,000 gold each on hurrying over 120 turns, but treasuries still climb (phase 3 retunes taxes), and about a third of cities sit at their labor cap.
 
+### Gold (gold-role pass, phase 3)
+- **No per-turn caps:** a city can complete any number of projects in a turn from banked labor. Hurrying gets 50% dearer for each project already done in that city that turn.
+- **Taxes** are lighter: 1 + ⌈0.4×level⌉ (was 0.6). Army upkeep is unchanged; the data argued against softening it.
+- **AI hurry policy:** hurry above a reserve of 25 + 6 per city + 5× subsidies, accepting a ×2 price above 2× the reserve, ×3 above 4×, or ×2 when threatened.
+- **Gifts:** `giveGold` lowers the recipient's grudges against the giver by half the amount and builds favour, which lowers its hostility by up to 1.2 and fades 8% per turn. A losing AI whose peace offer is refused sends a gift (up to 25% of its gold, max 150) and asks again; an appeaser courts a dominant leader. Humans have gift buttons in Diplomacy.
+- **Sims (8 tribes, large map, 120 turns):** hurrying absorbs about 10,000 gold per game and the tech pace holds (16 by turn 120). Gold medians stay under about 250 through turn 60, but the late game can still hoard: 60–70% of cities sit at their labor cap with nothing left to build. That's a content gap (late projects, upgrades), not a tuning problem.
+
 ### Knowledge (research)
 Research is paid in **knowledge** (✦), not gold. This is phase 1 of the gold-role pass (`docs/GOLD-PROPOSAL.md`).
 - **Sources per turn:** each city 0.5 + 0.5×level, capital +1, each Shrine and Market +2, each active trade route +1 (+2 with an unrelated people). Philosophy multiplies the total by 1.25. Vassals pass 25% to their overlord.

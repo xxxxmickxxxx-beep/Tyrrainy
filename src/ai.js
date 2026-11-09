@@ -127,6 +127,11 @@ function diplomacyAct(g, pid) {
       .sort((a, b) => g.hostility(pid, a.id) - g.hostility(pid, b.id))[0];
     if (protector) { pl.lastOffer['-1protect'] = g.turn; g.offer(pid, protector.id, 'protect'); }
   }
+  const dom = g.dominance();
+  if (T.key === 'appeaser' && dom.leader >= 0 && dom.leader !== pid && dom.d > 0.3 && pl.gold > 120 && !g.atWar(pid, dom.leader) && offerOk(dom.leader, 'gift')) {
+    pl.lastOffer[dom.leader + 'gift'] = g.turn;
+    g.giveGold(pid, dom.leader, Math.floor(pl.gold * 0.15));
+  }
   for (const o of others) {
     const r = g.relation(pid, o.id);
     const h = g.hostility(pid, o.id);
@@ -143,7 +148,14 @@ function diplomacyAct(g, pid) {
       const losing = myP < theirP * 0.6;
       const containing = T.joined === o.id;
       const weary = age >= 25;
-      if (offerOk(o.id, 'peace') && ((age >= 8 && h < 1.5 && !containing) || (losing && age >= 5) || (wars >= 3 && h < 2) || (weary && h < 2.2))) offer(o.id, 'peace');
+      if (offerOk(o.id, 'peace') && ((age >= 8 && h < 1.5 && !containing) || (losing && age >= 5) || (wars >= 3 && h < 2) || (weary && h < 2.2))) {
+        const res = offer(o.id, 'peace');
+        // refused? sweeten it: buy peace with a gift and ask again
+        if (res.ok && res.accepted === false && pl.gold > 60) {
+          g.giveGold(pid, o.id, Math.min(150, Math.floor(pl.gold * 0.25)));
+          g.offer(pid, o.id, 'peace');
+        }
+      }
       continue;
     }
     if (r.state === 'truce') continue;
@@ -484,6 +496,8 @@ function spend(g, pid, prof) {
   const reserve = 25 + 6 * nC + 5 * g.subsidyCost(pid);
   const threatened = g.cities.some(c => c.owner === pid && enemiesNear(g, pid, c.idx, 3) > 0);
   pl.allowHurry = pl.gold > reserve || (threatened && pl.gold > 15);
+  // a fuller treasury accepts the steeper prices of hurrying several projects in one city
+  pl.hurryMaxMult = threatened ? 2 : pl.gold > reserve * 4 ? 3 : pl.gold > reserve * 2 ? 2 : 1;
   for (let iter = 0; iter < 30; iter++) {
     const cities = g.cities.filter(c => c.owner === pid);
     if (!cities.length) return;
@@ -534,7 +548,7 @@ function spend(g, pid, prof) {
     const restless = cities.filter(c => g.unrest(c).net > 0).length;
     const wantCities = Math.min(14, Math.round((3 + g.turn / 5) * prof.expansion)) - restless * 2;
     if (settlers < 2 && cities.length + settlers < wantCities && capLeft > 0 && mil >= Math.min(2, cities.length)) {
-      const c = cities.filter(c => !g.unitAt(c.idx) && c.trainedTurn !== g.turn).sort((a, b) => b.level - a.level)[0];
+      const c = cities.filter(c => !g.unitAt(c.idx)).sort((a, b) => b.level - a.level)[0];
       if (c) {
         if (g.train(c, 'settler').ok) continue;
         // not enough labor yet: this city saves for the settler instead of spending on other things
@@ -573,7 +587,7 @@ function spend(g, pid, prof) {
     // build armies when below target, or when a city's labor would otherwise overflow
     const fullCity = cities.some(c => c !== saving && (c.labor || 0) >= g.laborCap(c) * 0.75 && !g.unitAt(c.idx));
     if ((mil < wantMil + (g.turn > 30 ? cities.length : 0) || fullCity) && capLeft > 0) {
-      const c = cities.filter(c => c !== saving && !g.unitAt(c.idx) && c.trainedTurn !== g.turn).sort((a, b) => enemiesNear(g, pid, b.idx, 8) - enemiesNear(g, pid, a.idx, 8))[0];
+      const c = cities.filter(c => c !== saving && !g.unitAt(c.idx)).sort((a, b) => enemiesNear(g, pid, b.idx, 8) - enemiesNear(g, pid, a.idx, 8))[0];
       if (c) { const k = bestMilitary(g, c, pl.gold); if (k && g.train(c, k).ok) continue; }
     }
 

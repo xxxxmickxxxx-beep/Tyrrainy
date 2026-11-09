@@ -1,6 +1,6 @@
 # Proposal: what gold is for
 
-Status: decisions taken (all recommendations accepted). **Phases 1 (knowledge) and 2 (labor) are implemented**, plus technology upkeep. Phase 3 (gold retune) is next.
+Status: decisions taken (all recommendations accepted). **All three phases are implemented**, plus technology upkeep. Phase 3 dropped the one-build-per-turn cap in favour of an escalating hurry price, and kept army upkeep as it was (sims showed gold was plentiful). Open: late-game labor and gold have nothing left to buy; that needs content (late projects, unit upgrades).
 
 ## The problem today
 Gold is a universal converter. Every system eventually turns into "how much gold per turn".

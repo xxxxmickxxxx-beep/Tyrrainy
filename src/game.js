@@ -16,6 +16,7 @@ import { ROOTS, LAND_BASE, joinName, combining, cleanBase, pickColors, offshootC
 const INTEGRATION_TURNS = 10;
 export const REVOLT_AT = 12;
 export const KNOWLEDGE_PRICE = 2.2;
+export const TAX_PER_LEVEL = 0.4; // phase 3: gold is liquidity now, not the engine of everything
 export const HURRY_GOLD = 3; // gold per missing labor point // tech cost multiplier, calibrated to the old gold-based pace
 export const RIOT_AT = 6;        // no training or construction
 export const INSURRECTION_AT = 9; // rebel partisans may appear
@@ -237,7 +238,7 @@ export class Game {
   cityIncome(city) {
     const pl = this.players[city.owner];
     const aff = this.affinity(city);
-    let g = 1 + Math.ceil(city.level * 0.6) + (city.capital ? 1 : 0) + AFFINITY[aff].gold;
+    let g = 1 + Math.ceil(city.level * TAX_PER_LEVEL) + (city.capital ? 1 : 0) + AFFINITY[aff].gold;
     if (city.subsidy) return 0;
     const riot = this.unrest(city).net;
     if (riot > 0) g -= riot; // restless cities withhold taxes
@@ -330,7 +331,6 @@ export class Game {
   canTrain(city, type) {
     if (city.owner !== this.current) return { ok: false, why: 'Not your turn' };
     if (!this.trainable(city).includes(type)) return { ok: false, why: 'Not available' };
-    if (city.trainedTurn === this.turn) return { ok: false, why: 'Already trained this turn' };
     if (this.rioting(city)) return { ok: false, why: 'City is rioting' };
     const cost = this.unitCost(city, type);
     if (this.unitCount(city.owner) >= this.unitCap(city.owner)) return { ok: false, why: 'Unit cap reached (grow cities)' };
@@ -383,21 +383,30 @@ export class Game {
   laborCap(city) { return 4 * this.laborRate(city); }
   // May this tribe top up a labor shortfall with gold? Humans: yes (the button shows the price).
   // AI: per its current policy (see ai.js).
-  hurryAllowed(pid) { const p = this.players[pid]; return p.human ? true : !!p.allowHurry; }
+  hurryAllowed(pid, mult = 1) { const p = this.players[pid]; return p.human ? true : !!p.allowHurry && mult <= (p.hurryMaxMult || 1); }
+  // Projects a city has completed this turn: each one makes hurrying the next 50% dearer.
+  worksDone(city) { return city.worksTurn === this.turn ? city.worksDone || 0 : 0; }
+  hurryMult(city) { return 1 + 0.5 * this.worksDone(city); }
   // Can `city` pay `cost` labor now, hurrying any shortfall with gold?
   workCheck(city, cost) {
     const pl = this.players[city.owner];
     const have = Math.floor(city.labor || 0);
     if (have >= cost) return { ok: true, labor: cost, gold: 0 };
-    const gold = HURRY_GOLD * (cost - have);
-    if (this.hurryAllowed(city.owner) && pl.gold >= gold) return { ok: true, labor: have, gold, hurried: true };
+    const mult = this.hurryMult(city);
+    const gold = Math.ceil(HURRY_GOLD * (cost - have) * mult);
+    if (this.hurryAllowed(city.owner, mult) && pl.gold >= gold) return { ok: true, labor: have, gold, hurried: true };
     return { ok: false, why: `Needs ${cost} labor in ${city.name} (has ${have})${pl.human ? `; hurrying costs ${gold} gold` : ''}`, short: cost - have, hurryGold: gold };
   }
-  payWork(city, w) { const pl = this.players[city.owner]; city.labor = (city.labor || 0) - w.labor; pl.gold -= w.gold; if (w.gold) pl.hurrySpent = (pl.hurrySpent || 0) + w.gold; }
+  payWork(city, w) {
+    const pl = this.players[city.owner];
+    city.labor = (city.labor || 0) - w.labor; pl.gold -= w.gold;
+    if (w.gold) pl.hurrySpent = (pl.hurrySpent || 0) + w.gold;
+    if (city.worksTurn !== this.turn) { city.worksTurn = this.turn; city.worksDone = 0; }
+    city.worksDone++;
+  }
   improveCost(pid, k) { return IMPROVEMENTS[k].cost; }
   // One construction per city per turn, and none while hostile troops stand next to it.
   buildBlock(city) {
-    if (city.builtTurn === this.turn) return 'Already built this turn';
     if (this.neighbors(city.idx).some(n => { const u = this.unitAt(n); return u && u.owner !== city.owner && this.atWar(u.owner, city.owner); })) return 'Enemies at the gates';
     return null;
   }
@@ -773,7 +782,9 @@ export class Game {
       const restraint = Math.max(0.3, 1 - 0.7 * Math.min(1, C * 2));
       w = (1 + grudge + preyW) * restraint + threatW;
     }
-    return Math.max(0.1, w + supplierW);
+    // gifts buy goodwill (favour fades over time)
+    const favor = Math.min(1.2, (T.favor?.[target] || 0) / 50);
+    return Math.max(0.1, w + supplierW - favor);
   }
   coalitionMembers() {
     const live = new Set(this.contenders().map(p => p.id));
@@ -787,6 +798,7 @@ export class Game {
       const T = p.temper;
       if (!T) continue;
       for (const k in T.grudges) { T.grudges[k] *= 0.9; if (T.grudges[k] < 1) delete T.grudges[k]; }
+      for (const k in T.favor || {}) { T.favor[k] *= 0.92; if (T.favor[k] < 1) delete T.favor[k]; }
       const C = this.threats(p.id).containment;
       if (T.joined >= 0 && (T.joined !== leader || C < T.threshold * T.patience)) {
         this.addLog(`${p.name} abandons the coalition against ${this.players[T.joined].name}.`, p.id);

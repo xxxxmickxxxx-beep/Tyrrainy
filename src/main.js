@@ -616,7 +616,8 @@ function cityPanel(c) {
     h += moodBlock(c, mine && myTurn());
   }
   if (mine && myTurn()) {
-    h += `<h4>Train ${c.trainedTurn === game.turn ? '<span class="dim">(done this turn)</span>' : ''}</h4><div class="opts">`;
+    const wd = game.worksDone(c);
+    h += `<h4>Train${wd ? ` <span class="dim">(${wd} project${wd > 1 ? 's' : ''} done here this turn: hurrying costs ×${game.hurryMult(c)})</span>` : ''}</h4><div class="opts">`;
     for (const k of game.trainable(c)) {
       const U = UNITS[k];
       const chk = game.canTrain(c, k);
@@ -910,7 +911,9 @@ function showDiplomacy() {
     for (const p of others) {
       const r = game.relation(me.id, p.id);
       const hz = p.temper ? game.hostility(p.id, me.id) : null;
-      const att = hz == null ? '—' : hz < 1.3 ? '<span style="color:#7ddc6a">Friendly</span>' : hz < 1.9 ? '<span style="color:#e0d060">Wary</span>' : '<span style="color:#ff7060">Hostile</span>';
+      const fav = p.temper?.favor?.[me.id];
+      const att0 = hz == null ? '—' : hz < 1.3 ? '<span style="color:#7ddc6a">Friendly</span>' : hz < 1.9 ? '<span style="color:#e0d060">Wary</span>' : '<span style="color:#ff7060">Hostile</span>';
+      const att = att0 + (fav >= 5 ? ` <span class="dim">(favour ${Math.round(fav)})</span>` : '');
       const acts = [];
       const iAmVassal = game.isVassal(me.id);
       if (mine && r.state === 'vassal') {
@@ -929,6 +932,7 @@ function showDiplomacy() {
           else acts.push(['route', 'Open route', !game.canOpenRoute(me.id, p.id).ok]);
         }
         acts.push(['transit', game.transitClosed(me.id, p.id) ? 'Open our land' : 'Close our land']);
+        for (const amt of [25, 100]) acts.push(['gift' + amt, `Gift ◉${amt}`, me.gold < amt, 'Gold buys goodwill: it eases their grudges against you and softens their stance for a while']);
       }
       let route = '<span class="dim">—</span>';
       const rt = game.routeBetween(me.id, p.id);
@@ -955,6 +959,7 @@ function showDiplomacy() {
     if (k === 'war') { if (!confirm(`Declare war on the ${game.players[o].name}?`)) return; res = game.declareWar(me.id, o); }
     else if (k === 'endally') res = game.breakAlliance(me.id, o);
     else if (k === 'endroute') res = game.closeRoute(me.id, o);
+    else if (k.startsWith('gift')) { res = game.giveGold(me.id, o, +k.slice(4)); if (res.ok) toast(`Sent ${res.amount} gold.`); }
     else if (k === 'annex') { if (!confirm(`Absorb the ${game.players[o].name} into your realm?`)) return; res = game.annexVassal(me.id, o); }
     else if (k === 'release') res = game.releaseVassal(me.id, o);
     else if (k === 'independence') { if (!confirm(`Throw off ${game.players[o].name}'s rule? This means war.`)) return; res = game.declareIndependence(me.id); }
@@ -1272,7 +1277,7 @@ function showHelp() {
   <li>Train <b>Settlers</b> to found new cities — choose the land wisely. Settlers get pricier with every city.</li>
   <li>Your unit cap is the sum of (city level + 1). Each city feeds 2 units for free; every extra unit costs 1 gold of upkeep per turn.</li></ul>
   <h3>Labor</h3>
-  <p>Every city has its own <b>labor</b> (⚒): 2 + its level per turn, +1 for the capital, +1 with its specialty building, halved while hungry, and it stores up to 4 turns' worth. Units, buildings and wonders cost the city's labor, tile improvements and repairs cost the labor of the city that works the tile, and nothing is built with gold any more. If a city is short, you can <b>hurry</b> the work: each missing labor point costs 3 gold, and the button shows the price. So big, developed cities build armies and wonders, frontier towns develop slowly unless you pay, and losing a core city costs you making power, not just taxes.</p>
+  <p>Every city has its own <b>labor</b> (⚒): 2 + its level per turn, +1 for the capital, +1 with its specialty building, halved while hungry, and it stores up to 4 turns' worth. Units, buildings and wonders cost the city's labor, tile improvements and repairs cost the labor of the city that works the tile, and nothing is built with gold any more. A city may complete as many projects in a turn as its labor allows. If it's short, you can <b>hurry</b> the work: each missing labor point costs 3 gold, and each project already completed in that city this turn makes hurrying 50% dearer. The button shows the price. So big, developed cities build armies and wonders, frontier towns develop slowly unless you pay, and losing a core city costs you making power, not just taxes.</p>
   <h3>Knowledge</h3>
   <p>Research is paid in <b>knowledge</b> (✦), not gold. Each city gives 0.5 + 0.5 per level, the capital +1, each Shrine and Market +2, and each active trade route +1 (+2 with an unrelated people: ideas travel with goods). Philosophy adds 25%. Vassals pass a quarter of theirs to their overlord. Tech costs rise with tier and with your number of cities.</p>
   <h3>Technology upkeep & dark ages</h3>
@@ -1325,6 +1330,8 @@ function showHelp() {
   <p>A conquered people goes by its own name joined to its ruler's, e.g. <b>Esko-Mardujana</b>. If it breaks free after long rule, it keeps the mark (<b>Mardu-Eskjana</b>). Names never stack beyond two parts, and only the latest influence is kept. Subject peoples feel unrest more strongly (+0.25 sensitivity) and regional offshoots slightly (+0.1). Revolts follow these lines: a rebellion takes its city's identity. Labels (<b>L</b>) name regions on every map mode except terrain.</p>
   <h3>Diplomacy</h3>
   <p>Tribes are at <b>war</b> until they make peace. Peace begins with a 10-turn <b>truce</b>. Units can't attack or enter the land of tribes they aren't at war with; allies share vision, may pass through each other's land, and defend each other when attacked. Declaring war on a partner earns grudges from the victim and from everyone who knows you. AI tribes use their temperament and their view of you to decide on war, peace, trade and alliances. Open <b>Diplomacy (D)</b> to deal with tribes you have met. Offers between humans wait for the other player's turn.</p>
+  <h3>Gold</h3>
+  <p>Gold is liquidity and influence. It comes from taxes (lighter than before), selling goods, tolls and tribute. It pays for army upkeep, subsidies, festivals, route upkeep and goods purchases, and it <b>hurries</b> construction. It also buys goodwill: a <b>gift</b> eases the recipient's grudges against you and builds favour that softens its stance for a while. A losing AI may sweeten a peace offer with gold, and an appeaser may court a dominant neighbour.</p>
   <h3>Tributaries</h3>
   <p>Instead of conquering a beaten enemy, <b>demand its submission</b>, or ask a stronger neighbour for <b>protection</b> when you are outmatched. A tributary keeps its cities, its people and its own unrest. It pays its overlord 25% of its gold income, ships surplus goods the overlord lacks along a raidable tribute route, and follows its overlord's wars and peace; the two share vision and passage. <b>Liberty desire</b> builds from distance, a foreign overlord, tribute and an overlord too weak to inspire awe, and eases with kinship and shared enemies. At 100 the vassal breaks free. An overlord can release a vassal, or <b>annex</b> it peacefully if their peoples are related, or after 30 turns of low liberty desire. An overlord whose only remaining rivals are its own vassals wins by conquest.</p>
   <h3>Strategic goods</h3>

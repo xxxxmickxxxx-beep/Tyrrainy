@@ -936,6 +936,24 @@ const diplomacyMethods = {
     return { ok: true };
   },
 
+  // ---- payments: gold buys goodwill. A gift eases the recipient's grudge against the giver and
+  // builds favour, which lowers its hostility (and so softens its answers to offers).
+  giveGold(from, to, amount) {
+    const F = this.players[from], T = this.players[to];
+    amount = Math.floor(Math.min(amount, F.gold));
+    if (amount <= 0) return { ok: false, why: 'Nothing to give' };
+    if (!this.hasMet(from, to)) return { ok: false, why: 'You have not met them' };
+    F.gold -= amount; T.gold += amount;
+    if (T.temper) {
+      T.temper.favor = T.temper.favor || {};
+      T.temper.favor[from] = (T.temper.favor[from] || 0) + amount;
+      if (T.temper.grudges[from]) T.temper.grudges[from] = Math.max(0, T.temper.grudges[from] - amount * 0.5);
+    }
+    this.addLog(`${F.name} sends ${amount} gold to ${T.name}.`, from);
+    this.emit('diplo', { type: 'gift', a: from, b: to, amount });
+    return { ok: true, amount };
+  },
+
   // ---- offers
   // AI answers at once; a human answers at the start of their next turn.
   offer(from, to, type) {
@@ -1736,6 +1754,7 @@ const upkeepMethods = {
 const INTEGRATION_TURNS = 10;
 const REVOLT_AT = 12;
 const KNOWLEDGE_PRICE = 2.2;
+const TAX_PER_LEVEL = 0.4; // phase 3: gold is liquidity now, not the engine of everything
 const HURRY_GOLD = 3; // gold per missing labor point // tech cost multiplier, calibrated to the old gold-based pace
 const RIOT_AT = 6;        // no training or construction
 const INSURRECTION_AT = 9; // rebel partisans may appear
@@ -1957,7 +1976,7 @@ class Game {
   cityIncome(city) {
     const pl = this.players[city.owner];
     const aff = this.affinity(city);
-    let g = 1 + Math.ceil(city.level * 0.6) + (city.capital ? 1 : 0) + AFFINITY[aff].gold;
+    let g = 1 + Math.ceil(city.level * TAX_PER_LEVEL) + (city.capital ? 1 : 0) + AFFINITY[aff].gold;
     if (city.subsidy) return 0;
     const riot = this.unrest(city).net;
     if (riot > 0) g -= riot; // restless cities withhold taxes
@@ -2050,7 +2069,6 @@ class Game {
   canTrain(city, type) {
     if (city.owner !== this.current) return { ok: false, why: 'Not your turn' };
     if (!this.trainable(city).includes(type)) return { ok: false, why: 'Not available' };
-    if (city.trainedTurn === this.turn) return { ok: false, why: 'Already trained this turn' };
     if (this.rioting(city)) return { ok: false, why: 'City is rioting' };
     const cost = this.unitCost(city, type);
     if (this.unitCount(city.owner) >= this.unitCap(city.owner)) return { ok: false, why: 'Unit cap reached (grow cities)' };
@@ -2103,21 +2121,30 @@ class Game {
   laborCap(city) { return 4 * this.laborRate(city); }
   // May this tribe top up a labor shortfall with gold? Humans: yes (the button shows the price).
   // AI: per its current policy (see ai.js).
-  hurryAllowed(pid) { const p = this.players[pid]; return p.human ? true : !!p.allowHurry; }
+  hurryAllowed(pid, mult = 1) { const p = this.players[pid]; return p.human ? true : !!p.allowHurry && mult <= (p.hurryMaxMult || 1); }
+  // Projects a city has completed this turn: each one makes hurrying the next 50% dearer.
+  worksDone(city) { return city.worksTurn === this.turn ? city.worksDone || 0 : 0; }
+  hurryMult(city) { return 1 + 0.5 * this.worksDone(city); }
   // Can `city` pay `cost` labor now, hurrying any shortfall with gold?
   workCheck(city, cost) {
     const pl = this.players[city.owner];
     const have = Math.floor(city.labor || 0);
     if (have >= cost) return { ok: true, labor: cost, gold: 0 };
-    const gold = HURRY_GOLD * (cost - have);
-    if (this.hurryAllowed(city.owner) && pl.gold >= gold) return { ok: true, labor: have, gold, hurried: true };
+    const mult = this.hurryMult(city);
+    const gold = Math.ceil(HURRY_GOLD * (cost - have) * mult);
+    if (this.hurryAllowed(city.owner, mult) && pl.gold >= gold) return { ok: true, labor: have, gold, hurried: true };
     return { ok: false, why: `Needs ${cost} labor in ${city.name} (has ${have})${pl.human ? `; hurrying costs ${gold} gold` : ''}`, short: cost - have, hurryGold: gold };
   }
-  payWork(city, w) { const pl = this.players[city.owner]; city.labor = (city.labor || 0) - w.labor; pl.gold -= w.gold; if (w.gold) pl.hurrySpent = (pl.hurrySpent || 0) + w.gold; }
+  payWork(city, w) {
+    const pl = this.players[city.owner];
+    city.labor = (city.labor || 0) - w.labor; pl.gold -= w.gold;
+    if (w.gold) pl.hurrySpent = (pl.hurrySpent || 0) + w.gold;
+    if (city.worksTurn !== this.turn) { city.worksTurn = this.turn; city.worksDone = 0; }
+    city.worksDone++;
+  }
   improveCost(pid, k) { return IMPROVEMENTS[k].cost; }
   // One construction per city per turn, and none while hostile troops stand next to it.
   buildBlock(city) {
-    if (city.builtTurn === this.turn) return 'Already built this turn';
     if (this.neighbors(city.idx).some(n => { const u = this.unitAt(n); return u && u.owner !== city.owner && this.atWar(u.owner, city.owner); })) return 'Enemies at the gates';
     return null;
   }
@@ -2493,7 +2520,9 @@ class Game {
       const restraint = Math.max(0.3, 1 - 0.7 * Math.min(1, C * 2));
       w = (1 + grudge + preyW) * restraint + threatW;
     }
-    return Math.max(0.1, w + supplierW);
+    // gifts buy goodwill (favour fades over time)
+    const favor = Math.min(1.2, (T.favor?.[target] || 0) / 50);
+    return Math.max(0.1, w + supplierW - favor);
   }
   coalitionMembers() {
     const live = new Set(this.contenders().map(p => p.id));
@@ -2507,6 +2536,7 @@ class Game {
       const T = p.temper;
       if (!T) continue;
       for (const k in T.grudges) { T.grudges[k] *= 0.9; if (T.grudges[k] < 1) delete T.grudges[k]; }
+      for (const k in T.favor || {}) { T.favor[k] *= 0.92; if (T.favor[k] < 1) delete T.favor[k]; }
       const C = this.threats(p.id).containment;
       if (T.joined >= 0 && (T.joined !== leader || C < T.threshold * T.patience)) {
         this.addLog(`${p.name} abandons the coalition against ${this.players[T.joined].name}.`, p.id);
@@ -3592,6 +3622,11 @@ function diplomacyAct(g, pid) {
       .sort((a, b) => g.hostility(pid, a.id) - g.hostility(pid, b.id))[0];
     if (protector) { pl.lastOffer['-1protect'] = g.turn; g.offer(pid, protector.id, 'protect'); }
   }
+  const dom = g.dominance();
+  if (T.key === 'appeaser' && dom.leader >= 0 && dom.leader !== pid && dom.d > 0.3 && pl.gold > 120 && !g.atWar(pid, dom.leader) && offerOk(dom.leader, 'gift')) {
+    pl.lastOffer[dom.leader + 'gift'] = g.turn;
+    g.giveGold(pid, dom.leader, Math.floor(pl.gold * 0.15));
+  }
   for (const o of others) {
     const r = g.relation(pid, o.id);
     const h = g.hostility(pid, o.id);
@@ -3608,7 +3643,14 @@ function diplomacyAct(g, pid) {
       const losing = myP < theirP * 0.6;
       const containing = T.joined === o.id;
       const weary = age >= 25;
-      if (offerOk(o.id, 'peace') && ((age >= 8 && h < 1.5 && !containing) || (losing && age >= 5) || (wars >= 3 && h < 2) || (weary && h < 2.2))) offer(o.id, 'peace');
+      if (offerOk(o.id, 'peace') && ((age >= 8 && h < 1.5 && !containing) || (losing && age >= 5) || (wars >= 3 && h < 2) || (weary && h < 2.2))) {
+        const res = offer(o.id, 'peace');
+        // refused? sweeten it: buy peace with a gift and ask again
+        if (res.ok && res.accepted === false && pl.gold > 60) {
+          g.giveGold(pid, o.id, Math.min(150, Math.floor(pl.gold * 0.25)));
+          g.offer(pid, o.id, 'peace');
+        }
+      }
       continue;
     }
     if (r.state === 'truce') continue;
@@ -3949,6 +3991,8 @@ function spend(g, pid, prof) {
   const reserve = 25 + 6 * nC + 5 * g.subsidyCost(pid);
   const threatened = g.cities.some(c => c.owner === pid && enemiesNear(g, pid, c.idx, 3) > 0);
   pl.allowHurry = pl.gold > reserve || (threatened && pl.gold > 15);
+  // a fuller treasury accepts the steeper prices of hurrying several projects in one city
+  pl.hurryMaxMult = threatened ? 2 : pl.gold > reserve * 4 ? 3 : pl.gold > reserve * 2 ? 2 : 1;
   for (let iter = 0; iter < 30; iter++) {
     const cities = g.cities.filter(c => c.owner === pid);
     if (!cities.length) return;
@@ -3999,7 +4043,7 @@ function spend(g, pid, prof) {
     const restless = cities.filter(c => g.unrest(c).net > 0).length;
     const wantCities = Math.min(14, Math.round((3 + g.turn / 5) * prof.expansion)) - restless * 2;
     if (settlers < 2 && cities.length + settlers < wantCities && capLeft > 0 && mil >= Math.min(2, cities.length)) {
-      const c = cities.filter(c => !g.unitAt(c.idx) && c.trainedTurn !== g.turn).sort((a, b) => b.level - a.level)[0];
+      const c = cities.filter(c => !g.unitAt(c.idx)).sort((a, b) => b.level - a.level)[0];
       if (c) {
         if (g.train(c, 'settler').ok) continue;
         // not enough labor yet: this city saves for the settler instead of spending on other things
@@ -4038,7 +4082,7 @@ function spend(g, pid, prof) {
     // build armies when below target, or when a city's labor would otherwise overflow
     const fullCity = cities.some(c => c !== saving && (c.labor || 0) >= g.laborCap(c) * 0.75 && !g.unitAt(c.idx));
     if ((mil < wantMil + (g.turn > 30 ? cities.length : 0) || fullCity) && capLeft > 0) {
-      const c = cities.filter(c => c !== saving && !g.unitAt(c.idx) && c.trainedTurn !== g.turn).sort((a, b) => enemiesNear(g, pid, b.idx, 8) - enemiesNear(g, pid, a.idx, 8))[0];
+      const c = cities.filter(c => c !== saving && !g.unitAt(c.idx)).sort((a, b) => enemiesNear(g, pid, b.idx, 8) - enemiesNear(g, pid, a.idx, 8))[0];
       if (c) { const k = bestMilitary(g, c, pl.gold); if (k && g.train(c, k).ok) continue; }
     }
 
@@ -5412,7 +5456,8 @@ function cityPanel(c) {
     h += moodBlock(c, mine && myTurn());
   }
   if (mine && myTurn()) {
-    h += `<h4>Train ${c.trainedTurn === game.turn ? '<span class="dim">(done this turn)</span>' : ''}</h4><div class="opts">`;
+    const wd = game.worksDone(c);
+    h += `<h4>Train${wd ? ` <span class="dim">(${wd} project${wd > 1 ? 's' : ''} done here this turn: hurrying costs ×${game.hurryMult(c)})</span>` : ''}</h4><div class="opts">`;
     for (const k of game.trainable(c)) {
       const U = UNITS[k];
       const chk = game.canTrain(c, k);
@@ -5706,7 +5751,9 @@ function showDiplomacy() {
     for (const p of others) {
       const r = game.relation(me.id, p.id);
       const hz = p.temper ? game.hostility(p.id, me.id) : null;
-      const att = hz == null ? '—' : hz < 1.3 ? '<span style="color:#7ddc6a">Friendly</span>' : hz < 1.9 ? '<span style="color:#e0d060">Wary</span>' : '<span style="color:#ff7060">Hostile</span>';
+      const fav = p.temper?.favor?.[me.id];
+      const att0 = hz == null ? '—' : hz < 1.3 ? '<span style="color:#7ddc6a">Friendly</span>' : hz < 1.9 ? '<span style="color:#e0d060">Wary</span>' : '<span style="color:#ff7060">Hostile</span>';
+      const att = att0 + (fav >= 5 ? ` <span class="dim">(favour ${Math.round(fav)})</span>` : '');
       const acts = [];
       const iAmVassal = game.isVassal(me.id);
       if (mine && r.state === 'vassal') {
@@ -5725,6 +5772,7 @@ function showDiplomacy() {
           else acts.push(['route', 'Open route', !game.canOpenRoute(me.id, p.id).ok]);
         }
         acts.push(['transit', game.transitClosed(me.id, p.id) ? 'Open our land' : 'Close our land']);
+        for (const amt of [25, 100]) acts.push(['gift' + amt, `Gift ◉${amt}`, me.gold < amt, 'Gold buys goodwill: it eases their grudges against you and softens their stance for a while']);
       }
       let route = '<span class="dim">—</span>';
       const rt = game.routeBetween(me.id, p.id);
@@ -5751,6 +5799,7 @@ function showDiplomacy() {
     if (k === 'war') { if (!confirm(`Declare war on the ${game.players[o].name}?`)) return; res = game.declareWar(me.id, o); }
     else if (k === 'endally') res = game.breakAlliance(me.id, o);
     else if (k === 'endroute') res = game.closeRoute(me.id, o);
+    else if (k.startsWith('gift')) { res = game.giveGold(me.id, o, +k.slice(4)); if (res.ok) toast(`Sent ${res.amount} gold.`); }
     else if (k === 'annex') { if (!confirm(`Absorb the ${game.players[o].name} into your realm?`)) return; res = game.annexVassal(me.id, o); }
     else if (k === 'release') res = game.releaseVassal(me.id, o);
     else if (k === 'independence') { if (!confirm(`Throw off ${game.players[o].name}'s rule? This means war.`)) return; res = game.declareIndependence(me.id); }

@@ -102,6 +102,24 @@ export const diplomacyMethods = {
     return { ok: true };
   },
 
+  // ---- payments: gold buys goodwill. A gift eases the recipient's grudge against the giver and
+  // builds favour, which lowers its hostility (and so softens its answers to offers).
+  giveGold(from, to, amount) {
+    const F = this.players[from], T = this.players[to];
+    amount = Math.floor(Math.min(amount, F.gold));
+    if (amount <= 0) return { ok: false, why: 'Nothing to give' };
+    if (!this.hasMet(from, to)) return { ok: false, why: 'You have not met them' };
+    F.gold -= amount; T.gold += amount;
+    if (T.temper) {
+      T.temper.favor = T.temper.favor || {};
+      T.temper.favor[from] = (T.temper.favor[from] || 0) + amount;
+      if (T.temper.grudges[from]) T.temper.grudges[from] = Math.max(0, T.temper.grudges[from] - amount * 0.5);
+    }
+    this.addLog(`${F.name} sends ${amount} gold to ${T.name}.`, from);
+    this.emit('diplo', { type: 'gift', a: from, b: to, amount });
+    return { ok: true, amount };
+  },
+
   // ---- offers
   // AI answers at once; a human answers at the start of their next turn.
   offer(from, to, type) {
