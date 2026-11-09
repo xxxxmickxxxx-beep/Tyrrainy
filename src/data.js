@@ -123,6 +123,15 @@ export const UNITS = {
 
 export const EMBARKED = { name: 'Boat', atk: 1, def: 1, mv: 2, rng: 1 };
 
+// Upgrade lines: a unit in one of its own cities can be re-equipped as a later type.
+export const UPGRADES = {
+  warrior: ['swordsman', 'legionary'],
+  swordsman: ['legionary'],
+  defender: ['legionary'],
+  rider: ['knight'],
+  slinger: ['archer'],
+};
+
 // ---------------- Improvements ----------------
 // pop: growth given to owning city; gold: one-off? no -> permanent income bonus
 export const IMPROVEMENTS = {

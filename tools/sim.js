@@ -22,6 +22,7 @@ for (let k = 0; k < games; k++) {
     if (t === 'revolt') st.revolts++;
     if (t === 'diplo') st[d.type] = (st[d.type] || 0) + 1;
     if (t === 'raid') st.raids = (st.raids || 0) + 1;
+    if (t === 'upgrade') st.upgrades = (st.upgrades || 0) + 1;
     if (t === 'forget') st.forgot = (st.forgot || 0) + 1;
     if (t === 'darkage' && d.start) st.dark = (st.dark || 0) + 1;
     if (t === 'razed') { st.razed = (st.razed || 0) + 1; if (/torch/.test(g.log[g.log.length - 1]?.msg || '')) st.chosen = (st.chosen || 0) + 1; }
@@ -42,6 +43,7 @@ for (let k = 0; k < games; k++) {
   const goods = g.contenders().map(p => `${p.name.slice(0, 8)}:${Object.entries(g.stock(p.id)).map(([k, v]) => k.slice(0, 2) + v).join(' ')}`).join(' | ');
   const units = {}; for (const u of g.units) units[u.type] = (units[u.type] || 0) + 1;
   console.log(`  stockpiles: ${goods}`);
+  console.log(`  upgrades ${st.upgrades || 0}`);
   console.log(`  unit mix: ${Object.entries(units).sort((a, b) => b[1] - a[1]).map(([k, v]) => k + ':' + v).join(' ')}`);
   console.log(`  diplomacy events: war ${st.war || 0}, peace ${st.peace || 0}, alliance ${st.alliance || 0}, routes opened ${st.route || 0} (active ${(g.routes || []).length}), raids ${st.raids || 0}, vassalages ${st.vassal || 0}, annexed ${st.annex || 0}, independence ${st.independence || 0} (vassals now ${g.contenders().filter(p => g.isVassal(p.id)).length}) | final relations among met pairs: ${JSON.stringify(rel)}`);
   const known = g.contenders().filter(p => !p.rebel).map(p => p.techs.length);

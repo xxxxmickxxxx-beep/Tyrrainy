@@ -160,6 +160,11 @@ If the city survives that roll, the **conqueror chooses** whether to keep it or 
 - **Gifts:** `giveGold` lowers the recipient's grudges against the giver by half the amount and builds favour, which lowers its hostility by up to 1.2 and fades 8% per turn. A losing AI whose peace offer is refused sends a gift (up to 25% of its gold, max 150) and asks again; an appeaser courts a dominant leader. Humans have gift buttons in Diplomacy.
 - **Sims (8 tribes, large map, 120 turns):** hurrying absorbs about 10,000 gold per game and the tech pace holds (16 by turn 120). Gold medians stay under about 250 through turn 60, but the late game can still hoard: 60–70% of cities sit at their labor cap with nothing left to build. That's a content gap (late projects, upgrades), not a tuning problem.
 
+### Unit upgrades
+- **Lines** (`UPGRADES` in `src/data.js`): Warrior → Swordsman → Legionary, Defender → Legionary, Rider → Knight, Slinger → Archer.
+- **How:** a unit in one of its own cities pays max(2, cost difference + 2) labor from that city plus the new type's goods. It keeps veteran status and its health ratio, and the upgrade uses its turn.
+- **AI:** upgrades units standing in cities whose labor is above 60% of the cap, or any time it's at war. In sims that's about 35 upgrades per large 120-turn game, limited mostly by iron.
+
 ### Knowledge (research)
 Research is paid in **knowledge** (✦), not gold. This is phase 1 of the gold-role pass (`docs/GOLD-PROPOSAL.md`).
 - **Sources per turn:** each city 0.5 + 0.5×level, capital +1, each Shrine and Market +2, each active trade route +1 (+2 with an unrelated people). Philosophy multiplies the total by 1.25. Vassals pass 25% to their overlord.

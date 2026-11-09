@@ -487,6 +487,19 @@ function researchAct(g, pid) {
   }
 }
 
+// Re-equip idle units standing in cities whose labor would otherwise go to waste, or anyone at war.
+function upgradeAct(g, pid) {
+  const atWar = g.warsOf(pid).length > 0;
+  for (const u of g.units.filter(x => x.owner === pid)) {
+    const opts = g.upgradeOptions(u);
+    if (!opts.length) continue;
+    const c = g.cityAt(u.idx);
+    if (!c || c.owner !== pid) continue;
+    if (!atWar && (c.labor || 0) < g.laborCap(c) * 0.6) continue;
+    for (const to of opts.slice().reverse()) if (g.canUpgrade(u, to).ok) { g.upgrade(u, to); break; }
+  }
+}
+
 function spend(g, pid, prof) {
   const pl = g.players[pid];
   researchAct(g, pid);
@@ -498,6 +511,7 @@ function spend(g, pid, prof) {
   pl.allowHurry = pl.gold > reserve || (threatened && pl.gold > 15);
   // a fuller treasury accepts the steeper prices of hurrying several projects in one city
   pl.hurryMaxMult = threatened ? 2 : pl.gold > reserve * 4 ? 3 : pl.gold > reserve * 2 ? 2 : 1;
+  upgradeAct(g, pid);
   for (let iter = 0; iter < 30; iter++) {
     const cities = g.cities.filter(c => c.owner === pid);
     if (!cities.length) return;

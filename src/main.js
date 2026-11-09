@@ -571,6 +571,16 @@ function unitPanel(u) {
       h += `<button class="primary" data-act="settle" ${chk.ok ? '' : 'disabled'}>Found city <kbd>S</kbd></button> ${chk.ok ? '' : `<span class="dim">${esc(chk.why)}</span>`}`;
       h += `<div class="desc">Green dashed hexes nearby are valid sites.</div>`;
     }
+    const ups = game.upgradeOptions(u);
+    if (ups.length) {
+      h += `<h4>Upgrade</h4><div class="opts">`;
+      for (const to of ups) {
+        const chk = game.canUpgrade(u, to);
+        const T = UNITS[to];
+        h += `<button data-act="upgrade" data-k="${to}" ${chk.ok ? '' : 'disabled'} title="${esc(chk.why || '')}">${T.name} ${workLabel(game.upgradeCost(u, to), chk)}<small>${T.atk}/${T.def} hp${T.hp}${T.needs ? ` <span class="needs">· ${game.goodsText(T.needs)}</span>` : ''}${chk.ok ? '' : ' · ' + esc(chk.why)}</small></button>`;
+      }
+      h += `</div>`;
+    }
     h += `<div style="margin-top:10px"><button data-act="disband">Disband</button>${u.goto != null ? ' <button data-act="cancelgoto">Cancel move order</button>' : ''}</div>`;
   }
   // combat preview against hovered enemy handled by tooltip; show tile info too
@@ -731,6 +741,7 @@ function panelAction(d) {
   let res = { ok: true };
   if (d.act === 'settle') { doSettle(selUnit()); return; }
   if (d.act === 'disband') { const u = selUnit(); if (u && confirm('Disband this unit?')) { game.disband(u); deselect(); refreshAll(); } return; }
+  if (d.act === 'upgrade') { const u = selUnit(); const r = game.upgrade(u, d.k); if (!r.ok) toast(r.why); else select({ kind: 'unit', id: u.id, idx: u.idx }); refreshAll(); return; }
   if (d.act === 'cancelgoto') { const u = selUnit(); if (u) u.goto = null; select(sel); return; }
   if (d.act === 'train') {
     const c = game.cityById(sel.id);
@@ -1278,6 +1289,7 @@ function showHelp() {
   <li>Your unit cap is the sum of (city level + 1). Each city feeds 2 units for free; every extra unit costs 1 gold of upkeep per turn.</li></ul>
   <h3>Labor</h3>
   <p>Every city has its own <b>labor</b> (⚒): 2 + its level per turn, +1 for the capital, +1 with its specialty building, halved while hungry, and it stores up to 4 turns' worth. Units, buildings and wonders cost the city's labor, tile improvements and repairs cost the labor of the city that works the tile, and nothing is built with gold any more. A city may complete as many projects in a turn as its labor allows. If it's short, you can <b>hurry</b> the work: each missing labor point costs 3 gold, and each project already completed in that city this turn makes hurrying 50% dearer. The button shows the price. So big, developed cities build armies and wonders, frontier towns develop slowly unless you pay, and losing a core city costs you making power, not just taxes.</p>
+  <h3>Upgrades</h3><p>A unit standing in one of your cities can be re-equipped as a later type (Warrior → Swordsman → Legionary, Defender → Legionary, Rider → Knight, Slinger → Archer). It costs the difference in labor (at least 2) from that city plus the new type's goods, keeps veteran status and its share of health, and uses the unit's turn.</p>
   <h3>Knowledge</h3>
   <p>Research is paid in <b>knowledge</b> (✦), not gold. Each city gives 0.5 + 0.5 per level, the capital +1, each Shrine and Market +2, and each active trade route +1 (+2 with an unrelated people: ideas travel with goods). Philosophy adds 25%. Vassals pass a quarter of theirs to their overlord. Tech costs rise with tier and with your number of cities.</p>
   <h3>Technology upkeep & dark ages</h3>

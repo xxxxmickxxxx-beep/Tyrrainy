@@ -3,7 +3,7 @@ import { neighborsOf, hexDist } from './hex.js';
 import { makeRng } from './rng.js';
 import {
   TERRAIN, SPECIALTY, KIN_DIST, AFFINITY, UNITS, EMBARKED, IMPROVEMENTS,
-  BUILDINGS, WONDERS, TECHS, TEMPERAMENTS, resMatches, TRIBE_PALETTE, SUBSIDIES, SENSITIVITY, FOREIGN_PEOPLE_SENSITIVITY, techCost, TERRAIN_TO_SPECIALTY, TRIBE_NAMES, CITY_NAMES, PLAYER_COLORS,
+  BUILDINGS, WONDERS, TECHS, TEMPERAMENTS, resMatches, UPGRADES, TRIBE_PALETTE, SUBSIDIES, SENSITIVITY, FOREIGN_PEOPLE_SENSITIVITY, techCost, TERRAIN_TO_SPECIALTY, TRIBE_NAMES, CITY_NAMES, PLAYER_COLORS,
 } from './data.js';
 import { generateMap, pickStarts, MAP_SIZES } from './mapgen.js';
 import { diplomacyMethods } from './diplomacy.js';
@@ -1515,6 +1515,36 @@ export class Game {
   }
 
   disband(u) { this.units = this.units.filter(x => x !== u); this.rebuildUnitMap(); }
+
+  // ---- upgrades: re-equip a unit standing in one of its own cities
+  upgradeOptions(u) { return (UPGRADES[u.type] || []).filter(t => !UNITS[t].tech || this.has(u.owner, UNITS[t].tech)); }
+  upgradeCost(u, to) { return Math.max(2, UNITS[to].cost - UNITS[u.type].cost + 2); }
+  canUpgrade(u, to) {
+    if (u.owner !== this.current) return { ok: false, why: 'Not your turn' };
+    if (!this.upgradeOptions(u).includes(to)) return { ok: false, why: 'Not available' };
+    const city = this.cityAt(u.idx);
+    if (!city || city.owner !== u.owner) return { ok: false, why: 'Must stand in one of your cities' };
+    if (u.attacked || u.mvLeft <= 0) return { ok: false, why: 'Unit has already acted' };
+    const goods = this.canPay(u.owner, UNITS[to].needs, city);
+    if (!goods.ok) return goods;
+    const work = this.workCheck(city, this.upgradeCost(u, to));
+    if (!work.ok) return work;
+    return { ok: true, city, work };
+  }
+  upgrade(u, to) {
+    const chk = this.canUpgrade(u, to);
+    if (!chk.ok) return chk;
+    this.payWork(chk.city, chk.work);
+    this.pay(u.owner, UNITS[to].needs);
+    const ratio = u.hp / this.maxHp(u);
+    const from = u.type;
+    u.type = to;
+    u.hp = Math.max(1, Math.round(ratio * this.maxHp(u)));
+    u.mvLeft = 0; u.acted = true; u.attacked = true;
+    this.addLog(`A ${UNITS[from].name} of ${this.players[u.owner].name} is re-equipped as a ${UNITS[to].name}.`, u.owner, u.idx);
+    this.emit('upgrade', { u, from, to });
+    return { ok: true };
+  }
 
   // ------------------------------------------------------------ settlers
   canSettle(u) {

@@ -252,6 +252,15 @@ const UNITS = {
 
 const EMBARKED = { name: 'Boat', atk: 1, def: 1, mv: 2, rng: 1 };
 
+// Upgrade lines: a unit in one of its own cities can be re-equipped as a later type.
+const UPGRADES = {
+  warrior: ['swordsman', 'legionary'],
+  swordsman: ['legionary'],
+  defender: ['legionary'],
+  rider: ['knight'],
+  slinger: ['archer'],
+};
+
 // ---------------- Improvements ----------------
 // pop: growth given to owning city; gold: one-off? no -> permanent income bonus
 const IMPROVEMENTS = {
@@ -3254,6 +3263,36 @@ class Game {
 
   disband(u) { this.units = this.units.filter(x => x !== u); this.rebuildUnitMap(); }
 
+  // ---- upgrades: re-equip a unit standing in one of its own cities
+  upgradeOptions(u) { return (UPGRADES[u.type] || []).filter(t => !UNITS[t].tech || this.has(u.owner, UNITS[t].tech)); }
+  upgradeCost(u, to) { return Math.max(2, UNITS[to].cost - UNITS[u.type].cost + 2); }
+  canUpgrade(u, to) {
+    if (u.owner !== this.current) return { ok: false, why: 'Not your turn' };
+    if (!this.upgradeOptions(u).includes(to)) return { ok: false, why: 'Not available' };
+    const city = this.cityAt(u.idx);
+    if (!city || city.owner !== u.owner) return { ok: false, why: 'Must stand in one of your cities' };
+    if (u.attacked || u.mvLeft <= 0) return { ok: false, why: 'Unit has already acted' };
+    const goods = this.canPay(u.owner, UNITS[to].needs, city);
+    if (!goods.ok) return goods;
+    const work = this.workCheck(city, this.upgradeCost(u, to));
+    if (!work.ok) return work;
+    return { ok: true, city, work };
+  }
+  upgrade(u, to) {
+    const chk = this.canUpgrade(u, to);
+    if (!chk.ok) return chk;
+    this.payWork(chk.city, chk.work);
+    this.pay(u.owner, UNITS[to].needs);
+    const ratio = u.hp / this.maxHp(u);
+    const from = u.type;
+    u.type = to;
+    u.hp = Math.max(1, Math.round(ratio * this.maxHp(u)));
+    u.mvLeft = 0; u.acted = true; u.attacked = true;
+    this.addLog(`A ${UNITS[from].name} of ${this.players[u.owner].name} is re-equipped as a ${UNITS[to].name}.`, u.owner, u.idx);
+    this.emit('upgrade', { u, from, to });
+    return { ok: true };
+  }
+
   // ------------------------------------------------------------ settlers
   canSettle(u) {
     if (u.type !== 'settler') return { ok: false, why: 'Not a settler' };
@@ -3982,6 +4021,19 @@ function researchAct(g, pid) {
   }
 }
 
+// Re-equip idle units standing in cities whose labor would otherwise go to waste, or anyone at war.
+function upgradeAct(g, pid) {
+  const atWar = g.warsOf(pid).length > 0;
+  for (const u of g.units.filter(x => x.owner === pid)) {
+    const opts = g.upgradeOptions(u);
+    if (!opts.length) continue;
+    const c = g.cityAt(u.idx);
+    if (!c || c.owner !== pid) continue;
+    if (!atWar && (c.labor || 0) < g.laborCap(c) * 0.6) continue;
+    for (const to of opts.slice().reverse()) if (g.canUpgrade(u, to).ok) { g.upgrade(u, to); break; }
+  }
+}
+
 function spend(g, pid, prof) {
   const pl = g.players[pid];
   researchAct(g, pid);
@@ -3993,6 +4045,7 @@ function spend(g, pid, prof) {
   pl.allowHurry = pl.gold > reserve || (threatened && pl.gold > 15);
   // a fuller treasury accepts the steeper prices of hurrying several projects in one city
   pl.hurryMaxMult = threatened ? 2 : pl.gold > reserve * 4 ? 3 : pl.gold > reserve * 2 ? 2 : 1;
+  upgradeAct(g, pid);
   for (let iter = 0; iter < 30; iter++) {
     const cities = g.cities.filter(c => c.owner === pid);
     if (!cities.length) return;
@@ -5411,6 +5464,16 @@ function unitPanel(u) {
       h += `<button class="primary" data-act="settle" ${chk.ok ? '' : 'disabled'}>Found city <kbd>S</kbd></button> ${chk.ok ? '' : `<span class="dim">${esc(chk.why)}</span>`}`;
       h += `<div class="desc">Green dashed hexes nearby are valid sites.</div>`;
     }
+    const ups = game.upgradeOptions(u);
+    if (ups.length) {
+      h += `<h4>Upgrade</h4><div class="opts">`;
+      for (const to of ups) {
+        const chk = game.canUpgrade(u, to);
+        const T = UNITS[to];
+        h += `<button data-act="upgrade" data-k="${to}" ${chk.ok ? '' : 'disabled'} title="${esc(chk.why || '')}">${T.name} ${workLabel(game.upgradeCost(u, to), chk)}<small>${T.atk}/${T.def} hp${T.hp}${T.needs ? ` <span class="needs">· ${game.goodsText(T.needs)}</span>` : ''}${chk.ok ? '' : ' · ' + esc(chk.why)}</small></button>`;
+      }
+      h += `</div>`;
+    }
     h += `<div style="margin-top:10px"><button data-act="disband">Disband</button>${u.goto != null ? ' <button data-act="cancelgoto">Cancel move order</button>' : ''}</div>`;
   }
   // combat preview against hovered enemy handled by tooltip; show tile info too
@@ -5571,6 +5634,7 @@ function panelAction(d) {
   let res = { ok: true };
   if (d.act === 'settle') { doSettle(selUnit()); return; }
   if (d.act === 'disband') { const u = selUnit(); if (u && confirm('Disband this unit?')) { game.disband(u); deselect(); refreshAll(); } return; }
+  if (d.act === 'upgrade') { const u = selUnit(); const r = game.upgrade(u, d.k); if (!r.ok) toast(r.why); else select({ kind: 'unit', id: u.id, idx: u.idx }); refreshAll(); return; }
   if (d.act === 'cancelgoto') { const u = selUnit(); if (u) u.goto = null; select(sel); return; }
   if (d.act === 'train') {
     const c = game.cityById(sel.id);
@@ -6117,7 +6181,8 @@ function showHelp() {
   <li>Train <b>Settlers</b> to found new cities — choose the land wisely. Settlers get pricier with every city.</li>
   <li>Your unit cap is the sum of (city level + 1). Each city feeds 2 units for free; every extra unit costs 1 gold of upkeep per turn.</li></ul>
   <h3>Labor</h3>
-  <p>Every city has its own <b>labor</b> (⚒): 2 + its level per turn, +1 for the capital, +1 with its specialty building, halved while hungry, and it stores up to 4 turns' worth. Units, buildings and wonders cost the city's labor, tile improvements and repairs cost the labor of the city that works the tile, and nothing is built with gold any more. If a city is short, you can <b>hurry</b> the work: each missing labor point costs 3 gold, and the button shows the price. So big, developed cities build armies and wonders, frontier towns develop slowly unless you pay, and losing a core city costs you making power, not just taxes.</p>
+  <p>Every city has its own <b>labor</b> (⚒): 2 + its level per turn, +1 for the capital, +1 with its specialty building, halved while hungry, and it stores up to 4 turns' worth. Units, buildings and wonders cost the city's labor, tile improvements and repairs cost the labor of the city that works the tile, and nothing is built with gold any more. A city may complete as many projects in a turn as its labor allows. If it's short, you can <b>hurry</b> the work: each missing labor point costs 3 gold, and each project already completed in that city this turn makes hurrying 50% dearer. The button shows the price. So big, developed cities build armies and wonders, frontier towns develop slowly unless you pay, and losing a core city costs you making power, not just taxes.</p>
+  <h3>Upgrades</h3><p>A unit standing in one of your cities can be re-equipped as a later type (Warrior → Swordsman → Legionary, Defender → Legionary, Rider → Knight, Slinger → Archer). It costs the difference in labor (at least 2) from that city plus the new type's goods, keeps veteran status and its share of health, and uses the unit's turn.</p>
   <h3>Knowledge</h3>
   <p>Research is paid in <b>knowledge</b> (✦), not gold. Each city gives 0.5 + 0.5 per level, the capital +1, each Shrine and Market +2, and each active trade route +1 (+2 with an unrelated people: ideas travel with goods). Philosophy adds 25%. Vassals pass a quarter of theirs to their overlord. Tech costs rise with tier and with your number of cities.</p>
   <h3>Technology upkeep & dark ages</h3>
@@ -6170,6 +6235,8 @@ function showHelp() {
   <p>A conquered people goes by its own name joined to its ruler's, e.g. <b>Esko-Mardujana</b>. If it breaks free after long rule, it keeps the mark (<b>Mardu-Eskjana</b>). Names never stack beyond two parts, and only the latest influence is kept. Subject peoples feel unrest more strongly (+0.25 sensitivity) and regional offshoots slightly (+0.1). Revolts follow these lines: a rebellion takes its city's identity. Labels (<b>L</b>) name regions on every map mode except terrain.</p>
   <h3>Diplomacy</h3>
   <p>Tribes are at <b>war</b> until they make peace. Peace begins with a 10-turn <b>truce</b>. Units can't attack or enter the land of tribes they aren't at war with; allies share vision, may pass through each other's land, and defend each other when attacked. Declaring war on a partner earns grudges from the victim and from everyone who knows you. AI tribes use their temperament and their view of you to decide on war, peace, trade and alliances. Open <b>Diplomacy (D)</b> to deal with tribes you have met. Offers between humans wait for the other player's turn.</p>
+  <h3>Gold</h3>
+  <p>Gold is liquidity and influence. It comes from taxes (lighter than before), selling goods, tolls and tribute. It pays for army upkeep, subsidies, festivals, route upkeep and goods purchases, and it <b>hurries</b> construction. It also buys goodwill: a <b>gift</b> eases the recipient's grudges against you and builds favour that softens its stance for a while. A losing AI may sweeten a peace offer with gold, and an appeaser may court a dominant neighbour.</p>
   <h3>Tributaries</h3>
   <p>Instead of conquering a beaten enemy, <b>demand its submission</b>, or ask a stronger neighbour for <b>protection</b> when you are outmatched. A tributary keeps its cities, its people and its own unrest. It pays its overlord 25% of its gold income, ships surplus goods the overlord lacks along a raidable tribute route, and follows its overlord's wars and peace; the two share vision and passage. <b>Liberty desire</b> builds from distance, a foreign overlord, tribute and an overlord too weak to inspire awe, and eases with kinship and shared enemies. At 100 the vassal breaks free. An overlord can release a vassal, or <b>annex</b> it peacefully if their peoples are related, or after 30 turns of low liberty desire. An overlord whose only remaining rivals are its own vassals wins by conquest.</p>
   <h3>Strategic goods</h3>
