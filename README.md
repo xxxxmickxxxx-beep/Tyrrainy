@@ -147,20 +147,13 @@ If the city survives that roll, the **conqueror chooses** whether to keep it or 
   - **Alliances and trade:** it proposes alliances with coalition partners or co-belligerents, and trade wherever it pays.
 - **Humans** act in the Diplomacy screen (D). Offers to a human wait for the start of that human's turn. A human refusal makes the AI wait 15 turns before asking again.
 
-### Trade goods
-- **Production:** each specialty yields a good (`GOODS` in `src/data.js`) once a city of that kind has its specialty building or reaches level 5.
-- **Bonuses:** having a good, by producing it or importing it, grants an empire-wide bonus:
-  - grain: settlers −2, new cities +1 pop;
-  - stone: buildings −1;
-  - salt fish: +1 healing;
-  - cloth: +1 gold in level 4+ cities;
-  - timber: improvements −1;
-  - spice: festivals half price and −10% riot risk;
-  - horses: mounted units −1;
-  - reeds: Grain dole and Patronage −1 gold;
-  - ore: foot soldiers −1.
-- **Trade agreements** need peace or an alliance. They share all of each side's own production (no re-export) and pay each side 1 gold per turn, +1 per new good gained (max 3), +1 between unrelated peoples.
-- **Limits:** a tribe can have 1 + 1 per 4 cities trade partners. War ends any agreement.
+### Strategic goods (`src/economy.js`)
+Goods are rival and come from places. Infinite goods shared freely made "ally with everyone" the dominant strategy, so they were replaced.
+- **Deposits:** a Mine on an ore deposit gives ore, a Pasture on a horse herd gives horses, a Lumber Camp gives timber, and a Quarry on hills gives stone. Each yields 1 per turn, capped at 2 per good per city and doubled by that city's specialty building (Deep Mine, Stables, Sawmill, Watchtower). Damaged or enemy-occupied tiles yield nothing.
+- **National stockpile:** cap 8 + 2 per city; surplus beyond the cap is lost. A city feeds and draws on it only while **connected to the capital**: a path of land (or shallow water with Sailing, ocean with Navigation) not through hostile land or past enemy units. Cut-off cities (⚠) are economically besieged.
+- **Hard requirements:** advanced units and many buildings need goods (`needs` in `src/data.js`). A Swordsman takes 1 ore, a Knight 1 ore + 1 horses, Walls 2 stone, and wonders 3 stone + 2 timber. Basic units and buildings never do.
+- **Supply:** every 4 units that needed a good consume 1 of it per turn. Unsupplied units get −25% attack and −15% defense, and don't heal.
+- **AI:** it values improvements on deposits it lacks, settles near ore and horses, and won't field armies its supply can't feed.
 
 ### Peoples (cultures) & records
 Peoples are separate from polities (`src/culture.js`), as in CK3, and names never exceed two parts.

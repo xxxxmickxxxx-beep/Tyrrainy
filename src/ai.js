@@ -1,5 +1,5 @@
 // Computer opponents. Greedy heuristics, fast enough for 8 tribes on huge maps.
-import { UNITS, TECHS, IMPROVEMENTS, BUILDINGS, WONDERS, KIN_DIST, TERRAIN, SPECIALTY } from './data.js';
+import { UNITS, TECHS, IMPROVEMENTS, BUILDINGS, WONDERS, KIN_DIST, TERRAIN, SPECIALTY, IMP_YIELD } from './data.js';
 import { REVOLT_AT } from './game.js';
 import { SUBSIDIES } from './data.js';
 
@@ -140,7 +140,6 @@ function diplomacyAct(g, pid) {
     if (near && wars === 0 && myP >= theirP * 1.5 && g.rng() < 0.05 * appetite) { g.declareWar(pid, o.id); continue; }
     // 3. idle riches: a large treasury and a standing army look for a use
     if (near && wars === 0 && pl.gold > 250 && myP >= theirP * 1.1 && g.rng() < 0.03 * (0.5 + appetite)) { g.declareWar(pid, o.id); continue; }
-    if (offerOk(o.id, 'trade') && g.canTrade(pid, o.id).ok && g.tradeIncomeFor(pid, o.id) >= 2 && h < 1.9) offer(o.id, 'trade');
     if (offerOk(o.id, 'alliance') && g.aiAccepts(pid, o.id, 'alliance')) offer(o.id, 'alliance');
   }
 }
@@ -299,6 +298,7 @@ function siteScore(g, pid, i) {
     if (TERRAIN[tl.t].water) s += 0.4;
     else if (tl.t !== 'mountain') s += 1;
     if (tl.res) s += 1.3;
+    if (tl.res === 'ore' || tl.res === 'horses') s += 1.2; // strategic deposits draw settlers
     if (tl.river) s += 0.4;
   }
   const spec = g.specialtyAt(i);
@@ -366,6 +366,14 @@ function techValue(g, pid, t) {
   return v / TECHS[t].tier;
 }
 
+// How badly a tribe wants more of a good: high when its stockpile is low and it isn't producing any.
+function goodHunger(g, pid, good) {
+  const st = g.stock(pid)[good], prod = g.players[pid].lastProd?.[good] || 0;
+  if (prod === 0 && st < 4) return 1.2;
+  if (st < 6) return 0.6;
+  return 0.15;
+}
+
 function bestMilitary(g, city, gold) {
   let best = null, bestS = -Infinity;
   for (const k of g.trainable(city)) {
@@ -373,6 +381,9 @@ function bestMilitary(g, city, gold) {
     const U = UNITS[k];
     const cost = g.unitCost(city, k);
     if (cost > gold) continue;
+    if (!g.canPay(city.owner, U.needs, city).ok) continue;
+    // don't field more of an army than our supply can feed
+    if (U.needs && Object.keys(U.needs).some(k => (g.players[city.owner].lastProd?.[k] || 0) < (g.supplyNeed(city.owner)[k] || 0) + 0.5 && g.stock(city.owner)[k] < 6)) continue;
     if (U.traits?.includes('naval') && g.rng() < 0.6) continue;
     const s = (U.atk * 1.1 + U.def) * U.hp / 10 + (U.mv - 1) * 0.8 + (U.rng - 1) * 0.6 + (U.unique ? 1 : 0) + g.rng() * 1.5 - cost * (gold > 30 ? 0.02 : 0.15);
     if (s > bestS) { bestS = s; best = k; }
@@ -454,7 +465,9 @@ function spend(g, pid, prof) {
         for (const k of g.improvementsFor(pid, t)) {
           const chk = g.canImprove(pid, t, k);
           if (!chk.ok) continue;
-          const v = g.improvePop(t, k) / IMPROVEMENTS[k].cost;
+          let v = g.improvePop(t, k) / IMPROVEMENTS[k].cost;
+          const y = IMP_YIELD[k];
+          if (y && (!y.res || g.tiles[t].res === y.res)) v += goodHunger(g, pid, y.good) / IMPROVEMENTS[k].cost;
           if (v > bestV) { bestV = v; bestImp = [t, k]; }
         }
       }

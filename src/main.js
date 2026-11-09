@@ -6,7 +6,7 @@ import { MAP_SIZES, MAP_TYPES } from './mapgen.js';
 import { ROOTS } from './culture.js';
 import {
   TERRAIN, SPECIALTY, SPECIALTY_KEYS, KIN_DIST, AFFINITY, UNITS, IMPROVEMENTS, BUILDINGS, WONDERS, TECHS, RESOURCES, TEMPERAMENTS, SUBSIDIES, SENSITIVITY,
-  GOODS, GOOD_BY_KEY,
+  STRATEGIC, GOOD_KEYS, IMP_YIELD, GOOD_DOUBLER,
 } from './data.js';
 
 const $ = (id) => document.getElementById(id);
@@ -191,12 +191,8 @@ function showOffers(pl) {
   const o = (game.offers || []).find(x => x.to === pl.id);
   if (!o) return;
   const from = game.players[o.from];
-  const what = { peace: 'peace', alliance: 'an alliance', trade: 'a trade agreement' }[o.type];
+  const what = { peace: 'peace', alliance: 'an alliance' }[o.type];
   let extra = '';
-  if (o.type === 'trade') {
-    const gain = game.tradeGain(pl.id, o.from).map(k => GOOD_BY_KEY[k].name);
-    extra = `<p>You would gain ${gain.length ? gain.join(', ') : 'no new goods'} and earn ${game.tradeIncomeFor(pl.id, o.from)} gold per turn.</p>`;
-  }
   openModal(`<h2>${chip(from)} ${esc(from.name)} offer ${what}</h2>${extra}<p><button class="primary" id="btnAcc">Accept</button> <button id="btnDec">Decline</button></p>`);
   const done = (yes) => { $('btnAcc').onclick = $('btnDec').onclick = null; const r = game.answerOffer(o, yes); if (!r.ok) toast(r.why); closeModal(); refreshAll(); setTimeout(() => showOffers(pl), 50); };
   $('btnAcc').onclick = () => done(true);
@@ -305,6 +301,7 @@ function initInput() {
     else if (e.key === 'Escape') deselect();
     else if (e.key === 't' || e.key === 'T') showTech();
     else if (e.key === 'd' || e.key === 'D') showDiplomacy();
+    else if (e.key === 'g' || e.key === 'G') showGoods();
     else if (e.key === 'l' || e.key === 'L') { $('mapLabels').checked = !$('mapLabels').checked; R.showLabels = $('mapLabels').checked; R.dirty = true; }
     else if (e.key === 'm' || e.key === 'M') { const o = [...$('mapMode').options].map(x => x.value); setMapMode(o[(o.indexOf(R.mapMode) + 1) % o.length]); }
     else if (e.key === 's' || e.key === 'S') { const u = selUnit(); if (u && u.type === 'settler') doSettle(u); }
@@ -322,6 +319,7 @@ function initInput() {
   $('mapLabels').onchange = () => { R.showLabels = $('mapLabels').checked; R.dirty = true; };
   $('btnTribes').onclick = showTribes;
   $('btnDiplo').onclick = showDiplomacy;
+  $('goodsBar').onclick = showGoods;
   $('btnHelp').onclick = showHelp;
   $('btnMenu').onclick = showLeave;
   $('modalClose').onclick = closeModal;
@@ -461,8 +459,17 @@ function doSettle(u) {
 // ------------------------------------------------------------ panels
 function refreshAll() { updateTopbar(); refreshPanel(); R.dirty = true; }
 
+function goodsBarHTML(pid) {
+  const st = game.stock(pid), prod = game.players[pid].lastProd || game.production(pid), need = game.supplyNeed(pid), un = game.players[pid].unsupplied || {};
+  return GOOD_KEYS.map(k => {
+    const net = (prod[k] || 0) - (need[k] || 0);
+    return `<span class="g ${un[k] ? 'short' : ''}" title="${STRATEGIC[k].name}: ${st[k]} in stock, ${net >= 0 ? '+' : ''}${net} per turn"><i style="background:${STRATEGIC[k].color}"></i>${STRATEGIC[k].name.slice(0, 1)} <b>${st[k]}</b><span class="dim">${net >= 0 ? '+' : ''}${net}</span></span>`;
+  }).join('');
+}
+
 function updateTopbar() {
   const pl = game.players[R.viewer];
+  $('goodsBar').innerHTML = goodsBarHTML(pl.id);
   $('tribeChip').style.background = pl.color;
   $('tribeChip').style.borderColor = pl.color2 || '#111';
   $('tribeName').textContent = pl.name;
@@ -511,6 +518,7 @@ function unitPanel(u) {
   let h = `<h3 style="color:${pl.color}">${U.name}${u.vet ? ' ★' : ''}${game.embarked(u) ? ' (embarked)' : ''}</h3>`;
   h += `<div class="dim">${esc(pl.name)}</div>`;
   h += `<div class="statline">HP ${u.hp}/${game.maxHp(u)} · ATK ${S.atk} · DEF ${S.def} · MV ${S.mv} · RNG ${S.rng}</div>`;
+  if (U.needs) h += `<div class="desc">Supply: ${Object.keys(U.needs).map(k => STRATEGIC[k].name.toLowerCase()).join(' & ')} (every ${4} such units use 1 per turn).${game.unsupplied(u) ? ' <b style="color:#ff8060">Unsupplied: −25% attack, −15% defense, no healing.</b>' : ''}</div>`;
   const traits = (U.traits || []).filter(t => t !== 'settler');
   if (traits.length) h += `<div class="desc">Traits: ${traits.map(traitName).join(', ')}</div>`;
   if (U.unique) h += `<div class="desc">Unique to ${SPECIALTY[U.unique].name} cities.</div>`;
@@ -556,6 +564,9 @@ function cityPanel(c) {
     }
     h += `<div class="desc">${affNote}</div>`;
     h += `<div class="row"><span>Income</span><b>+${game.cityIncome(c)} gold</b></div>`;
+    const cp = game.cityProduction(c);
+    if (Object.keys(cp).length) h += `<div class="row"><span>Goods</span><span>${Object.entries(cp).map(([k, n]) => `+${n} ${STRATEGIC[k].name.toLowerCase()}`).join(', ')}</span></div>`;
+    if (!game.isConnected(c)) h += `<div class="desc" style="color:#ff9a60"><b>Cut off from the capital.</b> Its goods can't reach your stockpile, and it can't use the stockpile to train or build. Clear the enemies or hostile land between them.</div>`;
     const occ = game.occupation(c);
     if (occ.lost) h += `<div class="desc" style="color:#ff8a70">${occ.lost} worked tile${occ.lost > 1 ? 's are' : ' is'} occupied or damaged: −${occ.lost} gold.${occ.occupied ? ' Enemies on your land also raise unrest and may pillage.' : ''}</div>`;
     h += peopleLine(c);
@@ -567,7 +578,7 @@ function cityPanel(c) {
       const U = UNITS[k];
       const chk = game.canTrain(c, k);
       const cost = game.unitCost(c, k);
-      h += `<button data-act="train" data-k="${k}" class="${U.unique ? 'unique' : ''}" ${chk.ok ? '' : 'disabled'} title="${esc(chk.why || '')}">${U.name} ◉${cost}<small>${U.atk}/${U.def} hp${U.hp} mv${U.mv}${U.rng > 1 ? ' r' + U.rng : ''}</small></button>`;
+      h += `<button data-act="train" data-k="${k}" class="${U.unique ? 'unique' : ''}" ${chk.ok ? '' : 'disabled'} title="${esc(chk.why || '')}">${U.name} ◉${cost}<small>${U.atk}/${U.def} hp${U.hp} mv${U.mv}${U.rng > 1 ? ' r' + U.rng : ''}${U.needs ? ` <span class="needs">· ${game.goodsText(U.needs)}</span>` : ''}</small></button>`;
     }
     h += `</div>`;
     const lockedUnique = SPECIALTY[c.specialty].unit;
@@ -576,7 +587,7 @@ function cityPanel(c) {
     for (const b of game.buildable(c)) {
       const B = BUILDINGS[b];
       const chk = game.canBuild(c, b);
-      h += `<button data-act="build" data-k="${b}" ${chk.ok ? '' : 'disabled'} title="${esc(chk.why || '')}">${B.name} ◉${B.cost}<small>${B.desc}</small></button>`;
+      h += `<button data-act="build" data-k="${b}" ${chk.ok ? '' : 'disabled'} title="${esc(chk.why || '')}">${B.name} ◉${B.cost}${B.needs ? ` <span class="needs">+ ${game.goodsText(B.needs)}</span>` : ''}<small>${B.desc}</small></button>`;
     }
     h += `</div>`;
     const ws = Object.keys(WONDERS).filter(w => WONDERS[w].special === c.specialty);
@@ -663,7 +674,7 @@ function tilePanel(i) {
       for (const k of opts) {
         const I = IMPROVEMENTS[k];
         const chk = game.canImprove(pid, i, k);
-        h += `<button data-act="improve" data-k="${k}" ${chk.ok ? '' : 'disabled'} title="${esc(chk.why || '')}">${I.name} ◉${I.cost}<small>+${game.improvePop(i, k)} pop${I.tech && !game.has(pid, I.tech) ? ' · needs ' + TECHS[I.tech].name : ''}</small></button>`;
+        h += `<button data-act="improve" data-k="${k}" ${chk.ok ? '' : 'disabled'} title="${esc(chk.why || '')}">${I.name} ◉${I.cost}<small>+${game.improvePop(i, k)} pop${IMP_YIELD[k] && (!IMP_YIELD[k].res || game.tiles[i].res === IMP_YIELD[k].res) ? `, +1 ${STRATEGIC[IMP_YIELD[k].good].name.toLowerCase()}/turn` : ''}${I.tech && !game.has(pid, I.tech) ? ' · needs ' + TECHS[I.tech].name : ''}</small></button>`;
       }
       h += `</div>`;
     }
@@ -829,47 +840,30 @@ function showDiplomacy() {
   const others = game.contenders().filter(p => p.id !== me.id && game.hasMet(me.id, p.id));
   if (!others.length) h += `<p>You have not met any other tribe yet.</p>`;
   else {
-    h += `<table class="tribes"><tr><th></th><th>Tribe</th><th>Relation</th><th>Attitude</th><th>Trade</th><th>Actions</th></tr>`;
+    h += `<table class="tribes"><tr><th></th><th>Tribe</th><th>Relation</th><th>Attitude</th><th>Actions</th></tr>`;
     for (const p of others) {
       const r = game.relation(me.id, p.id);
       const hz = p.temper ? game.hostility(p.id, me.id) : null;
       const att = hz == null ? '—' : hz < 1.3 ? '<span style="color:#7ddc6a">Friendly</span>' : hz < 1.9 ? '<span style="color:#e0d060">Wary</span>' : '<span style="color:#ff7060">Hostile</span>';
-      let trade;
-      if (game.trading(me.id, p.id)) trade = `<b>+${game.tradeIncomeFor(me.id, p.id)}</b>/turn${game.tradeGain(me.id, p.id).length ? ' · ' + game.tradeGain(me.id, p.id).map(k => GOOD_BY_KEY[k].name).join(', ') : ''}`;
-      else { const g2 = game.tradeGain(me.id, p.id); trade = `<span class="dim">${g2.length ? 'could give: ' + g2.map(k => GOOD_BY_KEY[k].name).join(', ') : 'nothing you lack'}</span>`; }
       const acts = [];
       if (mine) {
         if (r.state === 'war') acts.push(['peace', 'Offer peace']);
         else {
           acts.push(['war', 'Declare war', !game.canDeclareWar(me.id, p.id).ok]);
-          if (game.trading(me.id, p.id)) acts.push(['endtrade', 'End trade']);
-          else acts.push(['trade', 'Propose trade', !game.canTrade(me.id, p.id).ok]);
           if (r.state === 'alliance') acts.push(['endally', 'End alliance']);
           else acts.push(['alliance', 'Propose alliance']);
         }
       }
-      h += `<tr><td>${chip(p)}</td><td>${esc(p.name)}${p.human ? ' (human)' : ''}</td><td>${relBadge(r.state, r)}</td><td>${att}</td><td>${trade}</td><td>${acts.map(([k, l, dis]) => `<button data-dip="${k}" data-pid="${p.id}" ${dis ? 'disabled' : ''} style="padding:3px 7px;font-size:12px">${l}</button>`).join(' ')}</td></tr>`;
+      h += `<tr><td>${chip(p)}</td><td>${esc(p.name)}${p.human ? ' (human)' : ''}</td><td>${relBadge(r.state, r)}</td><td>${att}</td><td>${acts.map(([k, l, dis]) => `<button data-dip="${k}" data-pid="${p.id}" ${dis ? 'disabled' : ''} style="padding:3px 7px;font-size:12px">${l}</button>`).join(' ')}</td></tr>`;
     }
     h += `</table>`;
   }
-  h += `<p class="dim">Trade partners: ${game.tradePartners(me.id).length}/${game.tradeLimit(me.id)} (1 + 1 per 4 cities). Each agreement shares all goods both ways and pays each side 1 gold, +1 per new good gained (max 3), +1 between unrelated peoples. War ends trade.</p>`;
-  // goods
-  const prod = game.goodsProduced(me.id), access = game.goodsAccess(me.id);
-  h += `<h3>Goods</h3><p class="dim">A city produces its land's good once it has its specialty building or reaches level 5.</p><table class="spectable">`;
-  for (const [spec, G] of Object.entries(GOODS)) {
-    let st;
-    if (prod.has(G.key)) st = '<b style="color:#7ddc6a">Producing</b>';
-    else if (access.has(G.key)) st = `<b style="color:#5fa8e8">Imported</b> <span class="dim">from ${game.tradePartners(me.id).filter(o => game.goodsProduced(o).has(G.key)).map(o => esc(game.players[o].name)).join(', ')}</span>`;
-    else st = '<span class="dim">—</span>';
-    h += `<tr><td><b>${G.name}</b> <span class="dim">(${SPECIALTY[spec].name})</span></td><td>${st}</td><td>${G.desc}</td></tr>`;
-  }
-  h += `</table>`;
+  h += `<p class="dim">Trade between tribes arrives with trade routes in a coming update. See your goods with <b>G</b>.</p>`;
   openModal(h);
   $('modalBody').querySelectorAll('[data-dip]').forEach(b => b.onclick = () => {
     const k = b.dataset.dip, o = +b.dataset.pid;
     let res;
     if (k === 'war') { if (!confirm(`Declare war on the ${game.players[o].name}?`)) return; res = game.declareWar(me.id, o); }
-    else if (k === 'endtrade') { game.endTrade(me.id, o); res = { ok: true }; }
     else if (k === 'endally') res = game.breakAlliance(me.id, o);
     else {
       res = game.offer(me.id, o, k);
@@ -878,6 +872,23 @@ function showDiplomacy() {
     if (res && !res.ok) toast(res.why);
     refreshAll(); showDiplomacy();
   });
+}
+
+// ------------------------------------------------------------ goods
+function showGoods() {
+  if (!game) return;
+  const pid = R.viewer, pl = game.players[pid];
+  const st = game.stock(pid), prod = game.production(pid), need = game.supplyNeed(pid), lost = game.stranded(pid), cap = game.stockCap(pid);
+  let h = `<h2>Strategic goods</h2><p class="dim">Goods come from deposits worked by improvements (at most 2 of a good per city, doubled by its specialty building) and flow into one national stockpile (cap ${cap}: 8 + 2 per city), but only from cities connected to your capital. They are spent to train advanced units and raise buildings, and every 4 units that needed a good keep consuming 1 per turn as supply.</p>`;
+  h += `<table class="tribes"><tr><th>Good</th><th>Stock</th><th>Produced</th><th>Army supply</th><th>Stranded</th><th>Comes from</th><th>Used by</th></tr>`;
+  for (const k of GOOD_KEYS) {
+    const G = STRATEGIC[k];
+    const users = [...Object.entries(UNITS).filter(([, U]) => U.needs?.[k]).map(([, U]) => U.name), ...Object.entries(BUILDINGS).filter(([, B]) => B.needs?.[k]).map(([, B]) => B.name)];
+    const srcCities = game.cities.filter(c => c.owner === pid && game.cityProduction(c)[k]).map(c => `${esc(c.name)}${game.isConnected(c) ? '' : ' ⚠'}`);
+    h += `<tr><td><i style="display:inline-block;width:10px;height:10px;background:${G.color};border:1px solid #111;margin-right:5px"></i><b>${G.name}</b></td><td>${st[k]}</td><td>+${prod[k]}</td><td>${need[k] ? '−' + need[k] : '—'}${pl.unsupplied?.[k] ? ' <b style="color:#ff8060">short!</b>' : ''}</td><td>${lost[k] ? `<span style="color:#ff9a60">${lost[k]} lost</span>` : '—'}</td><td class="dim">${srcCities.join(', ') || G.from}</td><td class="dim">${users.join(', ')}</td></tr>`;
+  }
+  h += `</table><p class="dim">⚠ = cut off from the capital. Specialty buildings double a good in their city: ${Object.entries(GOOD_DOUBLER).map(([b, k]) => `${BUILDINGS[b].name} → ${STRATEGIC[k].name.toLowerCase()}`).join(', ')}.</p>`;
+  openModal(h);
 }
 
 // ------------------------------------------------------------ histomap
@@ -1048,9 +1059,10 @@ function showHelp() {
   <h3>Peoples</h3>
   <p>Every realm is built on a <b>people</b>. A founding people is named after its capital and its own word for "people", e.g. <i>Mardu</i> + <i>jana</i> gives <b>Mardujana</b>. Distant cities held for a long time may grow a regional identity, named after a major local city (<b>Eskjana</b>) or their land (<b>Hilljana</b>). Offshoots keep the family's word and a related colour, and count as kin.</p>
   <p>A conquered people goes by its own name joined to its ruler's, e.g. <b>Esko-Mardujana</b>. If it breaks free after long rule, it keeps the mark (<b>Mardu-Eskjana</b>). Names never stack beyond two parts, and only the latest influence is kept. Subject peoples feel unrest more strongly (+0.25 sensitivity) and regional offshoots slightly (+0.1). Revolts follow these lines: a rebellion takes its city's identity. Labels (<b>L</b>) name regions on every map mode except terrain.</p>
-  <h3>Diplomacy & trade</h3>
+  <h3>Diplomacy</h3>
   <p>Tribes are at <b>war</b> until they make peace. Peace begins with a 10-turn <b>truce</b>. Units can't attack or enter the land of tribes they aren't at war with; allies share vision, may pass through each other's land, and defend each other when attacked. Declaring war on a partner earns grudges from the victim and from everyone who knows you. AI tribes use their temperament and their view of you to decide on war, peace, trade and alliances. Open <b>Diplomacy (D)</b> to deal with tribes you have met. Offers between humans wait for the other player's turn.</p>
-  <p>Each land type yields a <b>good</b> (grain, stone, salt fish, cloth, timber, spice, horses, reeds, ore) once a city of that kind has its specialty building or reaches level 5. Each good gives an empire-wide bonus. <b>Trade agreements</b> share all goods both ways and pay both sides gold every turn, more when the peoples are unrelated.</p>
+  <h3>Strategic goods</h3>
+  <p>Ore, horses, timber and stone come from <b>deposits</b>: a Mine on an ore deposit, a Pasture on a horse herd, a Lumber Camp in a forest, a Quarry on hills. Each yields 1 per turn into your national stockpile, but only if its city is <b>connected</b> to your capital through land that isn't hostile or blocked by enemies. Advanced units and many buildings <b>require</b> goods, e.g. a Swordsman needs 1 ore and Walls need 2 stone. Basic units and buildings never do. Armies also need <b>supply</b>: every 4 units that needed a good consume 1 of it per turn. Unsupplied units fight weaker and don't heal. Deposits are scarce and regional, so they're worth settling, conquering, raiding and protecting. Press <b>G</b> for details.</p>
   <h3>Map modes</h3><p>Press <b>M</b> or use the Map menu: Terrain, Political (tribe colours only), Culture (stripes mark peoples under foreign rule), Specialty (and what unclaimed land would become), and Unrest.</p>
   <h3>War</h3>
   <ul><li>Select a unit: white hexes = move, red = attack, gold = capture an undefended enemy city.</li>

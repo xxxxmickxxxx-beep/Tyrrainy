@@ -103,21 +103,21 @@ export const UNITS = {
   warrior:   { name: 'Warrior',   atk: 2, def: 2, hp: 10, mv: 1, rng: 1, cost: 2, glyph: 'W' },
   settler:   { name: 'Settler',   atk: 0, def: 1, hp: 10, mv: 1, rng: 1, cost: 5, glyph: 'S', traits: ['settler'] },
   archer:    { name: 'Archer',    atk: 2, def: 1, hp: 10, mv: 1, rng: 2, cost: 3, glyph: 'A', tech: 'archery' },
-  rider:     { name: 'Rider',     atk: 2, def: 1, hp: 10, mv: 2, rng: 1, cost: 3, glyph: 'R', tech: 'riding', traits: ['mounted'] },
+  rider:     { name: 'Rider',     atk: 2, def: 1, hp: 10, mv: 2, rng: 1, cost: 3, glyph: 'R', tech: 'riding', traits: ['mounted'], needs: { horses: 1 } },
   defender:  { name: 'Defender',  atk: 1, def: 3, hp: 15, mv: 1, rng: 1, cost: 3, glyph: 'D', tech: 'masonry' },
-  swordsman: { name: 'Swordsman', atk: 3, def: 3, hp: 15, mv: 1, rng: 1, cost: 5, glyph: 'X', tech: 'bronze' },
-  catapult:  { name: 'Catapult',  atk: 4, def: 0, hp: 10, mv: 1, rng: 3, cost: 8, glyph: 'C', tech: 'engineering' },
-  knight:    { name: 'Knight',    atk: 3.5, def: 1, hp: 15, mv: 3, rng: 1, cost: 8, glyph: 'K', tech: 'chivalry', traits: ['mounted'] },
+  swordsman: { name: 'Swordsman', atk: 3, def: 3, hp: 15, mv: 1, rng: 1, cost: 5, glyph: 'X', tech: 'bronze', needs: { ore: 1 } },
+  catapult:  { name: 'Catapult',  atk: 4, def: 0, hp: 10, mv: 1, rng: 3, cost: 8, glyph: 'C', tech: 'engineering', needs: { timber: 2 } },
+  knight:    { name: 'Knight',    atk: 3.5, def: 1, hp: 15, mv: 3, rng: 1, cost: 8, glyph: 'K', tech: 'chivalry', traits: ['mounted'], needs: { ore: 1, horses: 1 } },
   // specialty uniques
-  lancer:     { name: 'Lancer',      atk: 4, def: 1, hp: 12, mv: 2, rng: 1, cost: 5, glyph: 'L', tech: 'riding', traits: ['mounted'], unique: 'plains' },
+  lancer:     { name: 'Lancer',      atk: 4, def: 1, hp: 12, mv: 2, rng: 1, cost: 5, glyph: 'L', tech: 'riding', traits: ['mounted'], unique: 'plains', needs: { horses: 1 } },
   slinger:    { name: 'Slinger',     atk: 2, def: 1, hp: 8,  mv: 1, rng: 2, cost: 3, glyph: 's', unique: 'hilltop', traits: ['hillwalk'] },
-  corsair:    { name: 'Corsair',     atk: 3, def: 2, hp: 12, mv: 3, rng: 1, cost: 6, glyph: 'Q', tech: 'sailing', traits: ['naval'], unique: 'coastal' },
-  pikeman:    { name: 'Pikeman',     atk: 2, def: 3, hp: 12, mv: 1, rng: 1, cost: 4, glyph: 'P', tech: 'bronze', traits: ['antimount'], unique: 'riverside' },
+  corsair:    { name: 'Corsair',     atk: 3, def: 2, hp: 12, mv: 3, rng: 1, cost: 6, glyph: 'Q', tech: 'sailing', traits: ['naval'], unique: 'coastal', needs: { timber: 2 } },
+  pikeman:    { name: 'Pikeman',     atk: 2, def: 3, hp: 12, mv: 1, rng: 1, cost: 4, glyph: 'P', tech: 'bronze', traits: ['antimount'], unique: 'riverside', needs: { ore: 1 } },
   ranger:     { name: 'Ranger',      atk: 3, def: 1, hp: 10, mv: 1, rng: 2, cost: 5, glyph: 'G', tech: 'archery', traits: ['forestwalk'], unique: 'forest' },
   camel:      { name: 'Camel Raider',atk: 3, def: 1, hp: 12, mv: 3, rng: 1, cost: 5, glyph: 'M', tech: 'riding', traits: ['mounted', 'desertwalk'], unique: 'desert' },
-  horsearcher:{ name: 'Horse Archer',atk: 2, def: 1, hp: 10, mv: 2, rng: 2, cost: 5, glyph: 'H', tech: 'riding', traits: ['mounted', 'skirmish'], unique: 'steppe' },
+  horsearcher:{ name: 'Horse Archer',atk: 2, def: 1, hp: 10, mv: 2, rng: 2, cost: 5, glyph: 'H', tech: 'riding', traits: ['mounted', 'skirmish'], unique: 'steppe', needs: { horses: 1 } },
   bogstalker: { name: 'Bog Stalker', atk: 3, def: 1, hp: 10, mv: 2, rng: 1, cost: 4, glyph: 'B', traits: ['marshwalk', 'stealth'], unique: 'marsh' },
-  highlander: { name: 'Highlander',  atk: 2, def: 4, hp: 15, mv: 1, rng: 1, cost: 5, glyph: 'U', tech: 'masonry', traits: ['mountainwalk', 'hillwalk'], unique: 'mountain' },
+  highlander: { name: 'Highlander',  atk: 2, def: 4, hp: 15, mv: 1, rng: 1, cost: 5, glyph: 'U', tech: 'masonry', traits: ['mountainwalk', 'hillwalk'], unique: 'mountain', needs: { ore: 1 } },
 };
 
 export const EMBARKED = { name: 'Boat', atk: 1, def: 1, mv: 2, rng: 1 };
@@ -151,38 +151,37 @@ export const RESOURCES = {
 
 // ---------------- Buildings ----------------
 export const BUILDINGS = {
-  walls:        { name: 'Walls', cost: 6, tech: 'masonry', desc: 'City defense x2 (stacks with specialty).' },
+  walls:        { name: 'Walls', cost: 6, tech: 'masonry', desc: 'City defense x2 (stacks with specialty).', needs: { stone: 2 } },
   courthouse:   { name: 'Courthouse', cost: 5, calm: 1, desc: '-1 unrest pressure.' },
-  amphitheater: { name: 'Amphitheater', cost: 9, tech: 'masonry', calm: 2, desc: '-2 unrest pressure.' },
-  temple:       { name: 'Shrine', cost: 8, tech: 'philosophy', calm: 2, desc: '+1 pop, +1 gold, -2 unrest. Integration twice as fast.' },
-  granary:      { name: 'Granary', cost: 6, special: 'plains', desc: '+2 pop.' , pop: 2 },
-  watchtower:   { name: 'Watchtower', cost: 5, special: 'hilltop', desc: '+2 vision, city defense +50%.' },
-  harbor:       { name: 'Harbor', cost: 7, special: 'coastal', desc: '+2 gold per turn.', gold: 2 },
-  market:       { name: 'Market', cost: 8, special: 'riverside', desc: '+1 gold per 2 city levels.' },
-  sawmill:      { name: 'Sawmill', cost: 6, special: 'forest', desc: '+1 gold per lumber camp in territory.' },
+  amphitheater: { name: 'Amphitheater', cost: 9, tech: 'masonry', calm: 2, desc: '-2 unrest pressure.', needs: { stone: 2 } },
+  temple:       { name: 'Shrine', cost: 8, tech: 'philosophy', calm: 2, desc: '+1 pop, +1 gold, -2 unrest. Integration twice as fast.', needs: { stone: 1 } },
+  granary:      { name: 'Granary', cost: 6, special: 'plains', desc: '+2 pop.' , pop: 2, needs: { timber: 1 } },
+  watchtower:   { name: 'Watchtower', cost: 5, special: 'hilltop', desc: '+2 vision, city defense +50%; doubles the city\'s stone.', needs: { stone: 1 } },
+  harbor:       { name: 'Harbor', cost: 7, special: 'coastal', desc: '+2 gold per turn.', gold: 2, needs: { timber: 2 } },
+  market:       { name: 'Market', cost: 8, special: 'riverside', desc: '+1 gold per 2 city levels.', needs: { stone: 1 } },
+  sawmill:      { name: 'Sawmill', cost: 6, special: 'forest', desc: '+1 gold per lumber camp; doubles the city\'s timber.' },
   caravanserai: { name: 'Caravanserai', cost: 7, special: 'desert', desc: '+2 gold, +1 pop.', gold: 2, pop: 1 },
-  stables:      { name: 'Stables', cost: 6, special: 'steppe', desc: 'Mounted units cost -1, +1 pop.', pop: 1 },
+  stables:      { name: 'Stables', cost: 6, special: 'steppe', desc: 'Mounted units cost -1, +1 pop; doubles the city\'s horses.', pop: 1, needs: { timber: 1 } },
   peatworks:    { name: 'Peat Works', cost: 6, special: 'marsh', desc: '+1 gold per marsh tile in territory (max 3).' },
-  deepmine:     { name: 'Deep Mine', cost: 8, special: 'mountain', desc: '+3 gold per turn.', gold: 3 },
+  deepmine:     { name: 'Deep Mine', cost: 8, special: 'mountain', desc: '+3 gold per turn; doubles the city\'s ore.', gold: 3, needs: { timber: 1 } },
 };
 
-// ---------------- Trade goods ----------------
-// Each specialty yields a good once a city of that kind has its specialty building or reaches
-// level 5. Having a good (producing it, or importing it through a trade agreement) grants an
-// empire-wide bonus. Homeland bias makes some goods hard to make yourself; trade fills the gap.
-export const GOODS = {
-  plains:    { key: 'grain',   name: 'Grain',     desc: 'Settlers cost 2 less; new cities start with +1 pop.' },
-  hilltop:   { key: 'stone',   name: 'Stone',     desc: 'Buildings cost 1 less.' },
-  coastal:   { key: 'saltfish', name: 'Salt fish', desc: 'Units heal 1 more per turn.' },
-  riverside: { key: 'cloth',   name: 'Cloth',     desc: '+1 gold in every city of level 4+.' },
-  forest:    { key: 'timber',  name: 'Timber',    desc: 'Tile improvements cost 1 less.' },
-  desert:    { key: 'spice',   name: 'Spice',     desc: 'Festivals cost half and their riot risk is 10% lower.' },
-  steppe:    { key: 'horses',  name: 'Horses',    desc: 'Mounted units cost 1 less.' },
-  marsh:     { key: 'reeds',   name: 'Reeds',     desc: 'Grain dole and Patronage cost 1 gold less per turn.' },
-  mountain:  { key: 'ore',     name: 'Ore',       desc: 'Foot soldiers cost 1 less.' },
+// ---------------- Strategic goods ----------------
+// Goods come from places: an improvement on the right tile yields 1 unit per turn into the
+// tribe's national stockpile, if its city is connected to the capital. They are spent to
+// train advanced units and raise buildings (hard requirements; basic units and buildings
+// never need goods). Stockpiles are capped; surplus beyond the cap is lost.
+export const STRATEGIC = {
+  ore:    { name: 'Ore',    color: '#b8c0d8', from: 'a Mine on an ore deposit (hills, mountains)' },
+  horses: { name: 'Horses', color: '#9a6a3a', from: 'a Pasture on a horse herd (steppe)' },
+  timber: { name: 'Timber', color: '#4f9a4a', from: 'a Lumber Camp in a forest' },
+  stone:  { name: 'Stone',  color: '#d8c8a0', from: 'a Quarry on hills' },
 };
-export const GOOD_KEYS = Object.values(GOODS).map(g => g.key);
-export const GOOD_BY_KEY = Object.fromEntries(Object.values(GOODS).map(g => [g.key, g]));
+export const GOOD_KEYS = Object.keys(STRATEGIC);
+// improvement -> good it yields, and the resource the tile must hold (if any)
+export const IMP_YIELD = { mine: { good: 'ore', res: 'ore' }, pasture: { good: 'horses', res: 'horses' }, lumber: { good: 'timber' }, quarry: { good: 'stone' } };
+// specialty buildings that double a good produced in their city
+export const GOOD_DOUBLER = { deepmine: 'ore', stables: 'horses', sawmill: 'timber', watchtower: 'stone' };
 
 // ---------------- Subsidies ----------------
 // Escalating ways to buy calm in a city. Every tier stops the city paying taxes;
@@ -202,15 +201,15 @@ export const FOREIGN_PEOPLE_SENSITIVITY = 0.25; // extra when the city's people 
 // ---------------- Wonders ----------------
 // One per specialty, unique in the world, need a level 5+ city of that specialty.
 export const WONDERS = {
-  greatgranary: { name: 'Great Granary', special: 'plains', cost: 20, desc: 'Every city you own gains +2 pop now.' },
-  skycitadel:   { name: 'Sky Citadel', special: 'hilltop', cost: 20, desc: 'All your cities +25% defense.' },
-  lighthouse:   { name: 'Lighthouse', special: 'coastal', cost: 18, desc: 'Your boats +1 move; all coastal tiles revealed.' },
-  grandbazaar:  { name: 'Grand Bazaar', special: 'riverside', cost: 22, desc: '+1 gold in every city you own.' },
-  worldtree:    { name: 'World Tree', special: 'forest', cost: 18, desc: 'All your units heal +3 extra.' },
-  sunpyramid:   { name: 'Sun Pyramid', special: 'desert', cost: 20, desc: 'Techs 20% cheaper.' },
-  khansbanner:  { name: "Khan's Banner", special: 'steppe', cost: 20, desc: 'Your mounted units +1 move.' },
-  mirelabyrinth:{ name: 'Mire Labyrinth', special: 'marsh', cost: 18, desc: 'Your foreign cities integrate 3× faster.' },
-  eaglethrone:  { name: 'Eagle Throne', special: 'mountain', cost: 22, desc: '+4 gold; all your cities +1 vision.' },
+  greatgranary: { name: 'Great Granary', special: 'plains', cost: 20, desc: 'Every city you own gains +2 pop now.', needs: { stone: 3, timber: 2 } },
+  skycitadel:   { name: 'Sky Citadel', special: 'hilltop', cost: 20, desc: 'All your cities +25% defense.', needs: { stone: 3, timber: 2 } },
+  lighthouse:   { name: 'Lighthouse', special: 'coastal', cost: 18, desc: 'Your boats +1 move; all coastal tiles revealed.', needs: { stone: 3, timber: 2 } },
+  grandbazaar:  { name: 'Grand Bazaar', special: 'riverside', cost: 22, desc: '+1 gold in every city you own.', needs: { stone: 3, timber: 2 } },
+  worldtree:    { name: 'World Tree', special: 'forest', cost: 18, desc: 'All your units heal +3 extra.', needs: { stone: 3, timber: 2 } },
+  sunpyramid:   { name: 'Sun Pyramid', special: 'desert', cost: 20, desc: 'Techs 20% cheaper.', needs: { stone: 3, timber: 2 } },
+  khansbanner:  { name: "Khan's Banner", special: 'steppe', cost: 20, desc: 'Your mounted units +1 move.', needs: { stone: 3, timber: 2 } },
+  mirelabyrinth:{ name: 'Mire Labyrinth', special: 'marsh', cost: 18, desc: 'Your foreign cities integrate 3× faster.', needs: { stone: 3, timber: 2 } },
+  eaglethrone:  { name: 'Eagle Throne', special: 'mountain', cost: 22, desc: '+4 gold; all your cities +1 vision.', needs: { stone: 3, timber: 2 } },
 };
 
 // ---------------- AI temperaments ----------------

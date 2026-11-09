@@ -566,7 +566,8 @@ export class Renderer {
       const fs = Math.max(10, Math.min(15, S * 0.42));
       ctx.font = `bold ${fs}px sans-serif`;
       ctx.textAlign = 'center';
-      const label = `${c.level} ${c.name}`;
+      const cutOff = c.owner === this.viewer && !g.isConnected(c);
+      const label = `${c.level} ${c.name}${cutOff ? ' ⚠' : ''}`;
       const tw = ctx.measureText(label).width + 10;
       const ly = y + S * 0.95;
       ctx.fillStyle = 'rgba(10,10,15,0.78)';

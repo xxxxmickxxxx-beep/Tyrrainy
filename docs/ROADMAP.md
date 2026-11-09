@@ -28,7 +28,7 @@ When a tribe is badly beaten (it has lost most of its power, or its capital is u
 
 This makes alien land valuable without owning it, and turns a war's end into a political choice instead of raze-or-garrison. It also makes the Histomap far more interesting: vassal streams can be drawn hatched inside their overlord's.
 
-## 3. Trade goods — DONE (see README › Trade goods)
+## 3. Trade goods — REPLACED by scarce strategic goods with physical routes (phase A done: deposits, stockpile, connectivity, supply; phase B: routes; phase C: AI war aims)
 Each specialty produces a good once its specialty building exists: grain (plains), stone (hilltop), salt fish (coastal), cloth (riverside), timber (forest), spice (desert), horses (steppe), peat or reeds (marsh), and ore (mountain).
 - **Owning or trading for a good** gives an empire-wide bonus. For example, horses make mounted units −1 cost, grain gives +1 pop on founding, and spice gives +1 gold in every level 3+ city.
 - **Trade agreements** need Peace. Each side sends a good, and both earn gold scaled by distance and cultural difference. Trading with very different peoples pays most.
