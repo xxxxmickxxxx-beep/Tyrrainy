@@ -21,6 +21,7 @@ for (let k = 0; k < games; k++) {
     }
     if (t === 'revolt') st.revolts++;
     if (t === 'diplo') st[d.type] = (st[d.type] || 0) + 1;
+    if (t === 'raid') st.raids = (st.raids || 0) + 1;
     if (t === 'razed') { st.razed = (st.razed || 0) + 1; if (/torch/.test(g.log[g.log.length - 1]?.msg || '')) st.chosen = (st.chosen || 0) + 1; }
     if (t === 'log' && /destroyed a /.test(d.msg)) st.impLost = (st.impLost || 0) + 1;
     if (t === 'log' && /was destroyed|lost in the sack/.test(d.msg)) st.bldLost = (st.bldLost || 0) + 1;
@@ -40,7 +41,7 @@ for (let k = 0; k < games; k++) {
   const units = {}; for (const u of g.units) units[u.type] = (units[u.type] || 0) + 1;
   console.log(`  stockpiles (o/h/t/s): ${goods}`);
   console.log(`  unit mix: ${Object.entries(units).sort((a, b) => b[1] - a[1]).map(([k, v]) => k + ':' + v).join(' ')}`);
-  console.log(`  diplomacy events: war ${st.war || 0}, peace ${st.peace || 0}, alliance ${st.alliance || 0} | final relations among met pairs: ${JSON.stringify(rel)}`);
+  console.log(`  diplomacy events: war ${st.war || 0}, peace ${st.peace || 0}, alliance ${st.alliance || 0}, routes opened ${st.route || 0} (active ${(g.routes || []).length}), raids ${st.raids || 0} | final relations among met pairs: ${JSON.stringify(rel)}`);
   console.log(`  coalition joins: ${st.joins.join(', ') || 'none'}`);
   console.log(`  share of attacks on leader while dominant, by temperament: ` + Object.entries(st.byTemper).map(([k, v]) => `${k} ${Math.round(100 * v.leader / Math.max(1, v.leader + v.other))}% (${v.leader + v.other})`).join(', '));
   const subs = [0, 0, 0, 0]; for (const c of g.cities) subs[c.subsidy || 0]++;

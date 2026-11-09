@@ -191,8 +191,12 @@ function showOffers(pl) {
   const o = (game.offers || []).find(x => x.to === pl.id);
   if (!o) return;
   const from = game.players[o.from];
-  const what = { peace: 'peace', alliance: 'an alliance' }[o.type];
+  const what = { peace: 'peace', alliance: 'an alliance', route: 'a trade route' }[o.type];
   let extra = '';
+  if (o.type === 'route') {
+    const gn = game.routeGain(pl.id, o.from);
+    extra = `<p>Right now you could buy about ${gn.buy} and sell about ${gn.sell} units of goods per turn along it. Upkeep and tolls depend on its length and path.</p>`;
+  }
   openModal(`<h2>${chip(from)} ${esc(from.name)} offer ${what}</h2>${extra}<p><button class="primary" id="btnAcc">Accept</button> <button id="btnDec">Decline</button></p>`);
   const done = (yes) => { $('btnAcc').onclick = $('btnDec').onclick = null; const r = game.answerOffer(o, yes); if (!r.ok) toast(r.why); closeModal(); refreshAll(); setTimeout(() => showOffers(pl), 50); };
   $('btnAcc').onclick = () => done(true);
@@ -340,6 +344,7 @@ function hoverLabel(t) {
 }
 
 const LEGENDS = {
+  trade: () => GOOD_KEYS.map(k => `<span class="sw" style="background:${STRATEGIC[k].color};border-radius:6px"></span>${STRATEGIC[k].name}`).join('') + '<br><span class="dim">Dots mark producing deposits. Dashed lines are trade routes in both partners\' colours. <b style="color:#ff3a2a">!</b> raided last turn, <b>×</b> blocked.</span>',
   political: () => 'Tribe colours. Grey: unclaimed land.',
   culture: () => 'Each colour is a people. Offshoots share a hue family with the people they split from. <b>Solid</b>: a tribe\'s own people or a regional offshoot. <b>Thick stripes</b>: a people (base colour) ruled by another tribe (stripe colour). <b>Thin dark lines</b>: own people on foreign or alien land.',
   specialty: () => Object.values(SPECIALTY).map(s => `<span class="sw" style="background:${s.color}"></span>${s.name}`).join('') + '<br><span class="dim">Unclaimed land is shown dimmed in the type a city founded there would get.</span>',
@@ -840,7 +845,7 @@ function showDiplomacy() {
   const others = game.contenders().filter(p => p.id !== me.id && game.hasMet(me.id, p.id));
   if (!others.length) h += `<p>You have not met any other tribe yet.</p>`;
   else {
-    h += `<table class="tribes"><tr><th></th><th>Tribe</th><th>Relation</th><th>Attitude</th><th>Actions</th></tr>`;
+    h += `<table class="tribes"><tr><th></th><th>Tribe</th><th>Relation</th><th>Attitude</th><th>Trade route</th><th>Actions</th></tr>`;
     for (const p of others) {
       const r = game.relation(me.id, p.id);
       const hz = p.temper ? game.hostility(p.id, me.id) : null;
@@ -852,19 +857,34 @@ function showDiplomacy() {
           acts.push(['war', 'Declare war', !game.canDeclareWar(me.id, p.id).ok]);
           if (r.state === 'alliance') acts.push(['endally', 'End alliance']);
           else acts.push(['alliance', 'Propose alliance']);
+          if (game.routeBetween(me.id, p.id)) acts.push(['endroute', 'Close route']);
+          else acts.push(['route', 'Open route', !game.canOpenRoute(me.id, p.id).ok]);
         }
+        acts.push(['transit', game.transitClosed(me.id, p.id) ? 'Open our land' : 'Close our land']);
       }
-      h += `<tr><td>${chip(p)}</td><td>${esc(p.name)}${p.human ? ' (human)' : ''}</td><td>${relBadge(r.state, r)}</td><td>${att}</td><td>${acts.map(([k, l, dis]) => `<button data-dip="${k}" data-pid="${p.id}" ${dis ? 'disabled' : ''} style="padding:3px 7px;font-size:12px">${l}</button>`).join(' ')}</td></tr>`;
+      let route = '<span class="dim">—</span>';
+      const rt = game.routeBetween(me.id, p.id);
+      if (rt) {
+        const inc = rt.a === me.id ? rt.last?.ba : rt.last?.ab, out = rt.a === me.id ? rt.last?.ab : rt.last?.ba;
+        const fmtG = (o) => Object.entries(o || {}).filter(([, n]) => n).map(([k, n]) => `${n} ${STRATEGIC[k].name.toLowerCase()}`).join(', ') || 'nothing';
+        route = rt.last?.blocked ? '<span style="color:#ff9a60">blocked</span>' : rt.last?.raided != null ? `<span style="color:#ff6050">raided by ${esc(game.players[rt.last.raided].name)}</span>` : `in: ${fmtG(inc)}<br>out: ${fmtG(out)}`;
+        if ((rt.idle || 0) >= 3) route += `<br><span style="color:#e0a050">idle ${rt.idle} turns: costs ${game.routeUpkeep(rt.path.length - 1)} gold/turn for nothing</span>`;
+        route += `<br><span class="dim">${rt.path.length - 1} tiles${rt.transit?.length ? ', via ' + rt.transit.map(t => esc(game.players[t].name)).join(', ') : ''}</span>`;
+      } else if (!game.atWar(me.id, p.id)) { const gn = game.routeGain(me.id, p.id); route = `<span class="dim">could buy ${gn.buy}, sell ${gn.sell}</span>`; }
+      if (game.transitClosed(me.id, p.id)) route += '<br><span class="dim">our land is closed to them</span>';
+      h += `<tr><td>${chip(p)}</td><td>${esc(p.name)}${p.human ? ' (human)' : ''}</td><td>${relBadge(r.state, r)}</td><td>${att}</td><td style="font-size:12px">${route}</td><td>${acts.map(([k, l, dis]) => `<button data-dip="${k}" data-pid="${p.id}" ${dis ? 'disabled' : ''} style="padding:3px 7px;font-size:12px">${l}</button>`).join(' ')}</td></tr>`;
     }
     h += `</table>`;
   }
-  h += `<p class="dim">Trade between tribes arrives with trade routes in a coming update. See your goods with <b>G</b>.</p>`;
+  h += `<p class="dim"><b>Trade routes</b> (${game.routesOf(me.id).length}/${game.routeLimit(me.id)}) run between your nearest connected cities. Each turn up to ${3} goods flow each way from surplus to deficit (you keep a reserve of 4 + 3× your army's supply). Buyers pay ore/horses 4, timber/stone 2 per unit, plus 1 per unit to every tribe whose land the route crosses. Routes cost upkeep by length. An enemy unit standing on a route seizes its shipment. A route can't pass through land closed to either partner. See the <b>Trade</b> map mode and your goods (G).</p>`;
   openModal(h);
   $('modalBody').querySelectorAll('[data-dip]').forEach(b => b.onclick = () => {
     const k = b.dataset.dip, o = +b.dataset.pid;
     let res;
     if (k === 'war') { if (!confirm(`Declare war on the ${game.players[o].name}?`)) return; res = game.declareWar(me.id, o); }
     else if (k === 'endally') res = game.breakAlliance(me.id, o);
+    else if (k === 'endroute') res = game.closeRoute(me.id, o);
+    else if (k === 'transit') { game.setTransit(me.id, o, !game.transitClosed(me.id, o)); res = { ok: true }; }
     else {
       res = game.offer(me.id, o, k);
       if (res.ok) toast(res.pending ? 'Offer sent; they will answer on their turn.' : res.accepted ? `The ${game.players[o].name} accept!` : `The ${game.players[o].name} decline.`);
@@ -887,7 +907,13 @@ function showGoods() {
     const srcCities = game.cities.filter(c => c.owner === pid && game.cityProduction(c)[k]).map(c => `${esc(c.name)}${game.isConnected(c) ? '' : ' ⚠'}`);
     h += `<tr><td><i style="display:inline-block;width:10px;height:10px;background:${G.color};border:1px solid #111;margin-right:5px"></i><b>${G.name}</b></td><td>${st[k]}</td><td>+${prod[k]}</td><td>${need[k] ? '−' + need[k] : '—'}${pl.unsupplied?.[k] ? ' <b style="color:#ff8060">short!</b>' : ''}</td><td>${lost[k] ? `<span style="color:#ff9a60">${lost[k]} lost</span>` : '—'}</td><td class="dim">${srcCities.join(', ') || G.from}</td><td class="dim">${users.join(', ')}</td></tr>`;
   }
-  h += `</table><p class="dim">⚠ = cut off from the capital. Specialty buildings double a good in their city: ${Object.entries(GOOD_DOUBLER).map(([b, k]) => `${BUILDINGS[b].name} → ${STRATEGIC[k].name.toLowerCase()}`).join(', ')}.</p>`;
+  const flows = {};
+  for (const r of game.routesOf(pid)) {
+    const inc = r.a === pid ? r.last?.ba : r.last?.ab, out = r.a === pid ? r.last?.ab : r.last?.ba;
+    for (const [k, n] of Object.entries(inc || {})) (flows[k] ||= { in: 0, out: 0 }).in += n;
+    for (const [k, n] of Object.entries(out || {})) (flows[k] ||= { in: 0, out: 0 }).out += n;
+  }
+  h += `</table><p>Last turn's trade: ${GOOD_KEYS.filter(k => flows[k]).map(k => `${STRATEGIC[k].name} +${flows[k].in}/−${flows[k].out}`).join(', ') || 'none'}.</p><p class="dim">⚠ = cut off from the capital. Specialty buildings double a good in their city: ${Object.entries(GOOD_DOUBLER).map(([b, k]) => `${BUILDINGS[b].name} → ${STRATEGIC[k].name.toLowerCase()}`).join(', ')}.</p>`;
   openModal(h);
 }
 
@@ -1063,6 +1089,8 @@ function showHelp() {
   <p>Tribes are at <b>war</b> until they make peace. Peace begins with a 10-turn <b>truce</b>. Units can't attack or enter the land of tribes they aren't at war with; allies share vision, may pass through each other's land, and defend each other when attacked. Declaring war on a partner earns grudges from the victim and from everyone who knows you. AI tribes use their temperament and their view of you to decide on war, peace, trade and alliances. Open <b>Diplomacy (D)</b> to deal with tribes you have met. Offers between humans wait for the other player's turn.</p>
   <h3>Strategic goods</h3>
   <p>Ore, horses, timber and stone come from <b>deposits</b>: a Mine on an ore deposit, a Pasture on a horse herd, a Lumber Camp in a forest, a Quarry on hills. Each yields 1 per turn into your national stockpile, but only if its city is <b>connected</b> to your capital through land that isn't hostile or blocked by enemies. Advanced units and many buildings <b>require</b> goods, e.g. a Swordsman needs 1 ore and Walls need 2 stone. Basic units and buildings never do. Armies also need <b>supply</b>: every 4 units that needed a good consume 1 of it per turn. Unsupplied units fight weaker and don't heal. Deposits are scarce and regional, so they're worth settling, conquering, raiding and protecting. Press <b>G</b> for details.</p>
+  <h3>Trade routes</h3>
+  <p>Open a <b>trade route</b> with a tribe at peace from the Diplomacy screen. It's a real path between your nearest connected cities, by sea once both of you know Sailing. Each turn goods flow automatically from surplus to deficit, up to 3 each way. Buyers pay the seller, plus a toll to every tribe whose land is crossed, so middlemen profit. Any tribe can close its land to another's trade. <b>Enemy units standing on a route seize its shipments</b>: raid your enemies' supply lines and guard your own. AI tribes take up arms against those who attack their suppliers, and covet cities that sit on goods they lack.</p>
   <h3>Map modes</h3><p>Press <b>M</b> or use the Map menu: Terrain, Political (tribe colours only), Culture (stripes mark peoples under foreign rule), Specialty (and what unclaimed land would become), and Unrest.</p>
   <h3>War</h3>
   <ul><li>Select a unit: white hexes = move, red = attack, gold = capture an undefended enemy city.</li>

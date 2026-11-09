@@ -141,6 +141,15 @@ function diplomacyAct(g, pid) {
     // 3. idle riches: a large treasury and a standing army look for a use
     if (near && wars === 0 && pl.gold > 250 && myP >= theirP * 1.1 && g.rng() < 0.03 * (0.5 + appetite)) { g.declareWar(pid, o.id); continue; }
     if (offerOk(o.id, 'alliance') && g.aiAccepts(pid, o.id, 'alliance')) offer(o.id, 'alliance');
+    // close routes that have carried nothing for a while: they cost upkeep and a route slot
+    const rt = g.routeBetween(pid, o.id);
+    if (rt && (rt.idle || 0) >= 8) g.closeRoute(pid, o.id);
+    // trade routes where they pay; close our land to the trade of tribes we loathe
+    if (offerOk(o.id, 'route') && h < 1.8) {
+      const gain = g.routeGain(pid, o.id);
+      if ((gain.buy > 0 || gain.sell > 1) && g.canOpenRoute(pid, o.id).ok) offer(o.id, 'route');
+    }
+    g.setTransit(pid, o.id, h > 2.3);
   }
 }
 
@@ -244,7 +253,12 @@ function militaryAct(g, u, cache, prof) {
       const d = g.dist(c.idx, u.idx);
       const gar = g.unitAt(c.idx);
       const ease = !gar ? 2.5 * opportunism(g, pid) : 1.6 / (1 + g.stats(gar).def * gar.hp / g.maxHp(gar) * g.defenseBonus(gar) * 0.4);
-      const sc = (gar ? g.hostility(pid, c.owner) : Math.max(g.hostility(pid, c.owner), opportunism(g, pid))) * ease / (d + 4);
+      let sc = (gar ? g.hostility(pid, c.owner) : Math.max(g.hostility(pid, c.owner), opportunism(g, pid))) * ease / (d + 4);
+      // war aims: cities sitting on goods we lack are worth more
+      const yields = g.cityProduction(c);
+      let hunger = 0;
+      for (const k in yields) hunger += goodHunger(g, pid, k) > 1 ? 1 : 0;
+      sc *= 1 + 0.4 * hunger;
       if (sc > bs) { bs = sc; target = c.idx; }
     }
     for (const e of g.units) {
@@ -261,12 +275,30 @@ function militaryAct(g, u, cache, prof) {
       if (e.owner !== pid && g.atWar(pid, e.owner) && g.dist(e.idx, u.idx) <= 3 && !g.isHiddenFrom(e, pid) && targetWeight(g, pid, e, false) >= 0.8) { target = e.idx; break; }
     }
   }
+  // raiding: stand on an enemy's trade route to seize its shipments
+  if (target === null && !g.has_(u, 'naval')) target = raidTarget(g, u);
   if (target === null) target = exploreTarget(g, u);
   if (target === null) return;
   const dist = field(g, target, u, cache);
   const step = bestStep(g, u, dist, false);
   if (step !== null) g.moveUnit(u, step);
   if (g.units.includes(u)) tryAttack(g, u);
+}
+
+function raidTarget(g, u) {
+  const pid = u.owner;
+  let best = null, bd = 7;
+  for (const r of g.routes || []) {
+    if (!g.atWar(pid, r.a) && !g.atWar(pid, r.b)) continue;
+    if (r.a === pid || r.b === pid) continue;
+    for (const t of r.path || []) {
+      const d = g.dist(t, u.idx);
+      if (d >= bd || g.unitAt(t) || g.isWater(t)) continue;
+      if (enemiesNear(g, pid, t, 1) > 1) continue;
+      bd = d; best = t;
+    }
+  }
+  return best;
 }
 
 function exploreTarget(g, u) {

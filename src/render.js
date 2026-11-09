@@ -1,6 +1,6 @@
 // Canvas renderer: terrain, rivers, borders, cities, units, fog, overlays.
 import { hexToPixel, pixelToHex, hexCorners, SQRT3 } from './hex.js';
-import { TERRAIN, SPECIALTY, UNITS, RESOURCES, IMPROVEMENTS } from './data.js';
+import { TERRAIN, SPECIALTY, UNITS, RESOURCES, IMPROVEMENTS, STRATEGIC } from './data.js';
 
 function shade(hex, f) {
   const n = parseInt(hex.slice(1), 16);
@@ -101,7 +101,7 @@ export class Renderer {
     const list = [];
     for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) list.push(r * g.W + c);
 
-    const terrainMode = this.mapMode === 'terrain';
+    const terrainMode = this.mapMode === 'terrain' || this.mapMode === 'trade';
     // pass 1: terrain (or map-mode fills)
     for (const i of list) {
       if (explored && !explored[i]) continue;
@@ -263,6 +263,7 @@ export class Renderer {
       ctx.beginPath(); ctx.arc(x, y, S * 0.3, 0, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
     }
     if (this.showLabels && !terrainMode) this.drawRegionLabels(explored);
+    if (this.mapMode === 'trade') this.drawTrade(explored);
     // floating anims
     this.anims = this.anims.filter(a => now - a.t0 < a.dur);
     for (const a of this.anims) {
@@ -321,6 +322,44 @@ export class Renderer {
       }
     }
     return { fill: NEUTRAL };
+  }
+
+  // Trade map mode: deposits highlighted, routes drawn in both partners' colours,
+  // raided routes flagged red.
+  drawTrade(explored) {
+    const g = this.game, ctx = this.ctx, S = this.size;
+    // deposits
+    for (let i = 0; i < g.tiles.length; i++) {
+      if (explored && !explored[i]) continue;
+      const good = g.tileYield(i);
+      if (!good) continue;
+      const [x, y] = this.tileCenter(i);
+      if (x < -S || y < -S || x > this.vw + S || y > this.vh + S) continue;
+      ctx.fillStyle = STRATEGIC[good].color; ctx.strokeStyle = '#111'; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.arc(x, y - S * 0.45, Math.max(3, S * 0.16), 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    }
+    for (const r of g.routes || []) {
+      if (!r.path || r.path.length < 2) continue;
+      if (explored && !this.revealAll && r.a !== this.viewer && r.b !== this.viewer && !r.path.some(t => explored[t])) continue;
+      const pts = r.path.map(t => this.tileCenter(t));
+      const draw = (col, w, dash) => {
+        ctx.strokeStyle = col; ctx.lineWidth = w; ctx.setLineDash(dash);
+        ctx.beginPath(); pts.forEach(([x, y], k) => k ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); ctx.stroke();
+      };
+      ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      draw('rgba(0,0,0,0.6)', Math.max(4, S * 0.22), []);
+      draw(g.players[r.a].color, Math.max(2.5, S * 0.12), [S * 0.5, S * 0.5]);
+      ctx.lineDashOffset = S * 0.5;
+      draw(g.players[r.b].color, Math.max(2.5, S * 0.12), [S * 0.5, S * 0.5]);
+      ctx.lineDashOffset = 0; ctx.setLineDash([]);
+      if (r.last?.raided != null || r.last?.blocked) {
+        const [mx, my] = pts[Math.floor(pts.length / 2)];
+        ctx.fillStyle = r.last.raided != null ? '#ff3a2a' : '#999'; ctx.strokeStyle = '#111'; ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.arc(mx, my, Math.max(5, S * 0.22), 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+        ctx.fillStyle = '#fff'; ctx.font = `bold ${Math.max(9, S * 0.3)}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText(r.last.raided != null ? '!' : '×', mx, my + 1); ctx.textBaseline = 'alphabetic';
+      }
+    }
   }
 
   // Region key for labels in the current map mode.

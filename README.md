@@ -155,6 +155,19 @@ Goods are rival and come from places. Infinite goods shared freely made "ally wi
 - **Supply:** every 4 units that needed a good consume 1 of it per turn. Unsupplied units get −25% attack and −15% defense, and don't heal.
 - **AI:** it values improvements on deposits it lacks, settles near ore and horses, and won't field armies its supply can't feed.
 
+### Trade routes (`src/trade.js`)
+- **Opening:** two tribes at peace open a route (an offer in Diplomacy; 1 + 1 per 4 cities each). The route is a real path between their nearest connected cities: over land, over shallow water once both have Sailing, and over ocean once both have Navigation. It can't cross land at war with either partner, foreign cities, or land a third tribe has **closed** to either partner.
+- **Flow:** each round, goods flow automatically from surplus to deficit, up to 3 each way. A tribe keeps a reserve of 4 + 3× its army's supply need and imports up to reserve + 2.
+- **Prices:** the buyer pays ore/horses 4 and timber/stone 2 per unit, plus a **toll** of 1 per unit to every tribe whose land is crossed. Upkeep is ⌈length / 8⌉ gold per side per round.
+- **Raiding:** any unit at war with either partner standing on a route tile seizes that shipment (and earns grudges). Routes appear in the **Trade** map mode, with raided (!) or blocked (×) markers.
+- **AI behaviour:**
+  - it opens routes where it can buy or sell, and closes routes idle for 8 rounds;
+  - it closes its land to tribes it loathes;
+  - it sends idle armies to sit on enemy routes;
+  - it gains +0.5 hostility per supplier toward anyone at war with a tribe it imports from;
+  - it values enemy cities 40% more for each good they produce that it is starving for.
+- **Effect in sims (8 tribes, large map, 100 turns):** 10–13 wars per game, against 5–7 with infinite goods, plus 19–65 raids and more alliances.
+
 ### Peoples (cultures) & records
 Peoples are separate from polities (`src/culture.js`), as in CK3, and names never exceed two parts.
 
@@ -204,5 +217,5 @@ See [`docs/ROADMAP.md`](docs/ROADMAP.md) for proposed next systems: diplomacy, t
 2. **Late-game gold still piles up.** Nine world wonders (one per land type, level 5+ city) now soak some of it, but all techs are usually researched by about turn 80–100. Unit upgrades or repeatable techs are the next candidates.
 3. **Rebellions inherit the full tech tree** of their parent. With homeland bias applied they now stay small (1–5 cities in sims), but a late-game rebellion is still technologically mature on day one.
 4. **Coastal threshold.** With 2 water neighbours, coastal cities dominated, so the threshold is now 3. Mixed tiles (a forest on the coast) still get only one identity. A primary/secondary specialty system is the obvious next step.
-5. **Late-game AI treasuries balloon**, often to thousands of gold, now that peace and trade let economies run. More sinks are needed (wonders scaled to treasury, unit upgrades), or the AI should declare more wars of opportunity.
+5. **Ore is scarce almost everywhere**, so it rarely has a surplus to trade and acts as a pure war resource. Revisit deposit density if routes should carry more of it. **Late-game AI treasuries balloon**, often to thousands of gold, now that peace and trade let economies run. More sinks are needed (wonders scaled to treasury, unit upgrades), or the AI should declare more wars of opportunity.
 6. **AI cheats slightly.** It knows enemy unit positions near its units without fog checks.

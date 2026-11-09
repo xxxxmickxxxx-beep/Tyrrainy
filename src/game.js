@@ -8,6 +8,7 @@ import {
 import { generateMap, pickStarts, MAP_SIZES } from './mapgen.js';
 import { diplomacyMethods } from './diplomacy.js';
 import { economyMethods } from './economy.js';
+import { tradeMethods } from './trade.js';
 import { ROOTS, LAND_BASE, joinName, combining, cleanBase, pickColors, offshootColors } from './culture.js';
 
 const INTEGRATION_TURNS = 10;
@@ -719,6 +720,10 @@ export class Game {
     const preyW = bully * Math.max(0, 0.7 - x.rp);
     const { leader, d } = this.dominance();
     const C = thr.containment;
+    // threatening a tribe we depend on for goods threatens us
+    let supplierW = 0;
+    if (this.suppliersOf) for (const s of this.suppliersOf(pid)) if (s !== target && this.atWar(target, s)) supplierW += 0.5;
+    supplierW = Math.min(1, supplierW);
     let w;
     if (leader >= 0 && leader !== pid && target === leader) {
       w = 1 + grudge + threatW + 3 * C;
@@ -728,7 +733,7 @@ export class Game {
       const restraint = Math.max(0.3, 1 - 0.7 * Math.min(1, C * 2));
       w = (1 + grudge + preyW) * restraint + threatW;
     }
-    return Math.max(0.1, w);
+    return Math.max(0.1, w + supplierW);
   }
   coalitionMembers() {
     const live = new Set(this.contenders().map(p => p.id));
@@ -1572,6 +1577,7 @@ export class Game {
       if (this.players[next].alive) break;
     }
     if (wrapped || next <= this.current) {
+      this.tradeTick();
       this.recordHistory();
       for (const p of this.players) if (p.alive) this.bumpPeak(p.id);
       this.turn++;
@@ -1604,7 +1610,7 @@ export class Game {
     return JSON.stringify({
       v: 1, W: this.W, H: this.H, seed: this.seed, settings: this.settings, tiles: this.tiles,
       elev: this.elev, turn: this.turn, current: this.current, nextId: this.nextId,
-      cities: this.cities, units: this.units, log: this.log, winner: this.winner, coalition: this.coalition, history: this.history, cultures: this.cultures, relations: this.relations, offers: this.offers,
+      cities: this.cities, units: this.units, log: this.log, winner: this.winner, coalition: this.coalition, history: this.history, cultures: this.cultures, relations: this.relations, offers: this.offers, routes: this.routes,
       players: this.players.map(p => ({ ...p, _vis: undefined })), rng: this.rng.state(),
       cityNamePool: this.cityNamePool,
     });
@@ -1642,4 +1648,4 @@ export class Game {
   }
 }
 
-Object.assign(Game.prototype, diplomacyMethods, economyMethods);
+Object.assign(Game.prototype, diplomacyMethods, economyMethods, tradeMethods);

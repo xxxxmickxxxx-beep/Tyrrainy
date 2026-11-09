@@ -65,6 +65,7 @@ export const diplomacyMethods = {
     if (!chk.ok) return chk;
     const was = this.relation(a, b).state;
     this.setRelation(a, b, 'war');
+    if (this.routeBetween?.(a, b)) this.closeRoute(a, b, true);
     // treachery is remembered: the victim, and everyone who knows the aggressor
     this.addGrudge(b, a, was === 'alliance' ? 60 : 40);
     for (const p of this.players) if (p.alive && p.id !== a && p.id !== b && this.hasMet(p.id, a)) this.addGrudge(p.id, a, was === 'alliance' ? 15 : 8);
@@ -112,11 +113,13 @@ export const diplomacyMethods = {
     const st = this.relation(from, to).state;
     if (type === 'peace' && st !== 'war') return { ok: false, why: 'Not at war' };
     if (type === 'alliance' && (st === 'war' || st === 'alliance')) return { ok: false, why: st === 'war' ? 'Make peace first' : 'Already allied' };
+    if (type === 'route') return this.canOpenRoute(from, to);
     return { ok: true };
   },
   applyOffer(from, to, type) {
     if (type === 'peace') this.makePeace(from, to);
     else if (type === 'alliance') this.formAlliance(from, to);
+    else if (type === 'route') this.openRoute(from, to);
   },
   answerOffer(o, accept) {
     if (!(this.offers || []).includes(o)) return { ok: false, why: 'Offer no longer stands' };
@@ -139,6 +142,10 @@ export const diplomacyMethods = {
       if (this.players[pid].temper?.joined === from) return myP < theirP * 0.5; // coalition members don't fold easily
       if (myP >= theirP * 1.5 && age < 25 && h >= 1.1) return false; // winning: press on
       return h < 1.6 || myP < theirP * 0.7 || (age >= 20 && h < 2.2);
+    }
+    if (type === 'route') {
+      const g = this.routeGain(pid, from);
+      return h < 1.9 && (g.buy > 0 || g.sell > 0);
     }
     if (type === 'alliance') {
       const T = this.players[pid].temper, F = this.players[from].temper;
