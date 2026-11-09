@@ -1343,7 +1343,7 @@ function showHelp() {
   <ul><li><b>Great Library</b> (Philosophy): +25% knowledge, tech upkeep −25%.</li>
   <li><b>Royal Road</b> (Pathfinding): road moves cost ⅓, trade route upkeep halved, +1 trade route.</li>
   <li><b>Grand Arsenal</b> (Iron Working): units cost 1 less labor, upgrades half price, lighter army supply.</li>
-  <li><b>Imperial Granaries</b> (Irrigation): every city eats 1 less food.</li></ul>
+  <li><b>Imperial Granaries</b> (Engineering): every city eats 1 less food.</li></ul>
   <h3>Knowledge</h3>
   <p>Research is paid in <b>knowledge</b> (✦), not gold. Each city gives 0.5 + 0.5 per level, the capital +1, each Shrine and Market +2, and each active trade route +1 (+2 with an unrelated people: ideas travel with goods). Philosophy adds 25%. Vassals pass a quarter of theirs to their overlord. Tech costs rise with tier and with your number of cities.</p>
   <h3>Technology upkeep & dark ages</h3>

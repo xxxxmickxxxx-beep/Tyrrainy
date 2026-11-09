@@ -292,7 +292,7 @@ export const GRAND = {
   library:   { name: 'Great Library', tech: 'philosophy', labor: 120, needs: { stone: 6, cloth: 4 }, desc: '+25% knowledge; technology upkeep −25%.' },
   royalroad: { name: 'Royal Road', tech: 'roads', labor: 90, needs: { stone: 8 }, desc: 'Road-to-road moves cost ⅓; trade route upkeep halved; +1 trade route.' },
   arsenal:   { name: 'Grand Arsenal', tech: 'ironworking', labor: 110, needs: { iron: 6, timber: 6 }, desc: 'Units cost 1 less labor; upgrades at half price; army supply 1 per 5 units instead of 4.' },
-  granaries: { name: 'Imperial Granaries', tech: 'irrigation', labor: 100, needs: { stone: 4, timber: 4 }, desc: 'Cities eat 1 less food (level − 3).' },
+  granaries: { name: 'Imperial Granaries', tech: 'engineering', labor: 100, needs: { stone: 4, timber: 4 }, desc: 'Cities eat 1 less food (level − 3).' },
 };
 
 // ---------------- Techs ----------------
@@ -312,11 +312,11 @@ export const TECHS = {
   bronze:      { name: 'Bronze Working', tier: 3, req: ['masonry'], desc: 'Bronze Workshops (copper + tin → bronze). Swordsmen, Pikemen.' },
   navigation:  { name: 'Navigation', tier: 3, req: ['sailing'], desc: 'Embark on ocean, boats +1 move, whaling.' },
   trade:       { name: 'Trade', tier: 3, req: ['irrigation'], desc: '+1 gold in every city of level 3+.' },
-  roads:       { name: 'Pathfinding', tier: 3, req: ['forestry', 'husbandry'], desc: 'Forest & hills move cost 1 for all units.' },
-  engineering: { name: 'Engineering', tier: 4, req: ['bronze'], desc: 'Catapults.' },
-  ironworking: { name: 'Iron Working', tier: 3, req: ['bronze', 'forestry'], desc: 'Iron ore can be mined (hills, mountains, marsh bogs); Bloomeries smelt it with timber. Iron serves wherever bronze does. Legionaries.' },
+  roads:       { name: 'Pathfinding', tier: 3, req: ['forestry', 'husbandry'], desc: 'Forest & hills move cost 1 for all units. Grand project: Royal Road.' },
+  engineering: { name: 'Engineering', tier: 4, req: ['bronze'], desc: 'Catapults. Grand project: Imperial Granaries.' },
+  ironworking: { name: 'Iron Working', tier: 3, req: ['bronze', 'forestry'], desc: 'Iron ore can be mined (hills, mountains, marsh bogs); Bloomeries smelt it with timber. Iron serves wherever bronze does. Legionaries. Grand project: Grand Arsenal.' },
   chivalry:    { name: 'Chivalry', tier: 4, req: ['riding', 'bronze'], desc: 'Knights.' },
-  philosophy:  { name: 'Philosophy', tier: 4, req: ['trade'], desc: 'Shrines. Knowledge +25%.' },
+  philosophy:  { name: 'Philosophy', tier: 4, req: ['trade'], desc: 'Shrines. Knowledge +25%. Grand project: Great Library.' },
   assimilation:{ name: 'Assimilation', tier: 4, req: ['trade'], desc: 'Foreign & alien penalties reduced by one step.' },
 };
 

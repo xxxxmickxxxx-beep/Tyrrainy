@@ -185,7 +185,7 @@ If the city survives that roll, the **conqueror chooses** whether to keep it or 
 | Great Library | Philosophy | 120 labor + 6 stone, 4 cloth | +25% knowledge, tech upkeep −25% |
 | Royal Road | Pathfinding | 90 labor + 8 stone | road-to-road moves cost ⅓, route upkeep halved, +1 trade route |
 | Grand Arsenal | Iron Working | 110 labor + 6 iron, 6 timber | units −1 labor, upgrades half price, army supply 1 per 5 units |
-| Imperial Granaries | Irrigation | 100 labor + 4 stone, 4 timber | cities eat level − 3 food |
+| Imperial Granaries | Engineering | 100 labor + 4 stone, 4 timber | cities eat level − 3 food |
 
 - **Building:** begin one in a connected site city (goods paid up front). Any city connected to the site then contributes its labor. This is the one place where a whole realm's labor pools, but the site takes in at most 10 + 2×level labor per turn, so even a large empire needs about 6–8 turns. Without that cap, sims showed 10+ cities finishing one in a single turn, leaving nothing to fight over.
 - **Ownership:** the effect belongs to whoever holds the site city. Capturing it captures the project, so they're targets as well as rewards. Losing the site mid-build loses the progress.
