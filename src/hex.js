@@ -31,10 +31,11 @@ function cubeDist(c1, r1, c2, r2) {
   return Math.max(Math.abs(x1 - x2), Math.abs(y1 - y2), Math.abs(z1 - z2));
 }
 // wrapW: the map's width when east and west join (the shorter way round counts)
+// (the nearer image by column is the shorter way round, except possibly for tiles about
+// half the world apart, where a difference of one tile doesn't matter)
 export function hexDist(c1, r1, c2, r2, wrapW = 0) {
-  const d = cubeDist(c1, r1, c2, r2);
-  if (!wrapW) return d;
-  return Math.min(d, cubeDist(c1, r1, c2 + wrapW, r2), cubeDist(c1, r1, c2 - wrapW, r2));
+  if (wrapW) { const dc = c2 - c1; if (dc > wrapW / 2) c2 -= wrapW; else if (dc < -wrapW / 2) c2 += wrapW; }
+  return cubeDist(c1, r1, c2, r2);
 }
 
 // Pixel center of a hex of "size" (center-to-corner radius).

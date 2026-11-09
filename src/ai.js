@@ -112,18 +112,21 @@ function diplomacyAct(g, pid) {
   const others = g.contenders().filter(p => p.id !== pid && g.hasMet(pid, p.id));
   const offerOk = (o, type) => (g.turn - (pl.lastOffer[o + type] ?? -99)) >= 5;
   const offer = (o, type) => { pl.lastOffer[o + type] = g.turn; return g.offer(pid, o, type); };
-  // vassals: bide their time, break free when liberty peaks and they can stand alone
+  releaseRestless(g, pid);
+  manageSubjects(g, pid);
+  // vassals: bide their time, break free when liberty peaks and they can stand alone (with
+  // their fellow conspirators). A free-hand subject also wages its own wars.
   const lord = g.overlordOf(pid);
   if (lord != null) {
     const r = g.vassalRel(pid);
-    if (r.liberty >= 100 && myP >= g.power(lord) * 0.5) g.declareIndependence(pid);
-    return;
+    if (r.liberty >= 100 && g.standRatio(pid) >= 0.5) { g.riseAgainst(pid); return; }
+    if (!g.terms(pid).free) return;
   }
   // overlords absorb vassals when they can
   for (const v of g.vassalsOf(pid)) if (g.canAnnex(pid, v).ok) g.annexVassal(pid, v);
   // under attack and outmatched: seek a protector
   const threats = g.warsOf(pid).filter(e => g.power(e) > myP * 2);
-  if (threats.length && !g.vassalsOf(pid).length && offerOk(-1, 'protect')) {
+  if (lord == null && threats.length && !g.vassalsOf(pid).length && offerOk(-1, 'protect')) {
     const protector = others.filter(o => !g.atWar(pid, o.id) && !g.isVassal(o.id) && g.power(o.id) > Math.max(...threats.map(e => g.power(e))) * 0.9)
       .sort((a, b) => g.hostility(pid, a.id) - g.hostility(pid, b.id))[0];
     if (protector) { pl.lastOffer['-1protect'] = g.turn; g.offer(pid, protector.id, 'protect'); }
@@ -185,6 +188,62 @@ function diplomacyAct(g, pid) {
       if ((gain.buy > 0 || gain.sell > 1) && g.canOpenRoute(pid, o.id).ok) offer(o.id, 'route');
     }
     g.setTransit(pid, o.id, h > 2.3);
+  }
+}
+
+// An overlord's handling of its subjects, reviewed every few turns per subject:
+//  - strong or restless subjects are kept bound and lightly taxed (bound keeps them small,
+//    light tribute keeps them loyal); weak, loyal ones get a free hand and pay the standard rate
+//  - a weak subject losing a war to a strong fellow subject is propped up with a subsidy
+//  - wars between subjects are stopped by arbitration when the winner will accept it cheaply
+// Demands the subject would refuse are never sent.
+function manageSubjects(g, pid) {
+  const subs = g.vassalsOf(pid);
+  if (!subs.length) return;
+  const pl = g.players[pid];
+  const myP = Math.max(1, g.power(pid));
+  const tryTerms = (v, change) => {
+    const to = { ...g.terms(v), ...change };
+    const pre = g.previewTerms(pid, v, to);
+    if (!pre.ok || (pre.tighten && !pre.human && !pre.accept)) return false;
+    return g.setTerms(pid, v, change).ok;
+  };
+  for (const v of subs) {
+    const r = g.vassalRel(v), T = g.terms(v);
+    if (g.turn - (r.termsTurn ?? -99) < 5) continue;
+    r.termsTurn = g.turn;
+    const ratio = g.power(v) / myP;
+    const strong = ratio > 0.5 || r.liberty > 60;
+    // a conspirator is bought back: no tribute, and a subsidy if the treasury allows
+    if (r.pact && T.tribute > 0) tryTerms(v, { tribute: 0 });
+    else if (r.pact && T.subsidy < 3 && pl.gold > 60 + 30 * T.subsidy) tryTerms(v, { subsidy: T.subsidy + 1 });
+    else if (r.liberty > 60 && T.tribute > 1) tryTerms(v, { tribute: T.tribute - 1 });
+    else if (strong && T.free && r.liberty < 50) tryTerms(v, { free: false });
+    else if (!strong && ratio < 0.3 && !T.free) tryTerms(v, { free: true });
+    else if (r.liberty < 30 && ratio < 0.4 && T.tribute < 2) tryTerms(v, { tribute: T.tribute + 1 });
+    // subsidise a weak subject holding off a strong fellow subject
+    const bully = subs.find(w => w !== v && g.atWar(v, w) && g.power(w) > g.power(v) * 1.5 && g.power(w) / myP > 0.35);
+    if (bully != null && !T.subsidy && pl.gold > 80) tryTerms(v, { subsidy: 2 });
+    else if (bully == null && !r.pact && r.liberty < 40 && T.subsidy && pl.gold < 60) tryTerms(v, { subsidy: 0 });
+  }
+  for (let i = 0; i < subs.length; i++) for (let j = i + 1; j < subs.length; j++) {
+    const pre = g.previewArbitration(pid, subs[i], subs[j]);
+    if (!pre.ok || pre.human) continue;
+    const rw = g.vassalRel(pre.winner);
+    if (pre.accept && rw.liberty + pre.spike < 70) g.arbitrate(pid, subs[i], subs[j]);
+  }
+}
+
+// A recent conquest about to revolt is better released as a client than lost to rebels; a
+// kindred subject nearby can take it instead. (Long-held cities that boil over still rise as
+// rebellions.) At most one a turn.
+function releaseRestless(g, pid) {
+  for (const c of g.cities) {
+    if (c.owner !== pid || c.capital || c.level < 2 || c.capturedFrom == null || (c.held || 0) >= 25) continue;
+    if ((c.unrest || 0) < REVOLT_AT - 3 || g.unrest(c).net <= 0) continue;
+    const kin = g.grantTargets(c).find(v => g.related(c.culture, g.players[v].culture));
+    if (kin != null && g.grantCity(c, kin).ok) return;
+    if (g.releaseCity(c).ok) return;
   }
 }
 

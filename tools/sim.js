@@ -33,6 +33,7 @@ for (let k = 0; k < games; k++) {
     if (t === 'festival') { st.fest++; if (d.backfired) st.backfire++; }
     if (t === 'coalition') st.joins.push(`T${g.turn} ${g.players[d.member].temper.key}`);
     if (t === 'log' && /Insurgents/.test(d.msg)) st.insurg++;
+    if (t === 'log' && /refuses .*terms|will not be robbed/.test(d.msg)) st.refused = (st.refused || 0) + 1;
   });
   let steps = 0;
   const boost = +(args.boost || 0); // test runaway behaviour: tribe 0 gets free gold each turn
@@ -50,6 +51,9 @@ for (let k = 0; k < games; k++) {
   console.log(`  unit mix: ${Object.entries(units).sort((a, b) => b[1] - a[1]).map(([k, v]) => k + ':' + v).join(' ')}`);
   console.log(`  diplomacy events: war ${st.war || 0}, peace ${st.peace || 0}, alliance ${st.alliance || 0}, routes opened ${st.route || 0} (active ${(g.routes || []).length}), raids ${st.raids || 0}, vassalages ${st.vassal || 0}, annexed ${st.annex || 0}, independence ${st.independence || 0} (vassals now ${g.contenders().filter(p => g.isVassal(p.id)).length}) | final relations among met pairs: ${JSON.stringify(rel)}`);
   const known = g.contenders().filter(p => !p.rebel).map(p => p.techs.length);
+  const deep = g.contenders().filter(p => { const o = g.overlordOf(p.id); return o != null && g.overlordOf(o) != null; }).length;
+  const termsNow = g.contenders().filter(p => g.isVassal(p.id)).map(p => { const t = g.terms(p.id); return `${['N','L','S','H'][t.tribute]}${t.free ? 'f' : 'b'}${t.subsidy ? '$' : ''}${g.vassalRel(p.id).pact ? '!' : ''}`; }).join(' ');
+  console.log(`  subjects: clients ${st.client || 0}, grants ${st.grant || 0}, arbitrations ${st.arbitrate || 0}, pact risings ${st.pactRising || 0}, refusals ${st.refused || 0}, nested now ${deep}; terms now [${termsNow}]; ${g.winner?.how === 'conquest' ? 'CONQUEST' : ''}`);
   console.log(`  techs forgotten ${st.forgot || 0}, dark ages ${st.dark || 0} (in one now: ${g.contenders().filter(p => p.darkAge).length}); techs known min/avg/max ${Math.min(...known)}/${(known.reduce((a, b) => a + b, 0) / known.length).toFixed(1)}/${Math.max(...known)}`);
   console.log(`  coalition joins: ${st.joins.join(', ') || 'none'}`);
   console.log(`  share of attacks on leader while dominant, by temperament: ` + Object.entries(st.byTemper).map(([k, v]) => `${k} ${Math.round(100 * v.leader / Math.max(1, v.leader + v.other))}% (${v.leader + v.other})`).join(', '));

@@ -1,6 +1,18 @@
 # Proposal: managing subjects
 
-Status: awaiting decisions. See the open questions at the end.
+Status: **built**. See README › Tributaries for the rules as implemented. Decisions taken:
+- 30% of the resentment from a free-hand subject's aggression falls on its overlord.
+- Submitting imposes a truce on the new subject's wars with its fellow subjects.
+- **Victory:** subjects at any depth count toward a conquest win. Disloyal subjects form **conspiracies** (liberty 50+) that rise together once they reach 80% of the overlord's strength.
+- **Grants and clients:** subjects can release their own clients, so grants can't be refused.
+- **Refusing terms:** any subject, human or AI, can refuse tightened terms by going to war. An AI subject's answer is previewed as a clear yes or no and given instantly; a human subject answers on its turn.
+
+Changed during tuning:
+- Conspiring is +0.5 liberty a turn, not +1.
+- No tribute is −1.5, and subsidies give −0.5 per tier, so a conspirator can be bought back.
+- The AI releases about-to-revolt cities only if they're recent conquests, so rebellions still happen.
+
+Original proposal below.
 
 ## What exists today
 - A vassal (subject) keeps its cities and pays 25% of its gold, plus surplus goods along a raidable route.

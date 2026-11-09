@@ -220,6 +220,15 @@ function showOffers(pl) {
   let extra = '';
   if (o.type === 'vassal') extra = `<p>You would keep your cities and people, but pay ${Math.round(25)}% of your gold income and your surplus goods as tribute, and follow their wars and peace. Refusing means the war goes on.</p>`;
   if (o.type === 'protect') extra = `<p>They would pay you tribute and follow your wars. You would join their current wars: ${game.warsOf(o.from).map(e => esc(game.players[e].name)).join(', ') || 'none'}.</p>`;
+  if (o.type === 'terms' || o.type === 'arbitrate') {
+    const what2 = o.type === 'terms' ? `demand new terms: ${termsText(o.terms)}` : `order you to make peace with the ${esc(game.players[o.a === pl.id ? o.b : o.a].name)}`;
+    const pact = game.vassalRel(pl.id)?.pact ? ` Your fellow conspirators (${game.pactOf(o.from).filter(m => m !== pl.id).map(m => esc(game.players[m].name)).join(', ') || 'none'}) would rise with you.` : '';
+    openModal(`<h2>${chip(from)} ${esc(from.name)} ${what2}</h2><p>Your liberty desire would rise by ${o.spike}. <b>Refusing means war</b> with your overlord.${pact}</p><p><button class="primary" id="btnAcc">Submit</button> <button id="btnDec" style="background:#5a2020">Refuse and rise up</button></p>`);
+    const done2 = (yes) => { const r = game.answerOffer(o, yes); if (!r.ok) toast(r.why); closeModal(); refreshAll(); setTimeout(() => showOffers(pl), 50); };
+    $('btnAcc').onclick = () => done2(true);
+    $('btnDec').onclick = () => done2(false);
+    return;
+  }
   if (o.type === 'route') {
     const gn = game.routeGain(pl.id, o.from);
     extra = `<p>Right now you could buy about ${gn.buy} and sell about ${gn.sell} units of goods per turn along it. Upkeep and tolls depend on its length and path.</p>`;
@@ -662,6 +671,7 @@ function cityPanel(c) {
     h += `<button data-act="drill" ${dr.ok ? '' : 'disabled'} title="${esc(dr.why || '')}">Drill garrison ${workLabel(8, dr)}<small>the unit here becomes a veteran</small></button>`;
     h += `</div>`;
     h += grandBlock(c);
+    if (!c.capital && (game.canReleaseCity(c).ok || game.grantTargets(c).length)) h += `<h4>Indirect rule</h4><div class="opts"><button data-act="releasecity">Release or grant this city…<small>as a client realm, or to one of your subjects</small></button></div>`;
     if (c.buildings.length) h += `<div class="desc">Built: ${c.buildings.map(b => BUILDINGS[b].name).join(', ')}</div>`;
     if (c.wonders?.length) h += `<div class="desc">Wonders: <b>${c.wonders.map(w => WONDERS[w].name).join(', ')}</b></div>`;
     // workable tiles summary
@@ -783,6 +793,7 @@ function panelAction(d) {
   if (d.act === 'road') { const r = game.buildRoad(R.viewer, sel.idx); if (!r.ok) toast(r.why); refreshAll(); return; }
   if (d.act === 'extendroads') { const r = game.extendRoads(game.cityById(sel.id)); if (!r.ok) toast(r.why); refreshAll(); return; }
   if (d.act === 'scholars') { const r = game.scholars(game.cityById(sel.id)); toast(r.ok ? `+${r.gain} knowledge` : r.why); refreshAll(); return; }
+  if (d.act === 'releasecity') { const c = game.cityById(sel.id); openModal(`<h2>Indirect rule: ${esc(c.name)}</h2>${releaseButtons(c, false)}`); bindRelease(c, true); return; }
   if (d.act === 'grandstart') { const r = game.startGrand(game.cityById(sel.id), d.k); if (!r.ok) toast(r.why); refreshAll(); return; }
   if (d.act === 'grandgive') { const r = game.contribute(game.cityById(sel.id), d.k); toast(r.ok ? `${r.given} labor given` : r.why); refreshAll(); return; }
   if (d.act === 'drill') { const r = game.drill(game.cityById(sel.id)); if (!r.ok) toast(r.why); refreshAll(); return; }
@@ -978,6 +989,10 @@ function showDiplomacy() {
         else acts.push(['independence', 'Declare independence']);
       } else if (mine && iAmVassal) {
         if (!game.routeBetween(me.id, p.id) && r.state !== 'war') acts.push(['route', 'Open route', !game.canOpenRoute(me.id, p.id).ok]);
+        if (game.terms(me.id)?.free) {
+          if (r.state === 'war') { const pc = game.offerCheck(me.id, p.id, 'peace'); acts.push(['peace', 'Offer peace', !pc.ok, pc.why]); }
+          else { const wc = game.canDeclareWar(me.id, p.id); acts.push(['war', 'Declare war', !wc.ok, wc.why]); }
+        }
       } else if (mine) {
         if (r.state === 'war') { acts.push(['peace', 'Offer peace']); acts.push(['vassal', 'Demand submission', !game.offerCheck(me.id, p.id, 'vassal').ok]); }
         else {
@@ -1007,6 +1022,7 @@ function showDiplomacy() {
     }
     h += `</table>`;
   }
+  h += subjectsHTML(me.id, mine);
   h += `<p class="dim"><b>Tributaries</b>: demand submission from a beaten enemy, or seek protection from a stronger neighbour. A vassal keeps its cities and people, pays 25% of its gold income plus surplus goods along a tribute route, and follows its overlord's wars. Liberty desire grows with distance, cultural difference and the overlord's weakness; at 100 the vassal breaks free. An overlord may annex kindred vassals, or any vassal after 30 quiet turns.</p>`;
   h += `<p class="dim"><b>Trade routes</b> (${game.routesOf(me.id).length}/${game.routeLimit(me.id)}) run between your nearest connected cities. Each turn up to ${3} goods flow each way from surplus to deficit (you keep a reserve of 4 + 3× your army's supply). Buyers pay a price per unit (${Object.entries(PRICE).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${STRATEGIC[k].name.toLowerCase()} ${v}`).join(', ')}), plus 1 per unit to every tribe whose land the route crosses. Routes cost upkeep by length. An enemy unit standing on a route seizes its shipment. A route can't pass through land closed to either partner. See the <b>Trade</b> map mode and your goods (G).</p>`;
   openModal(h);
@@ -1021,6 +1037,7 @@ function showDiplomacy() {
     else if (k === 'release') res = game.releaseVassal(me.id, o);
     else if (k === 'independence') { if (!confirm(`Throw off ${game.players[o].name}'s rule? This means war.`)) return; res = game.declareIndependence(me.id); }
     else if (k === 'transit') { game.setTransit(me.id, o, !game.transitClosed(me.id, o)); res = { ok: true }; }
+    else if (k === 'pact') res = game.joinPact(me.id, !game.vassalRel(me.id)?.pact);
     else {
       res = game.offer(me.id, o, k);
       if (res.ok) toast(res.pending ? 'Offer sent; they will answer on their turn.' : res.accepted ? `The ${game.players[o].name} accept!` : `The ${game.players[o].name} decline.`);
@@ -1028,6 +1045,72 @@ function showDiplomacy() {
     if (res && !res.ok) toast(res.why);
     refreshAll(); showDiplomacy();
   });
+  $('modalBody').querySelectorAll('[data-terms]').forEach(b => b.onclick = () => {
+    const [v, field, val] = b.dataset.terms.split('|');
+    const change = { [field]: field === 'free' ? val === '1' : +val };
+    const pre = game.previewTerms(me.id, +v, { ...game.terms(+v), ...change });
+    if (pre.tighten && !pre.human && !pre.accept && !confirm(`The ${game.players[+v].name} will refuse and rise up against you (${pre.why}). Send the demand anyway?`)) return;
+    const res = game.setTerms(me.id, +v, change);
+    if (!res.ok) toast(res.why);
+    else toast(res.pending ? 'Demand sent: they answer on their turn.' : res.applied ? 'Terms eased.' : res.accepted ? `The ${game.players[+v].name} submit to the new terms.` : `The ${game.players[+v].name} refuse: war!`);
+    refreshAll(); showDiplomacy();
+  });
+  $('modalBody').querySelectorAll('[data-arb]').forEach(b => b.onclick = () => {
+    const [a, c] = b.dataset.arb.split('|').map(Number);
+    const pre = game.previewArbitration(me.id, a, c);
+    if (pre.ok && !pre.human && !pre.accept && !confirm(`The ${game.players[pre.winner].name} will refuse and rise up against you. Order the truce anyway?`)) return;
+    const res = game.arbitrate(me.id, a, c);
+    if (!res.ok) toast(res.why);
+    else toast(res.pending ? 'Order sent: they answer on their turn.' : res.accepted ? 'Truce imposed.' : 'They refuse: war!');
+    refreshAll(); showDiplomacy();
+  });
+}
+
+const TRIB = ['No', 'Light', 'Standard', 'Heavy'];
+function termsText(t) { return `${TRIB[t.tribute].toLowerCase()} tribute (${[0, 15, 25, 40][t.tribute]}%), ${t.subsidy ? 'a subsidy of ' + [0, 3, 6, 10][t.subsidy] + ' gold a turn' : 'no subsidy'}, ${t.free ? 'a free hand in war' : 'bound to their wars'}`; }
+// The overlord's panel (terms per subject, with each demand's answer shown before it is sent),
+// or the subject's view of its own terms and the conspiracy.
+function subjectsHTML(pid, mine) {
+  let h = '';
+  const subs = game.vassalsOf(pid);
+  const badge = (pre) => !pre.ok ? '' : !pre.tighten ? '' : pre.human ? ` <span class="dim">(+${pre.spike} liberty; they decide)</span>` : pre.accept ? ` <span style="color:#7ddc6a">(+${pre.spike} liberty; accepts)</span>` : ` <span style="color:#ff6050">(refuses: war!)</span>`;
+  if (subs.length) {
+    h += `<h3>Your subjects</h3>`;
+    const ps = game.pactStrength(pid);
+    if (ps.members.length) h += `<p style="color:#ff8a70"><b>Conspiracy:</b> ${ps.members.map(m => esc(game.players[m].name)).join(', ')}. Their combined strength is ${Math.round(ps.ratio * 100)}% of yours (with your loyal subjects); at ${Math.round(80)}% they rise together${ps.members.length < 2 ? ', once two or more conspire' : ''}. Lower their liberty desire under 35 to break it.</p>`;
+    h += `<table class="tribes"><tr><th>Subject</th><th>Tribute</th><th>Subsidy</th><th>War rights</th></tr>`;
+    for (const v of subs) {
+      const T = game.terms(v), r = game.vassalRel(v);
+      const btn = (field, val, label) => {
+        const cur = field === 'free' ? T.free === val : T[field] === val;
+        const pre = game.previewTerms(pid, v, { ...T, [field]: val });
+        return `<button data-terms="${v}|${field}|${field === 'free' ? (val ? 1 : 0) : val}" ${cur || !mine ? 'disabled' : ''} style="padding:2px 6px;font-size:12px;${cur ? 'border-color:#f0c060;background:#3a3420' : ''}">${label}${cur ? ' ✓' : badge(pre)}</button>`;
+      };
+      const ratio = game.power(v) / Math.max(1, game.power(pid));
+      h += `<tr><td>${chip(game.players[v])} ${esc(game.players[v].name)}${r.pact ? ' <b style="color:#ff6050">conspiring</b>' : ''}<br><span class="dim">liberty ${Math.round(r.liberty)}/100, power ${Math.round(ratio * 100)}% of yours${r.lastSubsidy ? `, receives ${r.lastSubsidy} gold` : ''}</span></td>`;
+      h += `<td>${[0, 1, 2, 3].map(k => btn('tribute', k, TRIB[k])).join(' ')}</td><td>${[0, 1, 2, 3].map(k => btn('subsidy', k, k ? '◉' + [0, 3, 6, 10][k] : 'None')).join(' ')}</td><td>${btn('free', false, 'Bound')} ${btn('free', true, 'Free hand')}</td></tr>`;
+    }
+    h += `</table>`;
+    const wars = [];
+    for (let i = 0; i < subs.length; i++) for (let j = i + 1; j < subs.length; j++) if (game.atWar(subs[i], subs[j])) wars.push([subs[i], subs[j]]);
+    for (const [a, b] of wars) {
+      const pre = game.previewArbitration(pid, a, b);
+      h += `<p>${esc(game.players[a].name)} and ${esc(game.players[b].name)} are at war; the ${esc(game.players[pre.winner].name)} are winning. <button data-arb="${a}|${b}" ${mine ? '' : 'disabled'} style="padding:2px 8px;font-size:12px">Force a truce</button> <span class="dim">the winner's liberty +${pre.spike}, the loser's −10</span>${pre.human ? ' <span class="dim">(they decide)</span>' : pre.accept ? ' <span style="color:#7ddc6a">(accepts)</span>' : ' <span style="color:#ff6050">(refuses: war!)</span>'}</p>`;
+    }
+    h += `<p class="dim"><b>Terms:</b> easing them takes effect at once. Tightening them (more tribute, binding a free subject, cutting a subsidy) raises the subject's liberty desire, and it may refuse, which means war; the answer is shown beside each button before you send it. Tribute: none −1.5, light +0.5, standard +1, heavy +2.5 liberty a turn (goods tribute from standard up). A bound subject only fights your wars (+1 liberty a turn); a free hand lets it wage its own, even on your other subjects, and you share 30% of the blame. Subsidies (−0.5 per tier) pay a subject to arm, but a subject that grows strong relative to you wants freedom more. Subjects with liberty 50+ conspire together (+0.5 a turn while they do).</p>`;
+  }
+  const lord = game.overlordOf(pid);
+  if (lord != null) {
+    const T = game.terms(pid), r = game.vassalRel(pid);
+    h += `<h3>Your overlord's terms</h3><p>${chip(game.players[lord])} ${esc(game.players[lord].name)}: ${termsText(T)}. Liberty desire ${Math.round(r.liberty)}/100.</p>`;
+    const can = game.canJoinPact(pid);
+    const others = game.pactOf(lord).filter(m => m !== pid);
+    const ps = game.pactStrength(lord);
+    if (r.pact) h += `<p style="color:#ff8a70">You conspire with ${others.map(m => esc(game.players[m].name)).join(', ') || 'no one yet'}. Strength ${Math.round(ps.ratio * 100)}% of your overlord's; at 80% the conspiracy rises (you with it).</p>`;
+    else if (others.length) h += `<p class="dim">${others.length} of your overlord's subjects conspire against it.</p>`;
+    if (mine) h += `<p><button data-dip="pact" data-pid="${lord}" ${r.pact || can.ok ? '' : 'disabled'} title="${esc(can.why || '')}">${r.pact ? 'Leave the conspiracy' : 'Join the conspiracy'}</button></p>`;
+  }
+  return h;
 }
 
 // ------------------------------------------------------------ goods
@@ -1304,9 +1387,34 @@ function showRazeChoice(c) {
   h += `<p class="dim">Advisors: ${adv.reasons.map(esc).join(' · ')}.</p>`;
   h += `<p><b>${adv.raze ? 'Your advisors favour razing it.' : 'Your advisors favour keeping it.'}</b> Razing frees the land and spares you its unrest, but its people${people && people.alive ? ` and the ${esc(people.name)}` : ''} will not forget.</p>`;
   h += `<p><button id="btnKeep" class="${adv.raze ? '' : 'primary'}">Keep the city</button> <button id="btnRaze" class="${adv.raze ? 'primary' : ''}" style="${adv.raze ? '' : 'background:#5a2020'}">Raze it</button></p>`;
+  h += releaseButtons(c, true);
   openModal(h);
+  bindRelease(c, true);
   $('btnKeep').onclick = () => { game.keepCity(c); closeModal(); };
   $('btnRaze').onclick = () => { const r = game.razeByChoice(c); if (!r.ok) toast(r.why); closeModal(); deselect(); refreshAll(); };
+}
+
+// Release a city as a client realm, or grant it to one of your subjects nearby.
+function releaseButtons(c, onCapture) {
+  const rel = game.canReleaseCity(c);
+  const targets = game.grantTargets(c);
+  if (!rel.ok && !targets.length) return '';
+  const cul = game.cultures?.[c.culture];
+  let h = `<p class="dim">${onCapture ? 'Or rule it indirectly:' : 'Indirect rule:'} a <b>client</b> is a new tribe of the city's own people, subject to you from the start (its liberty desire starts low if its people are kin to yours, high if they are kin to the tribe you took it from). A <b>grant</b> hands the city to one of your subjects; it then answers to their culture, not yours.</p><p>`;
+  h += `<button data-rel="client" ${rel.ok ? '' : 'disabled'} title="${esc(rel.why || '')}">Release as a client realm</button> `;
+  for (const v of targets) {
+    const V = game.players[v], kin = cul && game.related(c.culture, V.culture);
+    h += `<button data-rel="grant" data-v="${v}">${chip(V)} Grant to the ${esc(V.name)}${kin ? ' <span class="dim">(kindred)</span>' : ''}</button> `;
+  }
+  return h + '</p>';
+}
+function bindRelease(c, inModal) {
+  $('modalBody').querySelectorAll('[data-rel]').forEach(b => b.onclick = () => {
+    const r = b.dataset.rel === 'client' ? game.releaseCity(c) : game.grantCity(c, +b.dataset.v);
+    if (!r.ok) { toast(r.why); return; }
+    if (inModal) closeModal();
+    deselect(); refreshAll();
+  });
 }
 
 function showLeave() {
@@ -1348,7 +1456,7 @@ function showHelp() {
   <h3>Knowledge</h3>
   <p>Research is paid in <b>knowledge</b> (✦), not gold. Each city gives 0.5 + 0.5 per level, the capital +1, each Shrine and Market +2, and each active trade route +1 (+2 with an unrelated people: ideas travel with goods). Philosophy adds 25%. Vassals pass a quarter of theirs to their overlord. Tech costs rise with tier and with your number of cities.</p>
   <h3>Technology upkeep & dark ages</h3>
-  <p>(Game option, on by default.) Everything you know costs knowledge every turn: 1, 2, 3 or 4 per tech by tier. Upkeep halves if a trade partner, vassal or overlord also knows it, and drops a further 25% if any tribe at peace with you does: <b>contact keeps ideas alive, isolation is expensive</b>. Your knowledge stock is the buffer. When it runs dry, decline builds; at 10 you must let a technology go, and you choose which. Only knowledge nothing else depends on can be lost, so the most advanced goes first. What you've built keeps working. Forgotten techs are cheaper to relearn. Two losses within 10 turns bring on a <b>Dark Age</b>, which lifts after 15 turns without further losses. You may also let a tech fade on purpose from the tech screen.</p>
+  <p>(Game option, on by default.) Everything you know costs knowledge every turn: 1, 2, 3 or 4 per tech by tier. A subject pays nothing for what its overlord knows. Upkeep halves if a trade partner, vassal or overlord also knows it, and drops a further 25% if any tribe at peace with you does: <b>contact keeps ideas alive, isolation is expensive</b>. Your knowledge stock is the buffer. When it runs dry, decline builds; at 10 you must let a technology go, and you choose which. Only knowledge nothing else depends on can be lost, so the most advanced goes first. What you've built keeps working. Forgotten techs are cheaper to relearn. Two losses within 10 turns bring on a <b>Dark Age</b>, which lifts after 15 turns without further losses. You may also let a tech fade on purpose from the tech screen.</p>
   <h3>Unrest</h3>
   <p>Every city feels <b>pressure</b>:</p>
   <ul><li>a sprawling realm (+1 per 2 cities past 4);</li>
@@ -1400,7 +1508,12 @@ function showHelp() {
   <h3>Gold</h3>
   <p>Gold is liquidity and influence. It comes from taxes (lighter than before), selling goods, tolls and tribute. It pays for army upkeep, subsidies, festivals, route upkeep and goods purchases, and it <b>hurries</b> construction. It also buys goodwill: a <b>gift</b> eases the recipient's grudges against you and builds favour that softens its stance for a while. A losing AI may sweeten a peace offer with gold, and an appeaser may court a dominant neighbour.</p>
   <h3>Tributaries</h3>
-  <p>Instead of conquering a beaten enemy, <b>demand its submission</b>, or ask a stronger neighbour for <b>protection</b> when you are outmatched. A tributary keeps its cities, its people and its own unrest. It pays its overlord 25% of its gold income, ships surplus goods the overlord lacks along a raidable tribute route, and follows its overlord's wars and peace; the two share vision and passage. <b>Liberty desire</b> builds from distance, a foreign overlord, tribute and an overlord too weak to inspire awe, and eases with kinship and shared enemies. At 100 the vassal breaks free. An overlord can release a vassal, or <b>annex</b> it peacefully if their peoples are related, or after 30 turns of low liberty desire. An overlord whose only remaining rivals are its own vassals wins by conquest.</p>
+  <p>Instead of conquering a beaten enemy, <b>demand its submission</b>, or ask a stronger neighbour for <b>protection</b> when you are outmatched. A tributary keeps its cities, its people and its own unrest. It pays its overlord 25% of its gold income, ships surplus goods the overlord lacks along a raidable tribute route, and follows its overlord's wars and peace; the two share vision and passage. <b>Liberty desire</b> builds from distance, a foreign overlord, tribute and an overlord too weak to inspire awe, and eases with kinship and shared enemies. At 100 the vassal breaks free. An overlord can release a vassal, or <b>annex</b> it peacefully if their peoples are related, or after 30 turns of low liberty desire. An overlord whose only remaining rivals are its own subjects (at any depth) wins by conquest.</p>
+  <h3>Managing subjects</h3>
+  <p>In Diplomacy (D), set each subject's <b>terms</b>: tribute (none, light 15%, standard 25%, heavy 40%), a <b>subsidy</b> you pay them, and <b>war rights</b>. A <i>bound</i> subject only fights your wars; a <i>free hand</i> lets it wage its own, even against your other subjects, and you share 30% of the blame. Easing terms applies at once. Tightening them raises the subject's liberty desire and is a demand it may refuse, which means war. Each button shows whether an AI subject will accept, and the answer comes the moment you send it. A human subject answers on its turn.</p>
+  <p>When two of your subjects fight, you can <b>force a truce</b>: the side that's winning resents it, and the loser is grateful. Or prop up the weaker side with a subsidy, keeping the stronger one busy and small.</p>
+  <p>Subjects whose liberty desire reaches 50 <b>conspire</b> together. When the conspirators' combined strength reaches 80% of yours (plus half your loyal subjects'), they rise together as allies. Ease their terms or pay them off to break the pact (they leave below 35).</p>
+  <p><b>Indirect rule:</b> when you take a city, or later from the city panel, you can release it as a <b>client</b> (a new tribe of its own people, subject to you) or <b>grant</b> it to one of your subjects nearby. Subjects can release their own clients too.</p>
   <h3>Strategic goods</h3>
   <p>Copper, tin, horses, timber and stone come from <b>deposits</b>: a Mine on a copper or tin deposit (the two metals lie in different regions), a Pasture on a horse herd, a Lumber Camp in a forest, a Quarry on hills. Each yields 1 per turn into your national stockpile, but only if its city is <b>connected</b> to your capital through land that isn't hostile or blocked by enemies. Advanced units and many buildings <b>require</b> goods, e.g. a Swordsman needs 1 bronze and Walls need 2 stone. Basic units and buildings never do. Armies also need <b>supply</b>: every 4 units that needed a good consume 1 of it per turn. Unsupplied units fight weaker and don't heal. Deposits are scarce and regional, so they're worth settling, conquering, raiding and protecting. <b>Bronze</b> is made from 1 copper + 1 tin at a Bronze Workshop, and trades at a markup. Press <b>G</b> for details, or <b>P</b> for the production-chain diagram.</p>
   <h3>The iron age</h3>

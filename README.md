@@ -198,7 +198,7 @@ Research is paid in **knowledge** (✦), not gold. This is phase 1 of the gold-r
 - **Effects:** wealth no longer turns directly into technology, and contact and trade speed learning.
 
 ### Technology upkeep & dark ages (`src/upkeep.js`; game option, on by default)
-- **Upkeep:** each known tech costs 1/2/3/4 knowledge per turn by tier. It's halved if a trade partner, vassal or overlord knows the tech, and cut a further 25% if any tribe at peace with you does: contact keeps ideas alive.
+- **Upkeep:** each known tech costs 1/2/3/4 knowledge per turn by tier. A subject pays nothing for techs its overlord knows. Otherwise upkeep is halved if a trade partner, vassal or overlord knows the tech, and cut a further 25% if any tribe at peace with you does: contact keeps ideas alive.
 - **Buffer and decline:** the knowledge stock is capped at 30 + 2× the price of your dearest tech. When it runs dry, **decline** accumulates the shortfall; at 10 a tech must be forgotten. Humans choose (with a 3-turn grace before the least-used fades); the AI drops its least-used leaf. You can also let a tech fade voluntarily from the tech screen.
 - **What can be lost:** only leaf techs (nothing known depends on them), so the most advanced knowledge goes first. Existing units, buildings and improvements keep working; you just can't make new things that need the lost tech. Units at sea when Sailing or Navigation is lost may still sail home.
 - **Rediscovery** costs 50%, or 25% if a trade partner, vassal or overlord knows the tech.
@@ -239,19 +239,43 @@ Press **P** (or use the button in the goods table, **G**) for a live diagram bui
 - **Forming:**
   - **Submission:** a tribe at war demands it (`offer 'vassal'`). The AI demands it after 5+ turns of war at 2× the enemy's power. A target accepts below 45% of the demander's power (60% for appeasers), or when it has lost 40% of its peak cities and is below 75%.
   - **Protection:** a weak tribe asks for it (`offer 'protect'`) when an enemy has 2× its power. The protector must not loathe it, must be able to face its enemies, and must gain goods or kinship. The protector joins the ward's wars.
-- **Terms:** the vassal keeps its cities, people and unrest. Each turn it pays **25% of its gold income** and ships surplus goods the overlord lacks (up to 3) along a real, **raidable** tribute route. It follows its overlord's wars and peaces (vassals join wars the overlord declares, and an overlord's peace binds its vassals), can't conduct its own diplomacy beyond trade routes, and shares vision and passage like an ally.
+- **Basics:** the vassal keeps its cities, people and unrest, follows its overlord's wars and peaces (down any chain of subjects), and shares vision and passage like an ally. Submitting imposes a truce on its wars with its new fellow subjects. The terms below are per subject (`src/subjects.js`).
 - **Liberty desire (0–100) per turn:**
   - distance between capitals beyond 8 (up to +3);
   - foreign overlord +1.5, or kindred peoples −1;
-  - tribute +1;
+  - tribute: none −1.5, light +0.5, standard +1, heavy +2.5;
+  - bound to its overlord's wars +1;
+  - subsidy −0.5 per tier;
+  - conspiring +0.5;
   - overlord's strength: weaker than the vassal +6, barely stronger +3, overwhelming −1.5;
   - shared enemies or protection −1.5.
 
-  At 100 an AI vassal at least half its overlord's power declares independence (war). A human vassal may do so at any time.
-- **Endings:** the overlord can **release** a vassal (peace) or **annex** it peacefully: it needs related peoples, or 30+ turns with liberty under 25. Annexed cities join without conquest shock, and the absorbed tribe shows as "absorbed" in the records. If an overlord falls, its vassals go free.
-- **Power & victory:** dominance and coalitions use **bloc power** (own power + half of each vassal's) and never treat a vassal as the leader. An overlord whose only remaining rivals are its own vassals wins by conquest; vassals don't share the victory.
+  At 100 an AI vassal declares independence (war) if it, with its fellow conspirators, has at least half its overlord's power. A human vassal may do so at any time.
+- **Terms of subjection** (set by the overlord, per subject):
+
+  | Lever | Settings | Effect |
+  |---|---|---|
+  | Tribute | None 0% / Light 15% / Standard 25% / Heavy 40% | share of gold income; goods tribute along a raidable route only from Standard up |
+  | Subsidy | none / 3 / 6 / 10 gold a turn | paid by the overlord to the subject, which spends it like any gold |
+  | War rights | Bound / Free hand | a free-hand subject declares its own wars and makes its own peace (even against fellow subjects, never against its overlord or the overlord's allies); it can't end the overlord's wars. Victims of its aggression blame the overlord for 30% of it |
+
+  **Easing** applies at once. **Tightening** (more tribute +6 liberty per step, binding +10, cutting a subsidy +4 per step) is a demand the subject may refuse, which means war. An AI subject's answer is shown beside each button before it's sent, and given instantly. It refuses if its liberty would reach 100, or 60+ with 60% of the overlord's strength (with its conspirators), or 80+ with 35%. A human subject answers on its turn, and refusing starts the war then.
+- **Arbitration:** an overlord can force a truce on two subjects at war. The side that's winning (by cities taken from each other in this war, plus relative power) gains 10–50 liberty, and must accept or rise. The loser's liberty falls by 10.
+- **Conspiracies:** subjects with liberty 50+ join a pact against their overlord (humans choose to), and leave it below 35. When two or more conspirators reach 80% of the overlord's strength (its power plus half its loyal subjects'), or any member refuses terms or breaks free, they all rise together as allies.
+- **Clients and grants:** any non-capital city can be **released as a client**: a new tribe of the city's people, subject to its former owner from the start, with liberty 10 if its people are kin to the owner's, 45 if they're kin to the tribe it was taken from, else 25. Subjects can do this too, so chains of subjects form. A city can also be **granted** to one of the owner's subjects with a city within 8 tiles (kindred city −5 liberty, foreign +5). The capture dialog offers both, alongside keep and raze. A client can only be annexed after 30 calm turns.
+- **AI:**
+  - **Conquests:** keeps governable ones. A restless one goes to a kindred subject nearby (if that subject stays under half its power), or else becomes a client (level 2+, up to 2 + 1 per 6 cities' worth of subjects), or else is razed or kept as before. A recent conquest (held under 25 turns) about to revolt is released or granted the same way. Long-held cities still rebel.
+  - **Managing subjects:** every 5 turns per subject:
+    - **Conspirators:** bought back with no tribute and subsidies.
+    - **Strong or restless subjects:** bound and lightly taxed.
+    - **Weak, loyal subjects:** given a free hand and taxed at the standard rate.
+    - **A weak subject losing to a strong fellow subject:** subsidised.
+    - **Arbitration:** only when the winner accepts and stays under 70 liberty.
+  - **Never sends refused demands:** the AI only sends a demand the subject would accept.
+- **Endings:** the overlord can **release** a vassal (peace) or **annex** it peacefully: it needs related peoples and 10 turns (not a client), or 30+ turns with liberty under 25. The annexed tribe's own subjects pass to the annexer. Annexed cities join without conquest shock, and the absorbed tribe shows as "absorbed" in the records. If an overlord falls, its vassals go free.
+- **Power & victory:** dominance and coalitions use **bloc power** (own power + half of each vassal's) and never treat a vassal as the leader. An overlord whose only remaining rivals are its own subjects, at any depth, wins by conquest; subjects don't share the victory. A well-managed web of subjects is a path to a conquest win, and a mismanaged one rises as a group.
 - **Map:** in political mode, a vassal's land is striped in its overlord's colour.
-- **Sims (8 tribes, large map, 120 turns):** 11–18 vassalages, 1–4 annexations and 4–7 independence wars per game, with 6–8 vassals standing at the end.
+- **Sims (8 tribes, large map, 130 turns, with subject management):** 19–21 clients and 21–23 grants, 2–3 conspiracy risings and 6–10 independence wars per game, with 10–13 subjects standing at the end and up to two levels of subjects. Revolts and razing fell sharply, because restless conquests now become clients instead.
 
 ### Peoples (cultures) & records
 Peoples are separate from polities (`src/culture.js`), as in CK3, and names never exceed two parts.

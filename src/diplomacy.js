@@ -16,12 +16,25 @@ export const diplomacyMethods = {
     if (r.state === 'truce' && this.turn >= r.until) { r.state = 'peace'; }
     return r;
   },
-  atWar(a, b) { return a !== b && a >= 0 && b >= 0 && this.relation(a, b).state === 'war'; },
+  // cached per relation change and turn: called in every pathing step
+  atWar(a, b) {
+    if (a === b || a < 0 || b < 0) return false;
+    const n = this.players.length;
+    let m = this._warM;
+    if (!m || m.ver !== this._relVer || m.turn !== this.turn || m.n !== n) {
+      m = this._warM = { ver: this._relVer, turn: this.turn, n, a: new Int8Array(n * n).fill(-1) };
+    }
+    const k = a * n + b;
+    let v = m.a[k];
+    if (v < 0) { v = m.a[k] = m.a[b * n + a] = this.relation(a, b).state === 'war' ? 1 : 0; }
+    return v === 1;
+  },
   allied(a, b) { const st = this.relation(a, b).state; return a !== b && (st === 'alliance' || st === 'vassal'); },
   setRelation(a, b, state, extra = {}) {
     this.relations = this.relations || {};
     this.relations[this.relKey(a, b)] = { state, since: this.turn, ...extra };
     this._thr = null;
+    this._relVer = (this._relVer || 0) + 1;
   },
   hasMet(a, b) { return a === b || !!this.players[a]?.met?.[b]; },
   warsOf(pid) { return this.contenders().filter(p => p.id !== pid && this.hasMet(pid, p.id) && this.atWar(pid, p.id)).map(p => p.id); },
@@ -51,8 +64,8 @@ export const diplomacyMethods = {
   makePeace(a, b) {
     this.setRelation(a, b, 'truce', { until: this.turn + TRUCE_TURNS });
     this.evict(a, b);
-    // an overlord's peace binds its vassals
-    for (const [x, y] of [[a, b], [b, a]]) for (const v of this.vassalsOf?.(x) || []) {
+    // an overlord's peace binds its vassals, and theirs
+    for (const [x, y] of [[a, b], [b, a]]) for (const v of this.subjectsDeep?.(x) || []) {
       if (v !== y && this.atWar(v, y)) { this.setRelation(v, y, 'truce', { until: this.turn + TRUCE_TURNS }); this.evict(v, y); }
     }
     this.addLog(`${this.players[a].name} and ${this.players[b].name} make peace.`, a);
@@ -62,7 +75,12 @@ export const diplomacyMethods = {
     const r = this.relation(a, b);
     if (r.state === 'war') return { ok: false, why: 'Already at war' };
     if (r.state === 'vassal') return { ok: false, why: r.vassal === a ? 'Declare independence instead' : 'Release your vassal first' };
-    if (this.isVassal?.(a)) return { ok: false, why: 'Your overlord decides war and peace' };
+    if (this.isVassal?.(a)) {
+      // a free-hand subject wages its own wars, but never on its overlord's side of the table
+      const lord = this.overlordOf(a);
+      if (!this.terms(a)?.free) return { ok: false, why: 'Your overlord decides war and peace (you are bound)' };
+      if (b === lord || this.topOverlord(a) === b || this.relation(b, lord).state === 'alliance') return { ok: false, why: 'Not against your overlord or its allies' };
+    }
     if (r.state === 'truce') return { ok: false, why: `Truce holds for ${r.until - this.turn} more turns` };
     return { ok: true };
   },
@@ -75,6 +93,9 @@ export const diplomacyMethods = {
     // treachery is remembered: the victim, and everyone who knows the aggressor
     this.addGrudge(b, a, was === 'alliance' ? 60 : 40);
     for (const p of this.players) if (p.alive && p.id !== a && p.id !== b && this.hasMet(p.id, a)) this.addGrudge(p.id, a, was === 'alliance' ? 15 : 8);
+    // a subject's aggression reflects on whoever holds its leash
+    const lord = this.overlordOf?.(a);
+    if (lord != null) this.addGrudge(b, lord, 0.3 * (was === 'alliance' ? 60 : 40));
     if (!quiet) this.addLog(`${this.players[a].name} declares war on ${this.players[b].name}!`, a);
     this.emit('diplo', { type: 'war', a, b });
     // defensive pacts
@@ -84,8 +105,8 @@ export const diplomacyMethods = {
       this.setRelation(p.id, a, 'war');
       this.addLog(`${p.name} honours its alliance and joins the war against ${this.players[a].name}.`, p.id);
     }
-    // vassals follow their overlord into war
-    for (const v of this.vassalsOf?.(a) || []) if (v !== b && !this.atWar(v, b)) this.setRelation(v, b, 'war');
+    // vassals follow their overlord into war, and their own vassals follow them
+    for (const v of this.subjectsDeep?.(a) || []) if (v !== b && !this.atWar(v, b) && this.relation(v, b).state !== 'vassal') this.setRelation(v, b, 'war');
     return { ok: true };
   },
   formAlliance(a, b) {
@@ -137,7 +158,10 @@ export const diplomacyMethods = {
   offerCheck(from, to, type) {
     if (!this.hasMet(from, to)) return { ok: false, why: 'You have not met them' };
     const st = this.relation(from, to).state;
-    if (this.isVassal(from) && type !== 'route') return { ok: false, why: 'Your overlord conducts your diplomacy' };
+    // a free-hand subject may make peace in its own wars, not in those it fights for its overlord
+    const ownWar = (sub, other) => this.terms(sub)?.free && !this.atWar(this.overlordOf(sub), other);
+    if (this.isVassal(from) && type !== 'route' && !(type === 'peace' && ownWar(from, to))) return { ok: false, why: this.terms(from)?.free ? 'This war is your overlord\'s to end' : 'Your overlord conducts your diplomacy' };
+    if (type === 'peace' && this.isVassal(to) && !ownWar(to, from)) return { ok: false, why: 'Make peace with their overlord' };
     if (st === 'vassal' && type !== 'route') return { ok: false, why: 'Already bound by vassalage' };
     if (type === 'vassal') {
       if (st !== 'war') return { ok: false, why: 'You can only demand submission in war' };
@@ -164,6 +188,7 @@ export const diplomacyMethods = {
   },
   answerOffer(o, accept) {
     if (!(this.offers || []).includes(o)) return { ok: false, why: 'Offer no longer stands' };
+    if (o.type === 'terms' || o.type === 'arbitrate') return this.answerSubjectOffer(o, accept);
     this.offers = this.offers.filter(x => x !== o);
     if (accept && this.offerCheck(o.from, o.to, o.type).ok) { this.applyOffer(o.from, o.to, o.type); return { ok: true }; }
     if (accept) { this.addLog(`The ${o.type} offer from ${this.players[o.from].name} has lapsed.`, o.to); return { ok: false, why: 'The offer has lapsed' }; }

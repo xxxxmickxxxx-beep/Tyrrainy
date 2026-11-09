@@ -12,6 +12,7 @@ import { tradeMethods } from './trade.js';
 import { vassalMethods } from './vassals.js';
 import { upkeepMethods } from './upkeep.js';
 import { projectMethods } from './projects.js';
+import { subjectMethods } from './subjects.js';
 import { ROOTS, LAND_BASE, joinName, combining, cleanBase, pickColors, offshootColors } from './culture.js';
 
 const INTEGRATION_TURNS = 10;
@@ -131,7 +132,7 @@ export class Game {
       for (let cc = lo; cc <= hi; cc++)
         if (hexDist(c, r, cc, rr) <= rad) out.push(rr * W + (wrap ? ((cc % W) + W) % W : cc));
     }
-    return wrap ? [...new Set(out)] : out;
+    return wrap && 2 * rad + 3 > W ? [...new Set(out)] : out; // overlaps only on tiny worlds
   }
   isWater(i) { return !!TERRAIN[this.tiles[i].t].water; }
   unitAt(i) { return this.unitMap ? this.unitMap.get(i) : this.units.find(u => u.idx === i); }
@@ -626,18 +627,7 @@ export class Game {
     const old = this.players[owner];
     const id = this.players.length;
     const human = this.settings.rebelControl === 'human' && this.players.some(p => p.human);
-    // who are the rebels? their own people, possibly marked by their former rulers
-    const R = old.culture;
-    let cul, cid = city.culture;
-    if (cid == null || this.related(cid, R)) {
-      if (cid != null && cid !== R && !this.polityOf(cid)) cul = this.cultures[cid]; // an existing regional identity
-      else cul = this.newCulture({ base: city.name, root: this.cultures[R]?.root || '', parent: cid ?? R, home: city.specialty, city, reuse: true });
-    } else {
-      const X = this.cultures[this.cultures[cid].core];
-      if ((city.held || 0) >= 15 && R != null) cul = this.newCulture({ base: X.base, root: X.root, parent: X.id, influence: R, core: X.id, home: city.specialty, city, reuse: true });
-      else if (!this.polityOf(X.id)) cul = X;
-      else cul = this.newCulture({ base: city.name, root: X.root, parent: X.id, home: city.specialty, city, reuse: true });
-    }
+    const cul = this.peopleFor(city, owner);
     const pl = {
       id, name: this.uniqueTribeName(cul.name), color: cul.color, color2: cul.color2, culture: cul.id, home: city.specialty, human, rebel: true, rebelFrom: owner,
       gold: 4, techs: [...old.techs], explored: new Array(this.W * this.H).fill(0), alive: true, kills: 0, losses: 0, born: this.turn,
@@ -650,6 +640,86 @@ export class Game {
     this.addLog(`A rebellion rises in ${city.name}: the ${pl.name} defy ${old.name}!`, owner, city.idx);
     this.emit('rebellion', { pid: id, city, from: owner });
     return id;
+  }
+
+  // Who would a new polity rising in this city be? Its own people, possibly marked by their
+  // former rulers. (Rebellions and released clients.)
+  peopleFor(city, owner) {
+    const R = this.players[owner].culture;
+    let cid = city.culture;
+    if (cid == null || this.related(cid, R)) {
+      if (cid != null && cid !== R && !this.polityOf(cid)) return this.cultures[cid]; // an existing regional identity
+      return this.newCulture({ base: city.name, root: this.cultures[R]?.root || '', parent: cid ?? R, home: city.specialty, city, reuse: true });
+    }
+    const X = this.cultures[this.cultures[cid].core];
+    if ((city.held || 0) >= 15 && R != null) return this.newCulture({ base: X.base, root: X.root, parent: X.id, influence: R, core: X.id, home: city.specialty, city, reuse: true });
+    if (!this.polityOf(X.id)) return X;
+    return this.newCulture({ base: city.name, root: X.root, parent: X.id, home: city.specialty, city, reuse: true });
+  }
+
+  // ---- clients: a city released as a new tribe, subject to its former owner from the start
+  canReleaseCity(city) {
+    const pid = city.owner;
+    if (city.capital) return { ok: false, why: 'Not the capital' };
+    if (this.cities.filter(c => c.owner === pid).length < 2) return { ok: false, why: 'Your last city' };
+    if (this.players.filter(p => p.alive).length >= MAX_TRIBES) return { ok: false, why: 'The world has too many tribes' };
+    const u = this.unitAt(city.idx);
+    if (u && u.owner !== pid && this.atWar(u.owner, pid)) return { ok: false, why: 'Enemies hold it' };
+    return { ok: true };
+  }
+  releaseCity(city) {
+    const chk = this.canReleaseCity(city);
+    if (!chk.ok) return chk;
+    const owner = city.owner, O = this.players[owner];
+    const cul = this.peopleFor(city, owner);
+    const id = this.players.length;
+    const pl = {
+      id, name: this.uniqueTribeName(cul.name), color: cul.color, color2: cul.color2, culture: cul.id, home: city.specialty, human: false, client: true, clientOf: owner,
+      gold: 6 + city.level * 2, techs: [...O.techs], explored: new Array(this.W * this.H).fill(0), alive: true, kills: 0, losses: 0, born: this.turn,
+      met: { [owner]: true },
+    };
+    pl.temper = rollTemper(this.rng);
+    pl.founded = this.turn; pl.peak = 0;
+    this.players.push(pl);
+    O.met = O.met || {}; O.met[id] = true;
+    // the city's people: kin to the new rulers' overlord are content, kin to its old enemy restless
+    const formerPol = city.capturedFrom != null && city.capturedFrom !== owner ? city.capturedFrom : null;
+    const formerKin = formerPol != null && this.players[formerPol]?.alive && this.related(cul.id, this.players[formerPol].culture);
+    city.owner = id; city.culture = cul.id; city.capital = true; city.unrest = 0; city.subsidy = 0; city.held = 0; city.adapt = 0;
+    city.capturedTurn = undefined; city.razeDecision = undefined;
+    for (const t of this.within(city.idx, 2)) if (this.tiles[t].ownerCity === city.id) this.tiles[t].owner = id;
+    const gar = this.unitAt(city.idx);
+    if (gar && gar.owner === owner) { gar.owner = id; gar.goto = null; }
+    if (!this.unitAt(city.idx)) this.spawnUnit(id, this.turn > 35 ? 'swordsman' : 'warrior', city.idx);
+    this.rebuildUnitMap();
+    for (const t of this.within(city.idx, 4)) pl.explored[t] = 1;
+    // inherits its overlord's acquaintances (at peace with those the overlord is at peace with)
+    for (const p of this.players) {
+      if (!p.alive || p.id === id || p.id === owner || !this.hasMet(owner, p.id)) continue;
+      pl.met[p.id] = true; p.met = p.met || {}; p.met[id] = true;
+      if (!this.atWar(owner, p.id)) this.setRelation(id, p.id, 'peace');
+    }
+    this.makeVassal(id, owner, false, true);
+    const r = this.vassalRel(id);
+    r.liberty = this.related(cul.id, O.culture) ? 10 : formerKin ? 45 : 25;
+    r.terms = { tribute: 2, subsidy: 0, free: false };
+    this.bumpPeak(id);
+    this.addLog(`${O.name} releases ${city.name} as the client realm of the ${pl.name}.`, owner, city.idx);
+    this.emit('diplo', { type: 'client', a: owner, b: id });
+    this.updateVision(id); this.updateVision(owner);
+    return { ok: true, pid: id };
+  }
+  // What an AI conqueror does with a city it has just taken.
+  conquestPlan(c, pid) {
+    const adv = this.razeAdvice(c, pid);
+    if (adv.rest <= 0) return { act: 'keep' };
+    // hand it to a kindred subject nearby, if that won't make the subject too strong
+    const kin = this.grantTargets(c).filter(v => this.related(c.culture, this.players[v].culture) && (this.power(v) + c.level + 2) / Math.max(1, this.power(pid)) < 0.5)[0];
+    if (kin != null) return { act: 'grant', v: kin };
+    // otherwise a client of its own, while we don't have too many subjects to watch
+    const nC = this.cities.filter(x => x.owner === pid).length;
+    if (c.level >= 2 && this.vassalsOf(pid).length < 2 + Math.floor(nC / 6) && this.canReleaseCity(c).ok) return { act: 'client' };
+    return { act: adv.raze ? 'raze' : 'keep' };
   }
 
   revolt(city) {
@@ -983,7 +1053,7 @@ export class Game {
     const T = this.players[pid].temper;
     const pol = this.polityOf(c.culture) || this.polityOf(this.cultures?.[c.culture]?.core);
     if (T && pol && T.grudges[pol.id]) { const gb = Math.min(1.5, T.grudges[pol.id] / 30 * (T.vengeance ?? 1)); score += gb; if (gb > 0.5) reasons.push('Old grudge'); }
-    return { raze: score > 2, score, reasons };
+    return { raze: score > 2, score, reasons, rest };
   }
   // Deliberate razing by a human conqueror, allowed on the turn of capture.
   razeByChoice(c) {
@@ -1347,6 +1417,7 @@ export class Game {
       if (this.tiles[t].ownerCity === c.id) this.tiles[t].owner = pid;
     }
     this.addGrudge(old, pid, 30);
+    this.countCapture(pid, old);
     this.addLog(`${this.players[pid].name} captured ${c.name} from ${oldName}!`, pid, c.idx);
     // the sack: each building may be lost; a city stripped of everything may be razed
     const had = c.buildings.length;
@@ -1357,16 +1428,23 @@ export class Game {
       this.checkElimination(old);
       return;
     }
-    // the conqueror decides: keep it, or put it to the torch
+    // the conqueror decides: keep it, put it to the torch, release it as a client, or grant it
+    // to a subject
+    let plan = null;
     if (this.players[pid].human) {
       c.razeDecision = this.turn;
-    } else if (this.razeAdvice(c, pid).raze) {
-      this.razeCity(c, pid, true);
-      this.checkElimination(old);
-      return;
+    } else {
+      plan = this.conquestPlan(c, pid);
+      if (plan.act === 'raze') {
+        this.razeCity(c, pid, true);
+        this.checkElimination(old);
+        return;
+      }
     }
     this.bumpPeak(pid);
     this.emit('capture', { c, old, pid });
+    if (plan?.act === 'grant') this.grantCity(c, plan.v);
+    else if (plan?.act === 'client') this.releaseCity(c);
     if (c.razeDecision === this.turn) this.emit('razeChoice', { city: c, pid });
     this.checkElimination(old);
   }
@@ -1413,7 +1491,7 @@ export class Game {
     if (c.length === 1) { this.declareWinner(c[0].id, 'conquest'); return; }
     // an overlord whose only rivals left are its own vassals has won
     const free = c.filter(p => !this.isVassal(p.id));
-    if (free.length === 1 && c.every(p => p.id === free[0].id || this.overlordOf(p.id) === free[0].id)) this.declareWinner(free[0].id, 'conquest');
+    if (free.length === 1 && c.every(p => p.id === free[0].id || this.topOverlord(p.id) === free[0].id)) this.declareWinner(free[0].id, 'conquest');
   }
 
   declareWinner(pid, how) {
@@ -1798,4 +1876,4 @@ export class Game {
   }
 }
 
-Object.assign(Game.prototype, diplomacyMethods, economyMethods, tradeMethods, vassalMethods, upkeepMethods, projectMethods);
+Object.assign(Game.prototype, diplomacyMethods, economyMethods, tradeMethods, vassalMethods, upkeepMethods, projectMethods, subjectMethods);
